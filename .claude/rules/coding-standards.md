@@ -1,5 +1,5 @@
 ---
-description: General coding standards for the vMF project
+description: General coding standards for the neuromf project
 ---
 
 # Coding Standards

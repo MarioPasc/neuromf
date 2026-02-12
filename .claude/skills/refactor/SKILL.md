@@ -24,7 +24,7 @@ You are a world-class Python engineer. Refactor the target module following thes
 2. Identify all violations of the checklist
 3. Propose the refactoring plan (what changes and why)
 4. Implement the refactoring
-5. Run: `~/.conda/envs/vmf/bin/python -m py_compile <file>` to verify
-6. Run: `~/.conda/envs/vmf/bin/python -m pytest tests/ -x -q` if relevant tests exist
+5. Run: `~/.conda/envs/neuromf/bin/python -m py_compile <file>` to verify
+6. Run: `~/.conda/envs/neuromf/bin/python -m pytest tests/ -x -q` if relevant tests exist
 
 $ARGUMENTS

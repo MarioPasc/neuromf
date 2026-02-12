@@ -14,7 +14,7 @@ allowed-tools:
 
 # Codebase Explorer
 
-Thoroughly explore the vMF codebase to answer: $ARGUMENTS
+Thoroughly explore the neuromf codebase to answer: $ARGUMENTS
 
 ## Focus Areas
 - File structure and module dependencies
@@ -24,8 +24,8 @@ Thoroughly explore the vMF codebase to answer: $ARGUMENTS
 - Time convention usage (t=0 data, t=1 noise)
 
 ## Key Locations
-- Source: `src/vMF/`
-- External refs: `src/external/meanflow_pytorch`, `src/external/meanflow_jax`, `src/external/muon`
+- Source: `src/neuromf/`
+- External refs: `src/external/MeanFlow/`, `src/external/MeanFlow-PyTorch/`, `src/external/pmf/`, `src/external/MOTFM/`, `src/external/NV-Generate-CTMR/`
 - Configs: `configs/`
 - Tests: `tests/`
 - Specs: `docs/splits/`

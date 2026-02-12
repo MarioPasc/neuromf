@@ -6,12 +6,21 @@
       "Bash(~/.conda/envs/neuromf/bin/python -m py_compile*)",
       "Bash(~/.conda/envs/neuromf/bin/python -m mypy*)",
       "Bash(~/.conda/envs/neuromf/bin/python -c*)",
+      "Bash(~/.conda/envs/neuromf/bin/python *)",
+      "Bash(pip install --quiet *)",
+      "Bash(nvidia-smi)",
+      "Bash(find *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git branch*)",
       "Bash(git show*)",
       "Bash(git stash list*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
       "Bash(wc:*)",
       "Bash(ls:*)",
       "Bash(mkdir:*)"
@@ -22,7 +31,10 @@
       "Bash(git reset --hard*)",
       "Bash(git checkout -- *)",
       "Bash(git clean -f*)",
-      "Bash(pip install*)"
+      "Edit(src/external/**)",
+      "Edit(docs/main/**)",
+      "Edit(checkpoints/**)",
+      "Edit(datasets/**)"
     ]
   },
   "hooks": {

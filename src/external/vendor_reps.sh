@@ -73,6 +73,9 @@ vendor_repo "https://github.com/NVIDIA-Medtech/NV-Generate-CTMR.git" "NV-Generat
 # --- 4. MOTFM (Baseline) ---
 vendor_repo "https://github.com/milad1378yz/MOTFM.git" "MOTFM" "MOTFM (Baseline)"
 
+# --- 5. pMF (Pixel Mean Flow - Original Reference) ---
+vendor_repo "https://github.com/Lyy-iiis/pMF.git" "pmf" "pMF (Pixel Mean Flow)"
+
 # --- Finalize ---
 
 # Create the top-level __init__.py for src/external
@@ -87,4 +90,5 @@ echo "   - MeanFlow/           (JAX/Original reference)"
 echo "   - MeanFlow-PyTorch/   (PyTorch implementation)"
 echo "   - NV-Generate-CTMR/   (NVIDIA medical image generation)"
 echo "   - MOTFM/              (Baseline)"
+echo "   - pmf/ (Pixel Mean Flow - Original reference)"
 echo "   - README_EXTERNAL.md updated."
