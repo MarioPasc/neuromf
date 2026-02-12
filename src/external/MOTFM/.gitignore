@@ -1,0 +1,7 @@
+__pycache__
+data/
+*checkpoints*
+*.pth
+*.pkl
+.vscode/
+*temp*
