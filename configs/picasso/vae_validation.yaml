@@ -1,8 +1,7 @@
-# VAE Validation Configuration
-# Merged with base.yaml at runtime via OmegaConf.merge(base, vae_validation)
+# VAE Validation Configuration — Picasso Supercomputer
+# Merged with picasso/base.yaml at runtime via OmegaConf.merge(base, vae_validation)
 
 vae:
-  # Architecture args (must match config_network_rflow.json exactly)
   spatial_dims: 3
   in_channels: 1
   out_channels: 1
@@ -16,11 +15,9 @@ vae:
   with_decoder_nonlocal_attn: false
   use_checkpointing: false
   use_convtranspose: false
-  norm_float16: false
-  num_splits: 4
+  norm_float16: false        # fp32 for validation quality
+  num_splits: 1              # no splitting needed with 80GB VRAM
   dim_split: 1
-
-  # Scaling
   scale_factor: 0.96240234375
   downsample_factor: 4
 
@@ -40,4 +37,4 @@ output:
   latent_stats_dir: "${paths.results_root}/phase_0/vae_validation/latent_stats"
   report_html: "${paths.results_root}/phase_0/verification_report.html"
   report_md: "${paths.project_root}/experiments/phase_0/verification_report.md"
-  n_save_per_dataset: 2  # save at least 2 reconstruction examples per FOMO-60K dataset
+  n_save_per_dataset: 2

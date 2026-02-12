@@ -1,0 +1,46 @@
+# Latent Pre-computation Configuration — Picasso Supercomputer (Phase 1)
+# Optimised for A100 80GB + 128 CPU cores + fast scratch I/O
+# Merged with picasso/base.yaml + picasso/fomo60k.yaml at runtime
+
+vae:
+  spatial_dims: 3
+  in_channels: 1
+  out_channels: 1
+  latent_channels: 4
+  num_channels: [64, 128, 256]
+  num_res_blocks: [2, 2, 2]
+  norm_num_groups: 32
+  norm_eps: 1.0e-6
+  attention_levels: [false, false, false]
+  with_encoder_nonlocal_attn: false
+  with_decoder_nonlocal_attn: false
+  use_checkpointing: false
+  use_convtranspose: false
+  norm_float16: true         # fp16 on A100 for speed (sufficient quality)
+  num_splits: 1              # no splitting needed with 80GB VRAM
+  dim_split: 1
+  scale_factor: 0.96240234375
+  downsample_factor: 4
+
+data:
+  target_shape: [128, 128, 128]
+  target_spacing: [1.0, 1.0, 1.0]
+  intensity_lower_percentile: 0.0
+  intensity_upper_percentile: 99.5
+  intensity_b_min: 0.0
+  intensity_b_max: 1.0
+  n_round_trip_check: 10    # more checks — fast on A100
+  num_workers: 8             # parallel I/O on 128-core node
+  prefetch_factor: 4         # prefetch batches for throughput
+
+encoding:
+  seed: 42
+  n_save_per_dataset: 2
+
+output:
+  latent_dir: "${paths.latents_dir}"
+  stats_path: "${paths.latents_dir}/latent_stats.json"
+  figures_dir: "${paths.results_root}/phase_1/figures"
+  report_html: "${paths.results_root}/phase_1/verification_report.html"
+  report_md: "${paths.project_root}/experiments/phase_1/verification_report.md"
+  encoding_log: "${paths.results_root}/phase_1/encoding_log.json"

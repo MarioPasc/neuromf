@@ -260,6 +260,117 @@ def plot_latent_histograms(
     save_figure(fig, path)
 
 
+def plot_channel_stats_bar(
+    stats: dict,
+    path: Path,
+) -> None:
+    """Grouped bar chart of per-channel mean +/- std.
+
+    Args:
+        stats: Dict with ``per_channel`` key mapping channel names to
+            ``{"mean": ..., "std": ...}`` dicts.
+        path: Output path (extension ignored; PDF+PNG saved).
+    """
+    _apply_style()
+    per_ch = stats["per_channel"]
+    channels = sorted(per_ch.keys())
+    means = [per_ch[ch]["mean"] for ch in channels]
+    stds = [per_ch[ch]["std"] for ch in channels]
+    labels = [ch.replace("channel_", "Ch ") for ch in channels]
+
+    fig, ax = plt.subplots(figsize=(5, 3.5))
+    x = np.arange(len(channels))
+    width = 0.35
+
+    bars_mean = ax.bar(
+        x - width / 2,
+        means,
+        width,
+        label="Mean",
+        color=COLORBLIND_PALETTE[0],
+        alpha=0.8,
+    )
+    bars_std = ax.bar(
+        x + width / 2,
+        stds,
+        width,
+        label="Std",
+        color=COLORBLIND_PALETTE[1],
+        alpha=0.8,
+    )
+
+    # Value labels on bars
+    for bar in bars_mean:
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{bar.get_height():.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+    for bar in bars_std:
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{bar.get_height():.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Value")
+    ax.set_title("Per-Channel Latent Statistics")
+    ax.legend(fontsize=8)
+    ax.axhline(0, color="gray", linewidth=0.5, linestyle="-")
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
+def plot_correlation_heatmap(
+    corr_matrix: np.ndarray,
+    channel_labels: list[str],
+    path: Path,
+) -> None:
+    """Annotated 4x4 heatmap of cross-channel Pearson correlation.
+
+    Args:
+        corr_matrix: 2D correlation matrix of shape ``(C, C)``.
+        channel_labels: Labels for each channel.
+        path: Output path (extension ignored; PDF+PNG saved).
+    """
+    _apply_style()
+    n = len(channel_labels)
+
+    fig, ax = plt.subplots(figsize=(4, 3.5))
+    im = ax.imshow(corr_matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="equal")
+
+    # Annotate cells
+    for i in range(n):
+        for j in range(n):
+            color = "white" if abs(corr_matrix[i, j]) > 0.6 else "black"
+            ax.text(
+                j,
+                i,
+                f"{corr_matrix[i, j]:.3f}",
+                ha="center",
+                va="center",
+                fontsize=9,
+                color=color,
+            )
+
+    ax.set_xticks(np.arange(n))
+    ax.set_yticks(np.arange(n))
+    ax.set_xticklabels(channel_labels)
+    ax.set_yticklabels(channel_labels)
+    ax.set_title("Cross-Channel Correlation")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Pearson r")
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
 def plot_error_heatmap(
     mean_error_3d: np.ndarray,
     path: Path,
