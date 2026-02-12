@@ -1,111 +1,53 @@
 # NeuroMF — Latent MeanFlow for 3D Brain MRI Synthesis
 
-## 1. Project Overview
+## 1. What This Project Does
 
-NeuroMF trains a MeanFlow model in the latent space of a frozen MAISI 3D VAE to achieve 1-step (1-NFE) generation of 128^3 brain MRI volumes. The project introduces per-channel Lp loss (extending SLIM-Diff to latent space) and LoRA fine-tuning for joint synthesis of rare epilepsy pathology (FCD). Target venues: Medical Image Analysis, IEEE TMI, or MICCAI 2026.
+NeuroMF trains a **MeanFlow** model in the latent space of a **frozen MAISI 3D VAE** to achieve **1-step (1-NFE) generation** of 128^3 brain MRI volumes. The project introduces per-channel Lp loss (extending SLIM-Diff to latent space) and LoRA fine-tuning for joint synthesis of rare epilepsy pathology (FCD). Target venues: Medical Image Analysis, IEEE TMI, or MICCAI 2026.
 
-## 2. Architecture Summary
+### Core Pipeline
 
 ```
-Pipeline: Input MRI (1x128^3) -> Frozen MAISI VAE Encoder -> Latent (4x32^3)
-          -> Train MeanFlow in Latent Space (1-NFE) -> Decode -> Synthetic MRI (1x128^3)
-
-Key shapes:
-  - Pixel space:  (B, 1, 128, 128, 128)
-  - Latent space:  (B, 4, 32, 32, 32)
-  - Compression: 16x overall (spatial 4x per axis, 1->4 channels)
-
-MeanFlow core idea:
-  - Learn average velocity u(z_t, r, t) instead of instantaneous velocity v(z_t, t)
-  - MeanFlow Identity enforces self-consistency via JVP (Eq. 8)
-  - 1-NFE sampling: z_0 = eps - u_theta(eps, 0, 1)
-  - Training uses iMF combined loss (Eq. 13) with adaptive weighting (Eq. 14)
-  - x-prediction reparameterisation (Eqs. 15-16) for manifold structure
+Input MRI (1×128³) ─► Frozen MAISI VAE Encoder ─► Latent (4×32³)
+                                                      │
+                                              Train MeanFlow (1-NFE)
+                                                      │
+                                                      ▼
+Synthetic MRI (1×128³) ◄── Frozen MAISI VAE Decoder ◄─┘
 ```
 
-## 3. Repository Map
+### Key Shapes
 
-| Directory | Purpose |
-|---|---|
-| `src/neuromf/` | Core Python package: wrappers, models, data, losses, sampling, metrics, utils, errors |
-| `src/external/` | **READ-ONLY** vendored repos: `MeanFlow/`, `MeanFlow-PyTorch/`, `NV-Generate-CTMR/`, `MOTFM/`, `pmf/` |
-| `configs/` | OmegaConf YAML configurations for all experiments |
-| `experiments/cli/` | CLI entry points for each phase |
-| `experiments/` | Experiment directories with results, figures, verification reports |
-| `tests/` | pytest test files, one per phase group |
-| `docs/main/` | **READ-ONLY** master documents: `technical_guide.md`, `methodology_expanded.md` |
-| `docs/splits/` | Phase split documents (one per phase, self-contained for subagents) |
-| `docs/papers/` | Paper PDFs and insight documents from `/review-external` |
-| `docs/misc/` | Miscellaneous documentation |
-| `.claude/` | Agent configs: settings, agents, commands, skills, hooks |
+| Space | Shape | Notes |
+|-------|-------|-------|
+| Pixel | `(B, 1, 128, 128, 128)` | Single-channel MRI |
+| Latent | `(B, 4, 32, 32, 32)` | 4x spatial compression per axis, 1→4 channels |
 
-## 4. Coding Standards
+### MeanFlow in One Paragraph
 
-- **Type hints** on ALL function signatures and return types.
-- **Google-style docstrings** on all public functions and classes. No usage examples needed.
-- **Brief inline comments** on non-obvious code only. Do not comment obvious lines.
-- **Logging:** Python `logging` module with `rich` handler. INFO for training events, DEBUG for shapes/values.
-- **No magic numbers.** All hyperparameters from YAML configs via OmegaConf/Hydra.
-- **Prefer library functions.** MONAI transforms over custom preprocessing. `einops.rearrange` over manual reshapes. `F.scaled_dot_product_attention` over manual QKV matmuls.
-- **Tests use pytest.** Each test file runnable independently: `pytest tests/test_xxx.py -v`.
-- **Keep functions atomic.** One conceptual task per function.
-- **OOP with dataclasses** for configuration containers.
-- **Custom exceptions** in `src/neuromf/errors/` for domain-specific errors.
-- **OmegaConf** for hierarchical YAML config management.
-- **Scientific claims** must reference sources (article titles, not just "see paper").
-- **Test IDs** from phase splits: name tests `test_P{N}_T{M}_<description>`.
-- **Leverage reference codebases.** Start from PyTorch MeanFlow reference, do not reimplement tested patterns.
+MeanFlow learns the **average velocity** `u(z_t, t, r)` instead of the instantaneous velocity `v(z_t, t)`. The MeanFlow Identity enforces self-consistency via a JVP (Jacobian-vector product). At inference, a single forward pass produces a sample: `z_0 = eps - u_θ(eps, 0, 1)`. Training uses the iMF combined loss with adaptive weighting. The pMF extension adds x-prediction reparameterization and perceptual auxiliary losses.
 
-## 5. Key Paths
+---
 
-| Resource | Path |
-|---|---|
-| Project root | `/home/mpascual/research/code/neuromf/` |
-| Conda environment | `~/.conda/envs/neuromf/` (Python 3.11, PyTorch >=2.1, MONAI >=1.3) |
-| External: MeanFlow (JAX) | `src/external/MeanFlow/` |
-| External: MeanFlow (PyTorch) | `src/external/MeanFlow-PyTorch/` |
-| External: MAISI / NV-Generate | `src/external/NV-Generate-CTMR/` |
-| External: MOTFM | `src/external/MOTFM/` |
-| External: pMF | `src/external/pmf/` |
-| Configs | `configs/` |
-| Results output | `experiments/` |
-| Checkpoints | Configure via `configs/base.yaml` `checkpoint_dir` field |
-| Datasets | Configure via `configs/base.yaml` `data.dataset_root` field |
+## 2. Critical Constants
 
-## 6. Phase System
+These are verified values from checkpoint and dataset inspection. Use them directly.
 
-The project is implemented in 9 gated phases (Phase 0 through Phase 8). Each phase has a self-contained split document in `docs/splits/phase_{N}.md`.
+| Constant | Value | Source |
+|----------|-------|--------|
+| **scale_factor** | **0.96240234375** | Extracted from `diff_unet_3d_rflow-mr.pt["scale_factor"]` |
+| VAE latent channels | 4 | `config_network_rflow.json` |
+| VAE spatial compression | 4× per axis | 3 encoder levels, `num_channels=[64,128,256]` |
+| VAE total parameters | 20,944,897 (~21M) | 130 state dict entries |
+| VAE attention | **None** | All `attention_levels=false`, no nonlocal attention |
+| VAE memory splits | `num_splits=4, dim_split=1` | Enables 128³ on 8GB VRAM |
+| VAE checkpoint format | Wrapped in `"unet_state_dict"` key | Must unwrap before `load_state_dict` |
+| IXI dataset size | 581 T1-weighted volumes | Sites: Guys, HH, IOP |
+| IXI native shape | `(256, 256, 150)` | Spacing: `(0.94, 0.94, 1.2)` mm |
+| Hardware | RTX 4060 Laptop, 8GB VRAM | `max_batch_size_vae=1` for 128³ |
 
-**Before starting any phase:**
-1. Read `CLAUDE.md` (this file) for project context.
-2. Read the phase split document `docs/splits/phase_{N}.md`.
-3. Read any insight documents referenced in the split (in `docs/papers/*/insights.md`).
+---
 
-**Gating rule:** Phase N+1 cannot start until Phase N's verification tests all pass. Use `/check-gate N` to verify.
-
-| Phase | Title | Key Output |
-|---|---|---|
-| 0 | Environment Bootstrap and VAE Validation | `maisi_vae.py` wrapper, VAE reconstruction metrics |
-| 1 | Latent Pre-computation Pipeline | `.pt` latent files, per-channel stats |
-| 2 | Toy Experiment — MeanFlow on Toroidal Manifold | Validated MeanFlow pipeline on known manifold |
-| 3 | MeanFlow Loss Integration with 3D UNet | JVP-compatible UNet wrapper, MeanFlow loss |
-| 4 | Training on Brain MRI Latents | Trained MeanFlow model, EMA checkpoints |
-| 5 | Evaluation Suite | FID, SSIM, SynthSeg metrics |
-| 6 | Ablation Runs | x-pred vs u-pred, Lp sweep, NFE steps, RF baseline |
-| 7 | LoRA Fine-Tuning for FCD | Joint image-mask synthesis model |
-| 8 | Paper Figures and Tables | Publication-ready figures (PDF+PNG) |
-
-## 7. Testing Conventions
-
-- Tests live in `tests/`.
-- Framework: `pytest` via `~/.conda/envs/neuromf/bin/python -m pytest`.
-- Naming: `test_P{N}_T{M}_<description>` where N is phase number, M is test number.
-- Run phase tests: `pytest tests/ -v -k "P{N}"`.
-- Run all tests: `pytest tests/ -v --tb=short`.
-- Each verification test is tagged CRITICAL (blocks gate) or INFORMATIONAL.
-- A phase gate is OPEN when all CRITICAL tests pass.
-
-## 8. Forbidden Actions
+## 3. Forbidden Actions
 
 - **DO NOT** modify anything in `src/external/`. These are frozen vendored repos.
 - **DO NOT** delete or overwrite `docs/main/`. These are master reference documents.
@@ -113,3 +55,195 @@ The project is implemented in 9 gated phases (Phase 0 through Phase 8). Each pha
 - **DO NOT** use `diffusers` — it is 2D-only and incompatible with our 3D pipeline.
 - **DO NOT** use `torchcfm` — time convention mismatch (t=0 noise vs our t=0 data).
 - **DO NOT** run `rm -rf` or force-push to git.
+
+---
+
+## 4. Phase System
+
+The project is implemented in **9 gated phases** (Phase 0 through Phase 8). **Phase N+1 cannot start until Phase N's CRITICAL tests all pass.** Use `/check-gate N` to verify.
+
+| Phase | Title | Key Output |
+|-------|-------|------------|
+| 0 | Environment Bootstrap & VAE Validation | `maisi_vae.py` wrapper, reconstruction metrics |
+| 1 | Latent Pre-computation Pipeline | `.pt` latent files, per-channel stats |
+| 2 | Toy Experiment — MeanFlow on Toroid | Validated MeanFlow on known manifold |
+| 3 | MeanFlow Loss + 3D UNet | JVP-compatible wrapper, MeanFlow loss |
+| 4 | Training on Brain MRI Latents | Trained model, EMA checkpoints |
+| 5 | Evaluation Suite | FID, SSIM, SynthSeg metrics |
+| 6 | Ablation Runs | x-pred vs u-pred, Lp sweep, NFE steps |
+| 7 | LoRA Fine-Tuning for FCD | Joint image-mask synthesis |
+| 8 | Paper Figures and Tables | Publication-ready figures (PDF+PNG) |
+
+**Before starting any phase**, read its split document at the path below.
+
+---
+
+## 5. Resource Hub
+
+All paths are absolute. The agent environment is `~/.conda/envs/neuromf/` (Python 3.11.14, PyTorch 2.10, MONAI 1.5.2).
+
+### 5.1 Environment & Execution
+
+| Resource | Path / Command |
+|----------|---------------|
+| Conda Python | `/home/mpascual/.conda/envs/neuromf/bin/python` |
+| Run pytest | `~/.conda/envs/neuromf/bin/python -m pytest tests/ -v --tb=short` |
+| Run phase tests | `~/.conda/envs/neuromf/bin/python -m pytest tests/ -v -k "P{N}"` |
+| Verify paths | `~/.conda/envs/neuromf/bin/python /home/mpascual/research/code/neuromf/scripts/verify_paths.py` |
+| Check environment | `~/.conda/envs/neuromf/bin/python /home/mpascual/research/code/neuromf/scripts/check_env.py` |
+| Activate script | `source /home/mpascual/research/code/neuromf/scripts/activate.sh` |
+| Base config (all paths) | `/home/mpascual/research/code/neuromf/configs/base.yaml` |
+
+### 5.2 Data & Checkpoints (External Drive)
+
+| Resource | Path |
+|----------|------|
+| IXI T1 volumes (581 files) | `/media/mpascual/Sandisk2TB/research/neuromf/datasets/IXI/IXI-T1/` |
+| MAISI VAE weights (80MB) | `/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/autoencoder_v2.pt` |
+| MAISI diffusion weights (2.1GB) | `/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt` |
+| Results root | `/media/mpascual/Sandisk2TB/research/neuromf/results/` |
+| Latent cache | `/media/mpascual/Sandisk2TB/research/neuromf/results/latents/` |
+| Training checkpoints | `/media/mpascual/Sandisk2TB/research/neuromf/results/training_checkpoints/` |
+
+### 5.3 Code
+
+| Resource | Path |
+|----------|------|
+| Project root | `/home/mpascual/research/code/neuromf/` |
+| Core package | `/home/mpascual/research/code/neuromf/src/neuromf/` |
+| Tests | `/home/mpascual/research/code/neuromf/tests/` |
+| Test fixtures | `/home/mpascual/research/code/neuromf/tests/conftest.py` |
+| Configs | `/home/mpascual/research/code/neuromf/configs/` |
+| Experiments/CLI | `/home/mpascual/research/code/neuromf/experiments/cli/` |
+
+### 5.4 External Vendored Repos (READ-ONLY)
+
+| Repo | Path | What it contains |
+|------|------|-----------------|
+| MeanFlow (JAX) | `src/external/MeanFlow/` | Original JAX reference: JVP loss, t/r sampling, 1-NFE |
+| MeanFlow (PyTorch) | `src/external/MeanFlow-PyTorch/` | PyTorch port: `torch.func.jvp`, SiT architecture |
+| NV-Generate-CTMR | `src/external/NV-Generate-CTMR/` | MAISI VAE, preprocessing, 2.5D FID evaluation |
+| MOTFM | `src/external/MOTFM/` | Medical OT flow matching: trainer, inferer, UNet wrapper |
+| pMF | `src/external/pmf/` | Progressive MeanFlow: x-prediction, compound V, perceptual losses |
+
+### 5.5 Slash Commands
+
+| Command | Usage | What it does |
+|---------|-------|-------------|
+| `/implement-phase` | `/implement-phase 3` | Launches phase-implementer (Opus) for end-to-end phase work |
+| `/run-tests` | `/run-tests 2` | Launches test-runner (Haiku) for phase verification |
+| `/check-gate` | `/check-gate 1` | Reads verification report, reports OPEN/BLOCKED |
+| `/review-external` | `/review-external meanflow_2025 MeanFlow` | Launches code-reviewer (Sonnet) to produce insights doc |
+
+### 5.6 Subagents
+
+| Agent | Model | Purpose |
+|-------|-------|---------|
+| `phase-implementer` | Opus | Reads phase split, writes code + tests, runs verification |
+| `test-runner` | Haiku | Runs pytest, reports pass/fail |
+| `external-code-reviewer` | Sonnet | Reviews external code against paper, produces insights |
+| `paper-figure-generator` | Sonnet | Generates publication figures from experiment results |
+
+---
+
+## 6. Documentation Index
+
+> **IMPORTANT — Selective Reading:** The documents below range from short summaries to 1000+ line technical guides. **Do NOT read them all at once.** Before starting a task, scan the table below and pick only the 1-3 documents directly relevant to your current work. Reading everything will waste context window.
+
+### 6.1 Master References (READ-ONLY, large files)
+
+These are comprehensive documents. Read only the section(s) you need, not the full file.
+
+| Document | Path | Contents | When to read |
+|----------|------|----------|-------------|
+| Technical Guide | `/home/mpascual/research/code/neuromf/docs/main/technical_guide.md` | Step-by-step implementation guide for all 9 phases, repo layout, agent context spec | When you need implementation details for a specific phase beyond what the split provides |
+| Methodology | `/home/mpascual/research/code/neuromf/docs/main/methodology_expanded.md` | Theoretical foundations, formal derivations, Lp loss theory, x-pred vs u-pred analysis, ablation design, evaluation protocol, data strategy | When you need mathematical grounding, paper-level methodology, or ablation design rationale |
+
+### 6.2 Phase Split Documents (one per phase, self-contained)
+
+Read the split for the phase you are working on. Each split is self-contained with all context a subagent needs.
+
+| Phase | Path |
+|-------|------|
+| 0 | `/home/mpascual/research/code/neuromf/docs/splits/phase_0.md` |
+| 1 | `/home/mpascual/research/code/neuromf/docs/splits/phase_1.md` |
+| 2 | `/home/mpascual/research/code/neuromf/docs/splits/phase_2.md` |
+| 3 | `/home/mpascual/research/code/neuromf/docs/splits/phase_3.md` |
+| 4 | `/home/mpascual/research/code/neuromf/docs/splits/phase_4.md` |
+| 5 | `/home/mpascual/research/code/neuromf/docs/splits/phase_5.md` |
+| 6 | `/home/mpascual/research/code/neuromf/docs/splits/phase_6.md` |
+| 7 | `/home/mpascual/research/code/neuromf/docs/splits/phase_7.md` |
+| 8 | `/home/mpascual/research/code/neuromf/docs/splits/phase_8.md` |
+
+### 6.3 Code Exploration Documents (pre-computed reference for each external repo)
+
+These capture findings from reading the vendored repos so you don't need to re-explore them.
+
+| Topic | Path | Key content |
+|-------|------|------------|
+| MAISI VAE API | `/home/mpascual/research/code/neuromf/docs/papers/maisi_2024/code_exploration.md` | VAE constructor args, encode/decode API, scale_factor extraction, preprocessing transforms, num_splits memory optimization, 2.5D FID protocol |
+| MeanFlow (JAX) | `/home/mpascual/research/code/neuromf/docs/papers/meanflow_2025/code_exploration.md` | JVP loss (lines 226-236), t/r sampling with data_proportion, 1-NFE formula, Algorithm 1, adaptive weighting |
+| MeanFlow (PyTorch) | `/home/mpascual/research/code/neuromf/docs/papers/meanflow_2025/pytorch_code_exploration.md` | `torch.func.jvp` usage, standalone class design (not nn.Module), key diffs from JAX, sampling code |
+| pMF | `/home/mpascual/research/code/neuromf/docs/papers/pmf_2026/code_exploration.md` | x-prediction reparameterization, compound V, adaptive weighting, LPIPS+ConvNeXt perceptual losses, dual-head MiT architecture |
+| MOTFM | `/home/mpascual/research/code/neuromf/docs/papers/motfm_2025/code_exploration.md` | ODE solver (midpoint/rk4/euler), MergedModel UNet+ControlNet wrapper, velocity matching loss, PyTorch Lightning training |
+
+### 6.4 Data & Checkpoint Exploration
+
+| Topic | Path | Key content |
+|-------|------|------------|
+| IXI Dataset | `/home/mpascual/research/code/neuromf/docs/data/ixi_exploration.md` | 581 T1 files, shapes, spacing, intensity ranges, preprocessing pipeline (Orientation→Spacing→Percentile→Crop) |
+| MAISI Checkpoints | `/home/mpascual/research/code/neuromf/docs/data/checkpoint_exploration.md` | VAE state dict structure (wrapped in `"unet_state_dict"`), diffusion checkpoint keys, **scale_factor=0.9624** extraction code |
+
+### 6.5 Paper PDFs
+
+| Paper | Path |
+|-------|------|
+| Flow Matching (2023) | `/home/mpascual/research/code/neuromf/docs/papers/flow_matching_2023/flow-matching.pdf` |
+| MeanFlow (2025) | `/home/mpascual/research/code/neuromf/docs/papers/meanflow_2025/meanflow.pdf` |
+| Improved MeanFlow (2025) | `/home/mpascual/research/code/neuromf/docs/papers/imf_2025/improved-mean-flows.pdf` |
+| MAISI-v2 (2025) | `/home/mpascual/research/code/neuromf/docs/papers/maisi_v2_2025/maisi-v2.pdf` |
+| MOTFM (2025) | `/home/mpascual/research/code/neuromf/docs/papers/motfm_2025/motfm.pdf` |
+| LoRA (2022) | `/home/mpascual/research/code/neuromf/docs/papers/lora_2022/lora.pdf` |
+| pMF (2026) | `/home/mpascual/research/code/neuromf/docs/papers/pmf_2026/pmf.pdf` |
+| SLIM-Diff (2026) | `/home/mpascual/research/code/neuromf/docs/papers/slim_diff_2026/slim-diff.pdf` |
+
+---
+
+## 7. Coding Standards (Summary)
+
+Full standards are in `.claude/rules/coding-standards.md` (auto-loaded). The essentials:
+
+- **Type hints** on all function signatures and return types.
+- **Google-style docstrings** on all public functions/classes.
+- **No magic numbers** — all hyperparameters from YAML configs via OmegaConf/Hydra.
+- **Prefer library functions:** MONAI transforms, `einops.rearrange`, `F.scaled_dot_product_attention`.
+- **Test naming:** `test_P{N}_T{M}_<description>` matching phase splits.
+- **Leverage reference codebases.** Port from PyTorch MeanFlow reference, do not reimplement.
+- **Logging:** Python `logging` with `rich` handler. INFO for events, DEBUG for shapes/values.
+
+---
+
+## 8. Testing
+
+- **Framework:** pytest via `~/.conda/envs/neuromf/bin/python -m pytest`
+- **Fixtures:** `tests/conftest.py` provides `base_config`, `device`, `results_root`
+- **Markers:** `phase0`–`phase7`, `critical`, `informational` (defined in `pyproject.toml`)
+- **Gating:** A phase gate is OPEN when all its CRITICAL tests pass
+- **Run all:** `~/.conda/envs/neuromf/bin/python -m pytest tests/ -v --tb=short`
+- **Run one phase:** `~/.conda/envs/neuromf/bin/python -m pytest tests/ -v -k "P3"`
+
+---
+
+## 9. Quick Reference: What to Read for Each Phase
+
+| Phase | Must read | Useful if stuck |
+|-------|-----------|----------------|
+| 0 | `phase_0.md`, `maisi_2024/code_exploration.md`, `checkpoint_exploration.md` | `ixi_exploration.md` |
+| 1 | `phase_1.md`, `ixi_exploration.md`, `maisi_2024/code_exploration.md` | — |
+| 2 | `phase_2.md`, `meanflow_2025/code_exploration.md` | `pytorch_code_exploration.md` |
+| 3 | `phase_3.md`, `pytorch_code_exploration.md`, `pmf_2026/code_exploration.md` | `methodology_expanded.md` §2-4 |
+| 4 | `phase_4.md` | `technical_guide.md` §6 |
+| 5 | `phase_5.md`, `maisi_2024/code_exploration.md` (2.5D FID section) | `motfm_2025/code_exploration.md` |
+| 6 | `phase_6.md` | `methodology_expanded.md` §9 |
+| 7 | `phase_7.md` | `lora_2022/lora.pdf` |
+| 8 | `phase_8.md` | All previous experiment results |

@@ -124,6 +124,18 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
 ]
+markers = [
+    "phase0: Phase 0 tests (VAE validation)",
+    "phase1: Phase 1 tests (latent pre-computation)",
+    "phase2: Phase 2 tests (toroid toy experiment)",
+    "phase3: Phase 3 tests (MeanFlow loss + UNet)",
+    "phase4: Phase 4 tests (training)",
+    "phase5: Phase 5 tests (evaluation)",
+    "phase6: Phase 6 tests (ablations)",
+    "phase7: Phase 7 tests (LoRA FCD)",
+    "critical: Must pass for phase gate",
+    "informational: Nice to have, not gating",
+]
 
 [tool.coverage.run]
 source = ["neuromf"]
