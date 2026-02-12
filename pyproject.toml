@@ -60,6 +60,10 @@ dependencies = [
     "rich>=13.0",
     # Visualizations
     "matplotlib>=3.7",
+    "seaborn>=0.13",
+    # Data handling
+    "pandas>=2.0",
+    "tqdm>=4.65",
 ]
 
 [project.optional-dependencies]
@@ -210,4 +214,3 @@ known-first-party = ["neuromf", "external"]
 "src/external/**" = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]  # skip linting vendored code
 
 [tool.ruff.format]
-line-length = 100

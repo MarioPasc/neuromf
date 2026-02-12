@@ -209,7 +209,17 @@ These capture findings from reading the vendored repos so you don't need to re-e
 
 ---
 
-## 7. Coding Standards (Summary)
+## 7. Dependency Management
+
+All dependencies are declared in `pyproject.toml`. If you need a new package:
+1. Add it to the appropriate section in `pyproject.toml` (core `dependencies` or an optional group).
+2. Run: `~/.conda/envs/neuromf/bin/pip install -e "/home/mpascual/research/code/neuromf"`
+
+Do NOT install packages with bare `pip install <pkg>` — always go through `pyproject.toml` so the dependency is tracked.
+
+---
+
+## 8. Coding Standards
 
 Full standards are in `.claude/rules/coding-standards.md` (auto-loaded). The essentials:
 
@@ -223,7 +233,7 @@ Full standards are in `.claude/rules/coding-standards.md` (auto-loaded). The ess
 
 ---
 
-## 8. Testing
+## 9. Testing
 
 - **Framework:** pytest via `~/.conda/envs/neuromf/bin/python -m pytest`
 - **Fixtures:** `tests/conftest.py` provides `base_config`, `device`, `results_root`
@@ -234,7 +244,7 @@ Full standards are in `.claude/rules/coding-standards.md` (auto-loaded). The ess
 
 ---
 
-## 9. Quick Reference: What to Read for Each Phase
+## 10. Quick Reference: What to Read for Each Phase
 
 | Phase | Must read | Useful if stuck |
 |-------|-----------|----------------|
