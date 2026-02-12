@@ -41,8 +41,8 @@ These are verified values from checkpoint and dataset inspection. Use them direc
 | VAE attention | **None** | All `attention_levels=false`, no nonlocal attention |
 | VAE memory splits | `num_splits=4, dim_split=1` | Enables 128³ on 8GB VRAM |
 | VAE checkpoint format | Wrapped in `"unet_state_dict"` key | Must unwrap before `load_state_dict` |
-| IXI dataset size | 581 T1-weighted volumes | Sites: Guys, HH, IOP |
-| IXI native shape | `(256, 256, 150)` | Spacing: `(0.94, 0.94, 1.2)` mm |
+| FOMO-60K subset | ~1,379 T1 sessions (3 datasets) | PT001_OASIS1, PT002_OASIS2, PT005_IXI |
+| FOMO-60K status | Skull-stripped, RAS, co-registered | Shapes/spacing vary by dataset |
 | Hardware | RTX 4060 Laptop, 8GB VRAM | `max_batch_size_vae=1` for 128³ |
 
 ---
@@ -98,7 +98,7 @@ All paths are absolute. The agent environment is `~/.conda/envs/neuromf/` (Pytho
 
 | Resource | Path |
 |----------|------|
-| IXI T1 volumes (581 files) | `/media/mpascual/Sandisk2TB/research/neuromf/datasets/IXI/IXI-T1/` |
+| FOMO-60K root | `/media/mpascual/Sandisk2TB/research/neuromf/datasets/FOMO60K/` |
 | MAISI VAE weights (80MB) | `/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/autoencoder_v2.pt` |
 | MAISI diffusion weights (2.1GB) | `/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt` |
 | Results root | `/media/mpascual/Sandisk2TB/research/neuromf/results/` |
@@ -191,7 +191,7 @@ These capture findings from reading the vendored repos so you don't need to re-e
 
 | Topic | Path | Key content |
 |-------|------|------------|
-| IXI Dataset | `/home/mpascual/research/code/neuromf/docs/data/ixi_exploration.md` | 581 T1 files, shapes, spacing, intensity ranges, preprocessing pipeline (Orientation→Spacing→Percentile→Crop) |
+| FOMO-60K Dataset | `/home/mpascual/research/code/neuromf/docs/data/fomo60k_exploration.md` | 1,379 T1 sessions, 3 datasets, metadata structure, group labels, preprocessing status |
 | MAISI Checkpoints | `/home/mpascual/research/code/neuromf/docs/data/checkpoint_exploration.md` | VAE state dict structure (wrapped in `"unet_state_dict"`), diffusion checkpoint keys, **scale_factor=0.9624** extraction code |
 
 ### 6.5 Paper PDFs
@@ -248,8 +248,8 @@ Full standards are in `.claude/rules/coding-standards.md` (auto-loaded). The ess
 
 | Phase | Must read | Useful if stuck |
 |-------|-----------|----------------|
-| 0 | `phase_0.md`, `maisi_2024/code_exploration.md`, `checkpoint_exploration.md` | `ixi_exploration.md` |
-| 1 | `phase_1.md`, `ixi_exploration.md`, `maisi_2024/code_exploration.md` | — |
+| 0 | `phase_0.md`, `maisi_2024/code_exploration.md`, `checkpoint_exploration.md` | `fomo60k_exploration.md` |
+| 1 | `phase_1.md`, `fomo60k_exploration.md`, `maisi_2024/code_exploration.md` | — |
 | 2 | `phase_2.md`, `meanflow_2025/code_exploration.md` | `pytorch_code_exploration.md` |
 | 3 | `phase_3.md`, `pytorch_code_exploration.md`, `pmf_2026/code_exploration.md` | `methodology_expanded.md` §2-4 |
 | 4 | `phase_4.md` | `technical_guide.md` §6 |

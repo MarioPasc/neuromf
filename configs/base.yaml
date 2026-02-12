@@ -9,8 +9,7 @@ paths:
 
   # Data
   datasets_root: "/media/mpascual/Sandisk2TB/research/neuromf/datasets"
-  ixi_root: "/media/mpascual/Sandisk2TB/research/neuromf/datasets/IXI"
-  ixi_t1: "/media/mpascual/Sandisk2TB/research/neuromf/datasets/IXI/IXI-T1"
+  fomo60k_root: "/media/mpascual/Sandisk2TB/research/neuromf/datasets/FOMO60K"
 
   # Model weights
   checkpoints_root: "/media/mpascual/Sandisk2TB/research/neuromf/checkpoints"

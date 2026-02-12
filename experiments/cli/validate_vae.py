@@ -1,4 +1,4 @@
-"""CLI script for MAISI VAE reconstruction validation on IXI brain MRI.
+"""CLI script for MAISI VAE reconstruction validation on FOMO-60K brain MRI.
 
 Produces publication-quality figures, latent space statistics, negative
 controls, and rich HTML/Markdown reports.
@@ -23,7 +23,8 @@ import torch
 from omegaconf import OmegaConf
 from rich.logging import RichHandler
 
-from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config, get_ixi_file_list
+from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
+from neuromf.data.fomo60k import FOMO60KConfig, get_fomo60k_file_list
 from neuromf.metrics.ssim_psnr import compute_psnr, compute_ssim_3d
 from neuromf.utils.visualisation import (
     plot_error_heatmap,
@@ -451,15 +452,17 @@ def generate_enhanced_markdown_report(
 
 
 def main() -> None:
-    """Run VAE validation on IXI volumes with figures and negative controls."""
+    """Run VAE validation on FOMO-60K volumes with figures and negative controls."""
     parser = argparse.ArgumentParser(description="MAISI VAE reconstruction validation")
     parser.add_argument("--config", type=str, required=True, help="Path to vae_validation.yaml")
     args = parser.parse_args()
 
-    # Load merged config
-    base_cfg = OmegaConf.load(Path(__file__).resolve().parents[2] / "configs" / "base.yaml")
+    # Load merged config (base + fomo60k + vae_validation)
+    configs_dir = Path(__file__).resolve().parents[2] / "configs"
+    base_cfg = OmegaConf.load(configs_dir / "base.yaml")
+    fomo60k_cfg = OmegaConf.load(configs_dir / "fomo60k.yaml")
     vae_cfg = OmegaConf.load(args.config)
-    config = OmegaConf.merge(base_cfg, vae_cfg)
+    config = OmegaConf.merge(base_cfg, fomo60k_cfg, vae_cfg)
     OmegaConf.resolve(config)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -472,8 +475,9 @@ def main() -> None:
     # Build preprocessing
     transform = build_mri_preprocessing_from_config(config)
 
-    # Get file list
-    file_list = get_ixi_file_list(config.paths.ixi_t1, n_volumes=config.data.n_validation)
+    # Get file list from FOMO-60K
+    fomo60k_config = FOMO60KConfig.from_omegaconf(config)
+    file_list = get_fomo60k_file_list(fomo60k_config, n_volumes=config.data.n_validation)
 
     # Output dirs
     figures_dir = Path(config.output.figures_dir)

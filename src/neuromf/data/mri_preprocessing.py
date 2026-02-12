@@ -1,14 +1,14 @@
 """MRI preprocessing pipeline using MONAI transforms.
 
-Provides composable transforms for loading, reorienting, resampling,
-intensity-normalising, and cropping/padding 3D brain MRI volumes to a
-fixed 128^3 target shape suitable for the MAISI VAE.
+Provides composable transforms for resampling, intensity-normalising, and
+cropping/padding 3D brain MRI volumes to a fixed 128^3 target shape suitable
+for the MAISI VAE. Designed for FOMO-60K data which is already skull-stripped
+and RAS-oriented.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
@@ -17,7 +17,6 @@ from monai.transforms import (
     EnsureChannelFirstd,
     EnsureTyped,
     LoadImaged,
-    Orientationd,
     ResizeWithPadOrCropd,
     ScaleIntensityRangePercentilesd,
     Spacingd,
@@ -54,7 +53,7 @@ def build_mri_preprocessing_transform(
         [
             LoadImaged(keys=["image"], image_only=True),
             EnsureChannelFirstd(keys=["image"]),
-            Orientationd(keys=["image"], axcodes="RAS"),
+            # No Orientationd — FOMO-60K data is already RAS-oriented
             Spacingd(keys=["image"], pixdim=target_spacing, mode="bilinear"),
             ScaleIntensityRangePercentilesd(
                 keys=["image"],
@@ -114,29 +113,3 @@ def preprocess_single_volume(
     )
     data = transform({"image": str(nifti_path)})
     return data["image"]
-
-
-def get_ixi_file_list(
-    dataset_root: str | Path,
-    n_volumes: int | None = None,
-) -> list[dict[str, str]]:
-    """Glob IXI T1 NIfTI files and return MONAI-format dicts.
-
-    Args:
-        dataset_root: Root directory containing ``*.nii.gz`` files.
-        n_volumes: If set, return only the first *n_volumes* (sorted by name).
-
-    Returns:
-        List of dicts ``[{"image": "/path/to/file.nii.gz"}, ...]``.
-    """
-    root = Path(dataset_root)
-    files = sorted(root.glob("*.nii.gz"))
-    if not files:
-        raise FileNotFoundError(f"No .nii.gz files found in {root}")
-    logger.info("Found %d NIfTI files in %s", len(files), root)
-
-    if n_volumes is not None:
-        files = files[:n_volumes]
-        logger.info("Using first %d volumes", n_volumes)
-
-    return [{"image": str(f)} for f in files]

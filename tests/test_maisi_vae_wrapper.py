@@ -26,10 +26,11 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="module")
 def merged_config(base_config):
-    """Merge base.yaml with vae_validation.yaml."""
-    vae_cfg_path = Path(__file__).parent.parent / "configs" / "vae_validation.yaml"
-    vae_cfg = OmegaConf.load(vae_cfg_path)
-    merged = OmegaConf.merge(base_config, vae_cfg)
+    """Merge base.yaml + fomo60k.yaml + vae_validation.yaml."""
+    configs_dir = Path(__file__).parent.parent / "configs"
+    fomo60k_cfg = OmegaConf.load(configs_dir / "fomo60k.yaml")
+    vae_cfg = OmegaConf.load(configs_dir / "vae_validation.yaml")
+    merged = OmegaConf.merge(base_config, fomo60k_cfg, vae_cfg)
     OmegaConf.resolve(merged)
     return merged
 
@@ -67,14 +68,12 @@ def validation_metrics(merged_config) -> dict:
     if device.type != "cuda":
         pytest.skip("No GPU available for inline VAE validation")
 
-    from neuromf.data.mri_preprocessing import (
-        build_mri_preprocessing_from_config,
-        get_ixi_file_list,
-    )
+    from neuromf.data.fomo60k import FOMO60KConfig, get_fomo60k_file_list
+    from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
 
-    ixi_root = merged_config.paths.ixi_t1
-    if not Path(ixi_root).exists():
-        pytest.skip("IXI dataset not available")
+    fomo60k_root = merged_config.paths.fomo60k_root
+    if not Path(fomo60k_root).exists():
+        pytest.skip("FOMO-60K dataset not available")
 
     import numpy as np
 
@@ -83,7 +82,8 @@ def validation_metrics(merged_config) -> dict:
     vae_config = MAISIVAEConfig.from_omegaconf(merged_config)
     vae = MAISIVAEWrapper(vae_config, device=device)
     transform = build_mri_preprocessing_from_config(merged_config)
-    file_list = get_ixi_file_list(ixi_root, n_volumes=merged_config.data.n_validation)
+    fomo60k_config = FOMO60KConfig.from_omegaconf(merged_config)
+    file_list = get_fomo60k_file_list(fomo60k_config, n_volumes=merged_config.data.n_validation)
 
     per_volume = []
     for data_dict in file_list:
@@ -244,27 +244,30 @@ def test_P0_T10_scale_factor_matters(vae_wrapper: MAISIVAEWrapper, device: torch
     """P0-T10: Correct scale factor yields higher SSIM than sf=1.0."""
     from neuromf.metrics.ssim_psnr import compute_ssim_3d
 
-    # Try real IXI volume first; fall back to clamped random
+    # Try real FOMO-60K volume first; fall back to clamped random
     try:
-        from neuromf.data.mri_preprocessing import (
-            build_mri_preprocessing_from_config,
-            get_ixi_file_list,
-        )
+        from neuromf.data.fomo60k import FOMO60KConfig as _FC
+        from neuromf.data.fomo60k import get_fomo60k_file_list as _get_files
+        from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
 
-        vae_cfg_path = Path(__file__).parent.parent / "configs" / "vae_validation.yaml"
-        base_cfg_path = Path(__file__).parent.parent / "configs" / "base.yaml"
+        configs_dir = Path(__file__).parent.parent / "configs"
         from omegaconf import OmegaConf as _OC
 
-        _cfg = _OC.merge(_OC.load(base_cfg_path), _OC.load(vae_cfg_path))
+        _cfg = _OC.merge(
+            _OC.load(configs_dir / "base.yaml"),
+            _OC.load(configs_dir / "fomo60k.yaml"),
+            _OC.load(configs_dir / "vae_validation.yaml"),
+        )
         _OC.resolve(_cfg)
-        ixi_files = get_ixi_file_list(_cfg.paths.ixi_t1, n_volumes=1)
+        _fomo_cfg = _FC.from_omegaconf(_cfg)
+        fomo_files = _get_files(_fomo_cfg, n_volumes=1)
         transform = build_mri_preprocessing_from_config(_cfg)
-        processed = transform(ixi_files[0])
+        processed = transform(fomo_files[0])
         x = processed["image"].unsqueeze(0).to(device)
-        logger.info("Using real IXI volume for scale factor test")
+        logger.info("Using real FOMO-60K volume for scale factor test")
     except Exception:
         x = torch.randn(1, 1, 128, 128, 128, device=device).clamp(0.0, 1.0)
-        logger.info("Using random input for scale factor test (IXI unavailable)")
+        logger.info("Using random input for scale factor test (FOMO-60K unavailable)")
 
     z = vae_wrapper.encode(x)
 

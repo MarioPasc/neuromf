@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "neuromf"
 version = "0.1.0"
-description = "Volumetric pixel Mean Flow for 3D medical image generation"
+description = "Neuro MeanFlow: Leveraging Mean Flow Matching in Latent Space for 3D T1-weighted MRI Generation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}

@@ -9,7 +9,7 @@ from rich.table import Table
 
 # Input paths that MUST exist
 INPUT_KEYS = [
-    "paths.ixi_t1",
+    "paths.fomo60k_root",
     "paths.maisi_vae_weights",
     "paths.maisi_diffusion_weights",
     "paths.conda_python",
