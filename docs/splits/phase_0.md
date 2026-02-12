@@ -32,8 +32,8 @@ The MAISI VAE (Guo et al., 2024) is a 3D VAE-GAN with the following properties:
 
 Before training any generative model, we must validate that the frozen MAISI VAE faithfully reconstructs brain MRI at our target resolution. The protocol:
 
-1. Select a held-out set of N_val = 100 brain MRI volumes from IXI.
-2. Preprocess: skull-strip, resample to 128^3 at 1mm^3 isotropic, intensity normalise to [0, 1].
+1. Select a held-out set of N_val = 100 brain MRI volumes from FOMO-60K (healthy-control subset).
+2. Preprocess: resample to 128^3 at 1mm^3 isotropic, intensity normalise to [0, 1]. (FOMO-60K data is already skull-stripped and RAS-oriented.)
 3. Encode and decode: x̂ = D_φ(E_φ(x)).
 4. Compute metrics:
    - **SSIM** (Structural Similarity Index): > 0.90 required
@@ -88,12 +88,12 @@ After encoding the full training set, compute and report:
 ### `configs/vae_validation.yaml`
 - **Key fields:**
   - `vae.weights_path`: path to MAISI VAE weights
-  - `data.dataset_root`: path to IXI dataset
+  - `fomo60k`: dataset filter config (merged from `configs/fomo60k.yaml`)
   - `data.n_validation`: 20 (quick) or 100 (full)
   - `output_dir`: `experiments/vae_validation/`
 
 ### `experiments/cli/validate_vae.py`
-- **Purpose:** CLI script that loads VAE, encodes+decodes IXI volumes, computes metrics.
+- **Purpose:** CLI script that loads VAE, encodes+decodes FOMO-60K volumes, computes metrics.
 - **Output:** `experiments/vae_validation/metrics.json` with SSIM, PSNR, LPIPS per volume.
 
 ### `tests/test_maisi_vae_wrapper.py`
@@ -101,8 +101,8 @@ After encoding the full training set, compute and report:
 
 ## 5. Data and I/O
 
-- **Input:** IXI NIfTI brain MRI volumes (T1W), path configured in `configs/vae_validation.yaml`
-- **Preprocessing:** skull-strip (SynthStrip), N4 bias correction, resample to 1mm^3, crop/pad to 128^3, normalise [0,1]
+- **Input:** FOMO-60K brain MRI volumes (T1W), filtered via `configs/fomo60k.yaml` (healthy controls from OASIS-1, OASIS-2, IXI)
+- **Preprocessing:** resample to 1mm^3 isotropic, percentile intensity normalise to [0,1], crop/pad to 128^3. (No skull-stripping or reorientation needed — FOMO-60K data is already skull-stripped and RAS-oriented.)
 - **Output:**
   - `experiments/vae_validation/metrics.json` — per-volume SSIM, PSNR, LPIPS
   - `experiments/vae_validation/reconstructions/` — sample reconstructed NIfTI files for visual inspection
@@ -115,7 +115,7 @@ After encoding the full training set, compute and report:
 | P0-T1 | MAISI VAE weights load without error | No exceptions | CRITICAL | `python -c "from neuromf.wrappers.maisi_vae import MAISIVAEWrapper; w = MAISIVAEWrapper(config)"` |
 | P0-T2 | Encode produces correct shape | `z.shape == (B, 4, 32, 32, 32)` for `x.shape == (B, 1, 128, 128, 128)` | CRITICAL | Unit test with random tensor |
 | P0-T3 | Decode produces correct shape | `x_hat.shape == (B, 1, 128, 128, 128)` for `z.shape == (B, 4, 32, 32, 32)` | CRITICAL | Unit test with random tensor |
-| P0-T4 | Round-trip reconstruction SSIM > 0.90 | Mean SSIM over 20 IXI volumes > 0.90 | CRITICAL | Run `validate_vae.py`, check `metrics.json` |
+| P0-T4 | Round-trip reconstruction SSIM > 0.90 | Mean SSIM over 20 FOMO-60K volumes > 0.90 | CRITICAL | Run `validate_vae.py`, check `metrics.json` |
 | P0-T5 | Round-trip PSNR > 30 dB | Mean PSNR > 30.0 | CRITICAL | Same as P0-T4 |
 | P0-T6 | VAE is frozen (no grads) | All `param.requires_grad == False` | CRITICAL | Assert all VAE params frozen |
 | P0-T7 | bf16 inference works | No NaN/Inf in output | CRITICAL | Test with `torch.autocast("cuda", dtype=torch.bfloat16)` |

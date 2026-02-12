@@ -1,0 +1,13 @@
+# FOMO-60K Dataset Configuration
+# Reusable across phases. Merged with base.yaml at runtime.
+
+fomo60k:
+  datasets:
+    - name: PT001_OASIS1
+      groups: ["nondemented", ""]  # include NaN-group subjects
+    - name: PT002_OASIS2
+      groups: ["Nondemented"]
+    - name: PT005_IXI
+      groups: ["Control"]
+  sequences: ["t1"]
+  primary_scan_only: true

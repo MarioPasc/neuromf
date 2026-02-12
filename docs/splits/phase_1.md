@@ -45,11 +45,12 @@ $$
 - **Purpose:** NIfTI → preprocessed 128^3 normalised tensor pipeline.
 - **Key functions:**
   ```python
-  def get_preprocessing_transforms(config: PreprocessingConfig) -> monai.transforms.Compose: ...
-  def preprocess_volume(nifti_path: Path, config: PreprocessingConfig) -> torch.Tensor: ...
+  def build_mri_preprocessing_transform(...) -> monai.transforms.Compose: ...
+  def preprocess_single_volume(nifti_path: Path, ...) -> torch.Tensor: ...
   ```
-- **Pipeline:** NIfTI → SynthStrip skull-stripping → N4 bias correction → resample 1mm^3 → crop/pad 128^3 → normalise [0,1]
-- **Dependencies:** MONAI transforms (`LoadImaged`, `EnsureChannelFirstd`, `Spacingd`, `CropForegroundd`, `Resized`, `ScaleIntensityd`)
+- **Pipeline:** NIfTI → resample 1mm^3 isotropic → percentile intensity normalise [0,1] → crop/pad 128^3. (No skull-stripping or reorientation — FOMO-60K data is already skull-stripped and RAS-oriented.)
+- **Dependencies:** MONAI transforms (`LoadImaged`, `EnsureChannelFirstd`, `Spacingd`, `ScaleIntensityRangePercentilesd`, `ResizeWithPadOrCropd`, `EnsureTyped`)
+- **Data loading:** `src/neuromf/data/fomo60k.py` provides `FOMO60KConfig` and `get_fomo60k_file_list()` for metadata-filtered file listing
 
 ### `src/neuromf/data/latent_dataset.py`
 - **Purpose:** PyTorch Dataset of pre-computed `.pt` latents.
@@ -73,10 +74,10 @@ $$
 ### `configs/encode_dataset.yaml`
 - **Key fields:**
   - `vae.weights_path`: path to MAISI VAE weights
-  - `data.dataset_root`: path to IXI/OASIS dataset
+  - `fomo60k`: dataset filter config (merged from `configs/fomo60k.yaml`)
   - `data.output_dir`: path for `.pt` latent files
   - `data.batch_size`: 4
-  - `preprocessing`: skull-strip, N4, spacing, crop, normalise options
+  - `preprocessing`: spacing, intensity normalise, crop/pad options (skull-stripping not needed)
 
 ### `experiments/cli/encode_dataset.py`
 - **Purpose:** CLI to encode all volumes and compute stats.
@@ -84,7 +85,7 @@ $$
 
 ## 5. Data and I/O
 
-- **Input:** IXI NIfTI brain MRI volumes (T1W), path from config
+- **Input:** FOMO-60K brain MRI volumes (T1W), filtered via `configs/fomo60k.yaml` (healthy controls from OASIS-1, OASIS-2, IXI — ~1,100 volumes)
 - **Output:**
   - `{output_dir}/{subject_id}.pt` — one file per volume, containing `{"z": tensor(4,32,32,32), "metadata": {...}}`
   - `{output_dir}/latent_stats.json` — per-channel statistics
@@ -122,7 +123,6 @@ $$
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| SynthStrip not available | Blocks preprocessing | Low | Install via `pip install synthstrip`; fallback to MONAI `SkullStripd` |
-| N4 bias correction crashes on some volumes | Blocks P1-T1 | Low | Wrap in try/except, skip problematic volumes, log warnings |
+| Missing FOMO-60K files on disk | Blocks P1-T1 | Low | `get_fomo60k_file_list` logs warnings for missing files; verify with `verify_paths.py` |
 | Latent stats far from expected (μ ≠ 0, σ ≠ 1) | Informational | Medium | This just means normalisation is needed; compute and apply |
 | Disk space insufficient for all latents | Blocks P1-T1 | Low | Each latent is ~0.5 MB; 1000 volumes = ~500 MB. Check disk before starting |

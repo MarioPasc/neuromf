@@ -8,7 +8,7 @@
 
 ## 1. Objective
 
-Train the latent MeanFlow model on IXI + OASIS-3 pre-computed latents, monitor training with loss curves and periodic sample generation, and select the best EMA checkpoint. This phase produces the core trained model that Phases 5–8 all depend on.
+Train the latent MeanFlow model on FOMO-60K pre-computed latents (healthy controls from OASIS-1, OASIS-2, IXI), monitor training with loss curves and periodic sample generation, and select the best EMA checkpoint. This phase produces the core trained model that Phases 5–8 all depend on.
 
 ## 2. Theoretical Background
 

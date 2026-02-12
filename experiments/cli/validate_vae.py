@@ -23,8 +23,8 @@ import torch
 from omegaconf import OmegaConf
 from rich.logging import RichHandler
 
-from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
 from neuromf.data.fomo60k import FOMO60KConfig, get_fomo60k_file_list
+from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
 from neuromf.metrics.ssim_psnr import compute_psnr, compute_ssim_3d
 from neuromf.utils.visualisation import (
     plot_error_heatmap,
@@ -251,9 +251,8 @@ def generate_enhanced_html_report(
     # Per-volume rows
     per_vol_rows = ""
     for m in metrics:
-        per_vol_rows += (
-            f"<tr><td>{m['filename']}</td><td>{m['ssim']:.4f}</td><td>{m['psnr']:.2f}</td></tr>\n"
-        )
+        ds = m.get("dataset", "")
+        per_vol_rows += f"<tr><td>{ds}</td><td>{m['filename']}</td><td>{m['ssim']:.4f}</td><td>{m['psnr']:.2f}</td></tr>\n"
 
     # Reconstruction figures
     recon_figures_html = ""
@@ -353,7 +352,7 @@ Brighter regions indicate higher error, typically at tissue boundaries.</p>
 <details>
 <summary>Click to expand ({len(metrics)} volumes)</summary>
 <table>
-<tr><th>Volume</th><th>SSIM</th><th>PSNR (dB)</th></tr>
+<tr><th>Dataset</th><th>Volume</th><th>SSIM</th><th>PSNR (dB)</th></tr>
 {per_vol_rows}
 </table>
 </details>
@@ -435,12 +434,13 @@ def generate_enhanced_markdown_report(
             "",
             "## Per-Volume Results",
             "",
-            "| Volume | SSIM | PSNR (dB) |",
-            "|--------|------|-----------|",
+            "| Dataset | Volume | SSIM | PSNR (dB) |",
+            "|---------|--------|------|-----------|",
         ]
     )
     for m in metrics:
-        lines.append(f"| {m['filename']} | {m['ssim']:.4f} | {m['psnr']:.2f} |")
+        ds = m.get("dataset", "")
+        lines.append(f"| {ds} | {m['filename']} | {m['ssim']:.4f} | {m['psnr']:.2f} |")
 
     output_path.write_text("\n".join(lines))
     logger.info("Enhanced markdown report written to %s", output_path)
@@ -502,13 +502,20 @@ def main() -> None:
     target_shape = tuple(config.data.target_shape)
     mean_error_accum = np.zeros(target_shape, dtype=np.float64)
 
+    # Per-dataset reconstruction save counter (at least 2 per dataset)
+    n_per_dataset = config.output.get("n_save_per_dataset", 2)
+    dataset_save_counts: dict[str, int] = {}
+
     # Run validation
     metrics_list: list[dict] = []
     t_start = time.time()
 
     for i, data_dict in enumerate(file_list):
-        filename = Path(data_dict["image"]).name
-        logger.info("[%d/%d] Processing %s", i + 1, n_volumes, filename)
+        filepath = Path(data_dict["image"])
+        filename = filepath.name
+        # Extract dataset name: .../FOMO60K/{dataset}/sub_X/ses_Y/t1.nii.gz
+        dataset_name = filepath.parent.parent.parent.name
+        logger.info("[%d/%d] Processing %s (%s)", i + 1, n_volumes, filename, dataset_name)
 
         # Preprocess
         processed = transform(data_dict)
@@ -540,32 +547,43 @@ def main() -> None:
         # Metrics
         psnr_val = compute_psnr(x, x_hat)
         ssim_val = compute_ssim_3d(x.cpu(), x_hat.cpu())
-        metrics_list.append({"filename": filename, "ssim": ssim_val, "psnr": psnr_val})
+        metrics_list.append(
+            {
+                "filename": filename,
+                "dataset": dataset_name,
+                "ssim": ssim_val,
+                "psnr": psnr_val,
+            }
+        )
         logger.info("  SSIM=%.4f  PSNR=%.2f dB", ssim_val, psnr_val)
 
         # Accumulate mean absolute error
         error_np = (x - x_hat).abs().squeeze().cpu().float().numpy()
         mean_error_accum += error_np / n_volumes
 
-        # Save reconstruction NIfTI for first N volumes
-        n_save = config.output.n_save_reconstructions
-        if i < n_save:
+        # Save reconstruction examples: at least n_per_dataset per dataset
+        ds_count = dataset_save_counts.get(dataset_name, 0)
+        if ds_count < n_per_dataset:
+            dataset_save_counts[dataset_name] = ds_count + 1
             recon_dir = Path(config.output.reconstructions_dir)
             recon_dir.mkdir(parents=True, exist_ok=True)
+            # Use subject ID for readable names
+            subject_id = filepath.parent.parent.name
             recon_np = x_hat.clamp(0.0, 1.0).squeeze().cpu().float().numpy()
             nii = nib.Nifti1Image(recon_np, affine=np.eye(4))
-            out_path = recon_dir / f"recon_{filename}"
+            out_path = recon_dir / f"recon_{dataset_name}_{subject_id}.nii.gz"
             nib.save(nii, str(out_path))
             logger.info("  Saved reconstruction to %s", out_path)
 
-            # Reconstruction comparison figure
+            # Reconstruction comparison figure (center-cropped)
             orig_np = x.squeeze().cpu().float().numpy()
-            vol_name = Path(filename).stem
+            vol_label = f"{dataset_name} / {subject_id}"
             plot_reconstruction_comparison(
                 orig_np,
                 recon_np,
-                vol_name,
-                figures_dir / f"reconstruction_{vol_name}",
+                vol_label,
+                figures_dir / f"reconstruction_{dataset_name}_{subject_id}",
+                crop_frac=0.75,
             )
 
         # Free VRAM

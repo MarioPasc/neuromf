@@ -68,21 +68,41 @@ def save_figure(fig: plt.Figure, path: Path) -> None:
     logger.info("Saved figure: %s.{pdf,png}", stem)
 
 
+def _center_crop_2d(arr: np.ndarray, crop_frac: float) -> np.ndarray:
+    """Crop a 2D array to its central region.
+
+    Args:
+        arr: 2D array of shape ``(H, W)``.
+        crop_frac: Fraction of each axis to keep (0, 1]. 1.0 = no crop.
+
+    Returns:
+        Cropped 2D array.
+    """
+    if crop_frac >= 1.0:
+        return arr
+    h, w = arr.shape
+    ch, cw = int(h * crop_frac), int(w * crop_frac)
+    y0, x0 = (h - ch) // 2, (w - cw) // 2
+    return arr[y0 : y0 + ch, x0 : x0 + cw]
+
+
 def _get_center_slices(
     vol: np.ndarray,
+    crop_frac: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Extract center axial, sagittal, and coronal slices from a 3D volume.
 
     Args:
         vol: 3D array of shape ``(H, W, D)``.
+        crop_frac: Fraction of each 2D slice to keep (center crop).
 
     Returns:
         Tuple of (axial, sagittal, coronal) 2D slices.
     """
     h, w, d = vol.shape
-    axial = vol[:, :, d // 2]
-    sagittal = vol[h // 2, :, :]
-    coronal = vol[:, w // 2, :]
+    axial = _center_crop_2d(vol[:, :, d // 2], crop_frac)
+    sagittal = _center_crop_2d(vol[h // 2, :, :], crop_frac)
+    coronal = _center_crop_2d(vol[:, w // 2, :], crop_frac)
     return axial, sagittal, coronal
 
 
@@ -91,6 +111,7 @@ def plot_reconstruction_comparison(
     recon: np.ndarray,
     name: str,
     path: Path,
+    crop_frac: float = 0.75,
 ) -> None:
     """Plot 3x3 grid: rows=axial/sag/cor, cols=original/recon/abs error.
 
@@ -99,13 +120,14 @@ def plot_reconstruction_comparison(
         recon: Reconstructed volume as 3D numpy array ``(H, W, D)``.
         name: Volume identifier for the title.
         path: Output path (extension ignored; PDF+PNG saved).
+        crop_frac: Fraction of each 2D slice to keep (center crop for zoom).
     """
     _apply_style()
     error = np.abs(original - recon)
 
-    orig_slices = _get_center_slices(original)
-    recon_slices = _get_center_slices(recon)
-    error_slices = _get_center_slices(error)
+    orig_slices = _get_center_slices(original, crop_frac)
+    recon_slices = _get_center_slices(recon, crop_frac)
+    error_slices = _get_center_slices(error, crop_frac)
 
     view_labels = ["Axial", "Sagittal", "Coronal"]
     col_labels = ["Original", "Reconstruction", "|Error|"]

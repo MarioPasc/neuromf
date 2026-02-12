@@ -1,0 +1,30 @@
+# NeuroMF Base Configuration
+# All paths are absolute to avoid ambiguity across environments.
+
+paths:
+  project_root: "/home/mpascual/research/code/neuromf"
+  external_root: "/media/mpascual/Sandisk2TB/research/neuromf"
+  conda_python: "/home/mpascual/.conda/envs/neuromf/bin/python"
+  conda_env: "/home/mpascual/.conda/envs/neuromf"
+
+  # Data
+  datasets_root: "/media/mpascual/Sandisk2TB/research/neuromf/datasets"
+  fomo60k_root: "/media/mpascual/Sandisk2TB/research/neuromf/datasets/FOMO60K"
+
+  # Model weights
+  checkpoints_root: "/media/mpascual/Sandisk2TB/research/neuromf/checkpoints"
+  maisi_vae_weights: "/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/autoencoder_v2.pt"
+  maisi_diffusion_weights: "/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt"
+
+  # Outputs (on external drive for space)
+  results_root: "/media/mpascual/Sandisk2TB/research/neuromf/results"
+  latents_dir: "/media/mpascual/Sandisk2TB/research/neuromf/results/latents"
+  generated_dir: "/media/mpascual/Sandisk2TB/research/neuromf/results/generated"
+  figures_dir: "/media/mpascual/Sandisk2TB/research/neuromf/results/figures"
+  logs_dir: "/media/mpascual/Sandisk2TB/research/neuromf/results/logs"
+  training_checkpoints: "/media/mpascual/Sandisk2TB/research/neuromf/results/training_checkpoints"
+
+hardware:
+  gpu: "NVIDIA RTX 4060 Laptop"
+  vram_gb: 8
+  max_batch_size_vae: 1  # 128^3 volumes on 8GB VRAM
