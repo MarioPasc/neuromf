@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J neuromf_p2_toroid
-#SBATCH --time=0-03:00:00
+#SBATCH --time=0-23:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G

@@ -51,7 +51,7 @@ mkdir -p "${RESULTS_DST}/tables"
 # ========================================================================
 JOB_ID=$(sbatch --parsable \
     --job-name="neuromf_p2_toroid" \
-    --time=0-03:00:00 \
+    --time=0-23:00:00 \
     --ntasks=1 \
     --cpus-per-task=16 \
     --mem=32G \
