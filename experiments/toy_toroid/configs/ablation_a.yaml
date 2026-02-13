@@ -1,0 +1,5 @@
+# Ablation A: Convergence Baseline (Q1)
+# D=4, u-pred, p=2.0, data_proportion=0.75
+# Uses all base defaults — no overrides needed.
+ablation: "a"
+run_name: "baseline_D4_u-pred_p2.0_dp0.75"

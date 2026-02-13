@@ -1,0 +1,5 @@
+# Ablation C: Lp Norm Sweep (Q3)
+# D=4, u-pred, varying p
+ablation: "c"
+sweep:
+  p: [1.0, 1.5, 2.0, 3.0]

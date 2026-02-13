@@ -1,0 +1,6 @@
+# Ablation D: NFE Sweep (Q4)
+# Inference-only from Ablation A's trained model
+ablation: "d"
+nfe_values: [1, 2, 5, 10, 25, 50]
+n_eval_samples: 2000
+source_checkpoint: "ablation_a/baseline_D4_u-pred_p2.0_dp0.75"

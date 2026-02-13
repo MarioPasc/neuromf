@@ -1,0 +1,32 @@
+data:
+  mode: "r4"
+  n_samples: 10000
+
+model:
+  type: "mlp"
+  data_dim: 4
+  hidden_dim: 256
+  n_layers: 7
+  prediction_type: "u"
+
+training:
+  epochs: 200
+  batch_size: 256
+  lr: 1.0e-3
+  optimizer: "adam"
+  seed: 42
+
+loss:
+  p: 2.0
+  adaptive: true
+  norm_eps: 0.01
+  lambda_mf: 1.0
+
+sampling:
+  mu: -0.4
+  sigma: 1.0
+  t_min: 0.001
+  data_proportion: 0.5
+
+output:
+  dir: "experiments/toy_toroid"

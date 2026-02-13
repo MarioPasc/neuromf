@@ -1,0 +1,41 @@
+# Base config for Phase 2 formal toroid experiment
+# All ablation configs override from this base.
+
+results_dir: "/media/mpascual/Sandisk2TB/research/neuromf/results/phase_2/toroid"
+
+data:
+  mode: "r4"
+  n_samples: 50000
+  ambient_dim: 4
+
+model:
+  data_dim: 4  # set to ambient_dim at runtime
+  hidden_dim: 256
+  n_layers: 7
+  prediction_type: "u"
+
+training:
+  epochs: 500
+  batch_size: 512
+  lr: 1.0e-3
+  betas: [0.9, 0.95]
+  seed: 42
+  eval_every: 50
+  ema_decay: 0.999
+
+loss:
+  p: 2.0
+  adaptive: true
+  norm_eps: 0.01
+  lambda_mf: 1.0
+
+sampling:
+  mu: -0.4
+  sigma: 1.0
+  t_min: 0.001
+  data_proportion: 0.75
+
+eval:
+  n_samples_quick: 1000
+  n_samples_full: 5000
+  multi_step_nfe: 10

@@ -1,0 +1,6 @@
+# Ablation B: x-Prediction vs u-Prediction x Dimensionality (Q2)
+# KEY RESULT — 4x2 = 8 runs
+ablation: "b"
+sweep:
+  ambient_dim: [4, 16, 64, 256]
+  prediction_type: ["u", "x"]
