@@ -23,7 +23,7 @@ vae:
   downsample_factor: 4
 
 data:
-  target_shape: [128, 128, 128]
+  target_shape: [192, 192, 192]
   target_spacing: [1.0, 1.0, 1.0]
   intensity_lower_percentile: 0.0
   intensity_upper_percentile: 99.5

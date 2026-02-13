@@ -4,10 +4,10 @@
 fomo60k:
   datasets:
     - name: PT001_OASIS1
-      groups: ["nondemented", ""]  # include NaN-group subjects
+      groups: ["Control", "nondemented", ""]  # include NaN-group subjects
     - name: PT002_OASIS2
-      groups: ["Nondemented"]
+      groups: ["Control", "Nondemented", ""]
     - name: PT005_IXI
-      groups: ["Control"]
+      groups: ["Control", ""]
   sequences: ["t1"]
   primary_scan_only: true

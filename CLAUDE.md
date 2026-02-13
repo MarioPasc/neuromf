@@ -2,25 +2,25 @@
 
 ## 1. What This Project Does
 
-NeuroMF trains a **MeanFlow** model in the latent space of a **frozen MAISI 3D VAE** to achieve **1-step (1-NFE) generation** of 128^3 brain MRI volumes. The project introduces per-channel Lp loss (extending SLIM-Diff to latent space) and LoRA fine-tuning for joint synthesis of rare epilepsy pathology (FCD). Target venues: Medical Image Analysis, IEEE TMI, or MICCAI 2026.
+NeuroMF trains a **MeanFlow** model in the latent space of a **frozen MAISI 3D VAE** to achieve **1-step (1-NFE) generation** of 192^3 brain MRI volumes. The project introduces per-channel Lp loss (extending SLIM-Diff to latent space) and LoRA fine-tuning for joint synthesis of rare epilepsy pathology (FCD). Target venues: Medical Image Analysis, IEEE TMI, or MICCAI 2026.
 
 ### Core Pipeline
 
 ```
-Input MRI (1×128³) ─► Frozen MAISI VAE Encoder ─► Latent (4×32³)
+Input MRI (1×192³) ─► Frozen MAISI VAE Encoder ─► Latent (4×48³)
                                                       │
                                               Train MeanFlow (1-NFE)
                                                       │
                                                       ▼
-Synthetic MRI (1×128³) ◄── Frozen MAISI VAE Decoder ◄─┘
+Synthetic MRI (1×192³) ◄── Frozen MAISI VAE Decoder ◄─┘
 ```
 
 ### Key Shapes
 
 | Space | Shape | Notes |
 |-------|-------|-------|
-| Pixel | `(B, 1, 128, 128, 128)` | Single-channel MRI |
-| Latent | `(B, 4, 32, 32, 32)` | 4x spatial compression per axis, 1→4 channels |
+| Pixel | `(B, 1, 192, 192, 192)` | Single-channel MRI |
+| Latent | `(B, 4, 48, 48, 48)` | 4x spatial compression per axis, 1→4 channels |
 
 ### MeanFlow in One Paragraph
 
@@ -39,11 +39,18 @@ These are verified values from checkpoint and dataset inspection. Use them direc
 | VAE spatial compression | 4× per axis | 3 encoder levels, `num_channels=[64,128,256]` |
 | VAE total parameters | 20,944,897 (~21M) | 130 state dict entries |
 | VAE attention | **None** | All `attention_levels=false`, no nonlocal attention |
-| VAE memory splits | `num_splits=4, dim_split=1` | Enables 128³ on 8GB VRAM |
+| VAE memory splits | `num_splits=6, dim_split=1` | Enables 192³ on 8GB VRAM |
 | VAE checkpoint format | Wrapped in `"unet_state_dict"` key | Must unwrap before `load_state_dict` |
 | FOMO-60K subset | ~1,379 T1 sessions (3 datasets) | PT001_OASIS1, PT002_OASIS2, PT005_IXI |
 | FOMO-60K status | Skull-stripped, RAS, co-registered | Shapes/spacing vary by dataset |
-| Hardware | RTX 4060 Laptop, 8GB VRAM | `max_batch_size_vae=1` for 128³ |
+| Hardware (local) | RTX 4060 Laptop, 8GB VRAM | CPU-only tests, stats, figures, code dev |
+| Hardware (Picasso) | 4 nodes × 8×A100 80GB, 500GB RAM, 128 cores | VAE encode/decode, training, evaluation |
+
+### Hardware Usage Policy
+
+- **Local laptop (RTX 4060 8GB):** Code development, unit tests with mock data, statistical analysis, figure generation, git operations. **No GPU-heavy tasks** — 192³ volumes exceed 8GB VRAM even with `num_splits=6`.
+- **Picasso supercomputer (A100 80GB):** All GPU workloads — VAE validation (Phase 0), latent encoding (Phase 1), MeanFlow training (Phase 4), evaluation (Phase 5), ablations (Phase 6). Submit via SLURM scripts in `experiments/slurm/phase_{N}/`.
+- **SLURM scripts:** Each phase has a launcher (`<task>.sh`, run from login node) and a worker (`<task>_worker.sh`, submitted by launcher). Launcher exports env vars and creates output dirs; worker does env setup, pre-flight checks, runs the CLI, and verifies outputs.
 
 ---
 

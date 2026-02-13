@@ -77,7 +77,7 @@ def test_P1_T1_all_volumes_encode_without_error(encoding_log: dict) -> None:
 @pytest.mark.phase1
 @pytest.mark.critical
 def test_P1_T2_latent_shape_correct(latent_dir: Path) -> None:
-    """All .pt files must have z.shape == (4, 32, 32, 32)."""
+    """All .pt files must have z.shape == (4, 48, 48, 48)."""
     pt_files = sorted(latent_dir.glob("*.pt"))
     if not pt_files:
         pytest.skip("No .pt files found — run encoding first")
@@ -90,8 +90,8 @@ def test_P1_T2_latent_shape_correct(latent_dir: Path) -> None:
     for idx in indices:
         data = torch.load(pt_files[idx], map_location="cpu", weights_only=True)
         z = data["z"]
-        assert z.shape == (4, 32, 32, 32), (
-            f"{pt_files[idx].name}: expected (4,32,32,32), got {z.shape}"
+        assert z.shape == (4, 48, 48, 48), (
+            f"{pt_files[idx].name}: expected (4,48,48,48), got {z.shape}"
         )
 
 
@@ -226,11 +226,11 @@ def test_P1_T7_round_trip_ssim(
 
     for idx in indices:
         data = torch.load(pt_files[idx], map_location="cpu", weights_only=True)
-        z = data["z"].unsqueeze(0).to(device)  # (1, 4, 32, 32, 32)
+        z = data["z"].unsqueeze(0).to(device)  # (1, 4, 48, 48, 48)
         metadata = data.get("metadata", {})
 
         # Decode latent
-        x_hat = vae.decode(z)  # (1, 1, 128, 128, 128)
+        x_hat = vae.decode(z)  # (1, 1, 192, 192, 192)
 
         # Load and preprocess original
         source_path = metadata.get("source_path", "")
@@ -238,7 +238,7 @@ def test_P1_T7_round_trip_ssim(
             pytest.skip(f"Source NIfTI not found: {source_path}")
 
         processed = transform({"image": source_path})
-        x_orig = processed["image"].unsqueeze(0)  # (1, 1, 128, 128, 128)
+        x_orig = processed["image"].unsqueeze(0)  # (1, 1, 192, 192, 192)
 
         ssim_val = compute_ssim_3d(x_orig, x_hat.cpu())
         assert ssim_val > 0.89, (

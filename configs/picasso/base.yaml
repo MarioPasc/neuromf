@@ -27,4 +27,4 @@ paths:
 hardware:
   gpu: "NVIDIA A100 80GB"
   vram_gb: 80
-  max_batch_size_vae: 8  # 128^3 volumes on 80GB VRAM
+  max_batch_size_vae: 4  # 192^3 volumes on 80GB VRAM

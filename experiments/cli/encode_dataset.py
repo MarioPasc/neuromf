@@ -379,12 +379,12 @@ def main() -> None:
         try:
             # Preprocess
             processed = transform(data_dict)
-            x = processed["image"].unsqueeze(0).to(device)  # (1, 1, 128, 128, 128)
+            x = processed["image"].unsqueeze(0).to(device)  # (1, 1, 192, 192, 192)
 
             # Deterministic encoding
             torch.manual_seed(seed + i)
-            z = vae.encode(x)  # (1, 4, 32, 32, 32)
-            z_squeezed = z.squeeze(0).cpu()  # (4, 32, 32, 32)
+            z = vae.encode(x)  # (1, 4, 48, 48, 48)
+            z_squeezed = z.squeeze(0).cpu()  # (4, 48, 48, 48)
 
             # Save .pt file
             save_data = {

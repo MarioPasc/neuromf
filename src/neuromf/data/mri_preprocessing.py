@@ -1,19 +1,23 @@
 """MRI preprocessing pipeline using MONAI transforms.
 
 Provides composable transforms for resampling, intensity-normalising, and
-cropping/padding 3D brain MRI volumes to a fixed 128^3 target shape suitable
-for the MAISI VAE. Designed for FOMO-60K data which is already skull-stripped
+cropping/padding 3D brain MRI volumes to a fixed target shape suitable
+for the MAISI VAE. Uses brain-centered cropping (CropForegroundd) to ensure
+the brain is centered in the output volume before padding/cropping to the
+target shape. Designed for FOMO-60K data which is already skull-stripped
 and RAS-oriented.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
 from monai.transforms import (
     Compose,
+    CropForegroundd,
     EnsureChannelFirstd,
     EnsureTyped,
     LoadImaged,
@@ -29,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_mri_preprocessing_transform(
-    target_shape: tuple[int, int, int] = (128, 128, 128),
+    target_shape: tuple[int, int, int] = (192, 192, 192),
     target_spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
     lower_percentile: float = 0.0,
     upper_percentile: float = 99.5,
@@ -37,6 +41,13 @@ def build_mri_preprocessing_transform(
     b_max: float = 1.0,
 ) -> Compose:
     """Build a MONAI preprocessing pipeline for brain MRI volumes.
+
+    Pipeline: Load -> Resample(1mm) -> ScaleIntensity -> CropForeground
+    (brain-centered) -> ResizeWithPadOrCrop(target) -> EnsureType.
+
+    CropForegroundd centres the crop on brain tissue before padding to the
+    target shape, preventing systematic loss of frontal/occipital cortex
+    that occurs with naive volume-centred cropping.
 
     Args:
         target_shape: Spatial dimensions after crop/pad.
@@ -63,6 +74,9 @@ def build_mri_preprocessing_transform(
                 b_max=b_max,
                 clip=False,
             ),
+            # Brain-centered crop: tight bounding box around foreground tissue,
+            # then pad/crop to exact target shape. margin=4 adds a small buffer.
+            CropForegroundd(keys=["image"], source_key="image", margin=4),
             ResizeWithPadOrCropd(keys=["image"], spatial_size=target_shape),
             EnsureTyped(keys=["image"], dtype=torch.float32),
         ]
@@ -95,7 +109,7 @@ def build_mri_preprocessing_from_config(config: DictConfig) -> Compose:
 
 def preprocess_single_volume(
     nifti_path: str | Path,
-    target_shape: tuple[int, int, int] = (128, 128, 128),
+    target_shape: tuple[int, int, int] = (192, 192, 192),
     target_spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> torch.Tensor:
     """Preprocess a single NIfTI volume and return as a tensor.

@@ -455,10 +455,19 @@ def main() -> None:
     """Run VAE validation on FOMO-60K volumes with figures and negative controls."""
     parser = argparse.ArgumentParser(description="MAISI VAE reconstruction validation")
     parser.add_argument("--config", type=str, required=True, help="Path to vae_validation.yaml")
+    parser.add_argument(
+        "--configs-dir",
+        type=str,
+        default=None,
+        help="Directory containing base.yaml and fomo60k.yaml (default: configs/ relative to repo root)",
+    )
     args = parser.parse_args()
 
     # Load merged config (base + fomo60k + vae_validation)
-    configs_dir = Path(__file__).resolve().parents[2] / "configs"
+    if args.configs_dir:
+        configs_dir = Path(args.configs_dir)
+    else:
+        configs_dir = Path(__file__).resolve().parents[2] / "configs"
     base_cfg = OmegaConf.load(configs_dir / "base.yaml")
     fomo60k_cfg = OmegaConf.load(configs_dir / "fomo60k.yaml")
     vae_cfg = OmegaConf.load(args.config)
@@ -519,13 +528,13 @@ def main() -> None:
 
         # Preprocess
         processed = transform(data_dict)
-        x = processed["image"].unsqueeze(0).to(device)  # (1, 1, 128, 128, 128)
+        x = processed["image"].unsqueeze(0).to(device)  # (1, 1, 192, 192, 192)
 
         # Encode
-        z = vae.encode(x)  # (1, 4, 32, 32, 32)
+        z = vae.encode(x)  # (1, 4, 48, 48, 48)
 
         # Accumulate latent stats
-        z_cpu = z.squeeze(0).cpu().to(torch.float64)  # (4, 32, 32, 32)
+        z_cpu = z.squeeze(0).cpu().to(torch.float64)  # (4, 48, 48, 48)
         for ch in range(n_channels):
             ch_data = z_cpu[ch]
             channel_sum[ch] += ch_data.sum()

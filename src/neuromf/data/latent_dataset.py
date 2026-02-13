@@ -22,7 +22,7 @@ class LatentDataset(Dataset):
     """PyTorch Dataset of pre-computed ``.pt`` latents with optional normalisation.
 
     Each ``.pt`` file is expected to contain a dict with at least
-    ``{"z": Tensor(4, 32, 32, 32), "metadata": {...}}``.
+    ``{"z": Tensor(4, 48, 48, 48), "metadata": {...}}``.
 
     Args:
         latent_dir: Directory containing ``.pt`` latent files.
