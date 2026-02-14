@@ -70,3 +70,32 @@ class TestSampleTandR:
         t, r = sample_t_and_r(batch_size=10_000)
         assert torch.isfinite(t).all()
         assert torch.isfinite(r).all()
+
+
+import pytest
+from scipy import stats
+
+
+@pytest.mark.phase3
+@pytest.mark.critical
+def test_P3_T7_logit_normal_distribution() -> None:
+    """P3-T7: Logit-normal samples match theoretical CDF (KS test p > 0.05).
+
+    The logit-normal is defined as t = sigmoid(X) where X ~ N(mu, sigma^2).
+    We verify via KS test that logit(t) follows the correct normal.
+    """
+    mu, sigma = -0.4, 1.0
+    n = 10_000
+    t = sample_logit_normal(batch_size=n, mu=mu, sigma=sigma, t_min=0.0)
+
+    # Transform back: logit(t) should be N(mu, sigma^2)
+    logit_t = torch.log(t / (1.0 - t))
+    logit_np = logit_t.numpy()
+
+    # KS test against N(mu, sigma)
+    ks_stat, p_value = stats.kstest(logit_np, "norm", args=(mu, sigma))
+
+    assert p_value > 0.05, (
+        f"KS test failed: p={p_value:.4f} (stat={ks_stat:.4f}), "
+        f"logit(t) may not follow N({mu}, {sigma}^2)"
+    )

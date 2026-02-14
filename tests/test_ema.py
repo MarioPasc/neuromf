@@ -1,4 +1,7 @@
-"""Tests for EMA model utility."""
+"""Tests for EMA model utility.
+
+P3-T8: EMA updates correctly with UNet wrapper.
+"""
 
 import torch
 import torch.nn as nn
@@ -88,3 +91,43 @@ class TestEMAModel:
         assert ema2.decay == 0.995
         for name in ema.shadow:
             assert torch.allclose(ema.shadow[name], ema2.shadow[name])
+
+
+import pytest
+
+from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
+
+
+@pytest.mark.phase3
+@pytest.mark.critical
+def test_P3_T8_ema_with_unet_wrapper() -> None:
+    """P3-T8: EMA updates correctly with MAISIUNetWrapper.
+
+    After multiple updates with modified parameters, EMA shadow should
+    differ from the initial values.
+    """
+    torch.manual_seed(42)
+    config = MAISIUNetConfig()
+    model = MAISIUNetWrapper(config)
+
+    ema = EMAModel(model, decay=0.9)
+    initial_shadow = {k: v.clone() for k, v in ema.shadow.items()}
+
+    # Simulate a few training steps
+    for _ in range(5):
+        with torch.no_grad():
+            for p in model.parameters():
+                if p.requires_grad:
+                    p.add_(torch.randn_like(p) * 0.1)
+        ema.update(model)
+
+    # Shadow should have moved away from initial values
+    n_changed = 0
+    for name in initial_shadow:
+        if not torch.allclose(ema.shadow[name], initial_shadow[name], atol=1e-6):
+            n_changed += 1
+
+    assert n_changed > 0, "EMA shadow did not change after updates"
+    assert n_changed == len(initial_shadow), (
+        f"Only {n_changed}/{len(initial_shadow)} shadow params changed"
+    )
