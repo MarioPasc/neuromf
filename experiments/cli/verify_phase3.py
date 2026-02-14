@@ -858,7 +858,7 @@ with non-degenerate distribution on real data.</p>
 <div class="section">
 <h2>8. Phase 4 Readiness</h2>
 <ul>
-<li><strong>Recommended JVP strategy:</strong> <code>ExactJVP</code> on A100 80GB,
+<li><strong>Recommended JVP strategy:</strong> <code>ExactJVP</code> on A100 40GB,
 <code>FiniteDifferenceJVP</code> for local testing</li>
 <li><strong>Recommended batch size (A100, bf16):</strong> 8–24 (profile needed)</li>
 <li><strong>Recommended precision:</strong> bf16 (verified in P3-T10)</li>

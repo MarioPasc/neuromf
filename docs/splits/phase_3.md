@@ -508,7 +508,7 @@ The agent should generate an HTML report at:
 
 ## 5. Memory Profiling
 - Table: VRAM usage for each test shape and operation
-- Recommendation: batch size and strategy for A100 80GB training
+- Recommendation: batch size and strategy for A100 40GB training
 - Figure: VRAM usage bar chart per test
 
 ## 6. Real Latent Smoke Test

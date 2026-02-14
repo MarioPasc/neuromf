@@ -1,6 +1,13 @@
 # Phase 4 training config (skeleton prepared in Phase 3)
 # Full training configuration for MeanFlow on brain MRI latents
 
+# Trainer infrastructure
+# For multi-GPU DDP, override devices/strategy in picasso/train_meanflow.yaml
+trainer:
+  devices: 1          # Number of GPUs (1 = single-GPU, N = DDP with N GPUs)
+  strategy: auto      # "auto" for single-GPU, "ddp" for multi-GPU
+  accelerator: auto   # "auto" detects GPU/CPU, "gpu" to force CUDA
+
 # Model
 unet:
   spatial_dims: 3

@@ -44,12 +44,12 @@ These are verified values from checkpoint and dataset inspection. Use them direc
 | FOMO-60K subset | ~1,379 T1 sessions (3 datasets) | PT001_OASIS1, PT002_OASIS2, PT005_IXI |
 | FOMO-60K status | Skull-stripped, RAS, co-registered | Shapes/spacing vary by dataset |
 | Hardware (local) | RTX 4060 Laptop, 8GB VRAM | CPU-only tests, stats, figures, code dev |
-| Hardware (Picasso) | 4 nodes × 8×A100 80GB, 500GB RAM, 128 cores | VAE encode/decode, training, evaluation |
+| Hardware (Picasso) | 4 nodes × 8×A100 40GB VRAM, 500GB RAM, 128 cores | VAE encode/decode, training, evaluation |
 
 ### Hardware Usage Policy
 
 - **Local laptop (RTX 4060 8GB):** Code development, unit tests with mock data, statistical analysis, figure generation, git operations. **No GPU-heavy tasks** — 192³ volumes exceed 8GB VRAM even with `num_splits=6`.
-- **Picasso supercomputer (A100 80GB):** All GPU workloads — VAE validation (Phase 0), latent encoding (Phase 1), MeanFlow training (Phase 4), evaluation (Phase 5), ablations (Phase 6). Submit via SLURM scripts in `experiments/slurm/phase_{N}/`.
+- **Picasso supercomputer (A100 40GB):** All GPU workloads — VAE validation (Phase 0), latent encoding (Phase 1), MeanFlow training (Phase 4), evaluation (Phase 5), ablations (Phase 6). Submit via SLURM scripts in `experiments/slurm/phase_{N}/`.
 - **SLURM scripts:** Each phase has a launcher (`<task>.sh`, run from login node) and a worker (`<task>_worker.sh`, submitted by launcher). Launcher exports env vars and creates output dirs; worker does env setup, pre-flight checks, runs the CLI, and verifies outputs.
 
 ---

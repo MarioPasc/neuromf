@@ -2,7 +2,7 @@
 
 Provides an abstraction layer over exact ``torch.func.jvp`` and
 finite-difference approximation. This lets Phase 4+ swap between methods
-based on available VRAM: ``ExactJVP`` on A100 80GB, ``FiniteDifferenceJVP``
+based on available VRAM: ``ExactJVP`` on A100 40GB, ``FiniteDifferenceJVP``
 on RTX 4060 8GB.
 """
 

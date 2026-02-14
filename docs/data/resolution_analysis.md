@@ -97,7 +97,7 @@ The brain is systematically **13mm anterior** to the volume center. This means n
 1. **100% brain coverage** for all subjects in FOMO-60K
 2. **1.0mm isotropic** matches the standard for brain MRI analysis
 3. **60-70% brain tissue** in the volume — efficient capacity use
-4. **Latent 48 cubed** is tractable: batch_size=16 on A100 80GB
+4. **Latent 48 cubed** is tractable: batch_size=16 on A100 40GB
 5. **3.4x training cost** vs 128 cubed, offset by A100 parallelism
 6. **Sub-second inference** with 1-NFE MeanFlow
 

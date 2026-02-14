@@ -245,13 +245,17 @@ class LatentMeanFlow(pl.LightningModule):
     # ------------------------------------------------------------------
 
     def on_train_epoch_end(self) -> None:
-        """Record training loss and generate periodic samples."""
+        """Record training loss and generate periodic samples.
+
+        Sample generation runs on rank 0 only to avoid redundant VAE
+        loading and filesystem races in multi-GPU DDP.
+        """
         avg_loss = self.trainer.callback_metrics.get("train/loss_total")
         if avg_loss is not None:
             self._train_loss_history.append(float(avg_loss))
 
         sample_every = int(self.cfg.get("sample_every_n_epochs", 25))
-        if (self.current_epoch + 1) % sample_every == 0:
+        if (self.current_epoch + 1) % sample_every == 0 and self.global_rank == 0:
             n_samples = int(self.cfg.get("n_samples_per_log", 8))
             self._generate_samples(n_samples)
 

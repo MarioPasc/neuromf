@@ -821,7 +821,7 @@ The following skill files would significantly accelerate the agent's work. I rec
 
 | Resource | Specification |
 |---|---|
-| **GPU** | 1× A100 80GB (or equivalent). A100 40GB is marginal for batch size 24 at 32³. |
+| **GPU** | 1× A100 40GB (or equivalent). A100 40GB is marginal for batch size 24 at 32³. |
 | **Conda env** | `neuromf` with all deps installed (§2.2) |
 | **Data** | Pre-downloaded IXI + OASIS-3 NIfTI files (or at least a 50-volume subset for development) |
 | **Weights** | MAISI VAE weights downloaded to a known path |
@@ -885,7 +885,7 @@ click>=8.1.0
 | **Total estimated** | **~9 GB** | **~5 GB** |
 | **With headroom (1.5×)** | **~14 GB** | **~7.5 GB** |
 
-Comfortably fits on A100 40GB. Batch size can be increased to 48–64 on A100 80GB.
+Comfortably fits on A100 40GB. Batch size can be increased to 48–64 on A100 40GB.
 
 ## Appendix C: Risk Register
 

@@ -16,7 +16,7 @@ vae:
   use_checkpointing: false
   use_convtranspose: false
   norm_float16: false        # fp32 for validation quality
-  num_splits: 1              # no splitting needed with 80GB VRAM
+  num_splits: 1              # no splitting needed with 40GB VRAM
   dim_split: 1
   scale_factor: 0.96240234375
   downsample_factor: 4

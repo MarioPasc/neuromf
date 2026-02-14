@@ -213,7 +213,7 @@ The agent should focus on getting a correct, clean, and robust training loop tha
 
 All GPU training runs for Phase 4 will execute on the **Picasso supercomputer**. The agent must read `configs/picasso/base.yaml` for all hardware specifications and absolute paths. Key facts:
 
-- **GPU:** NVIDIA A100 80GB
+- **GPU:** NVIDIA A100 40GB
 - **Constraint:** `--constraint=dgx` in SLURM
 - **Conda env:** `neuromf` (activated via `module load` + `conda activate`)
 - **Project root:** `/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf`
@@ -282,7 +282,7 @@ The `LatentDataset` should accept a `split` argument (`"train"` or `"val"`) and 
 
 Generating 1-NFE samples (P4-T4, P4-T5) requires decoding latents through the frozen MAISI VAE. This is a non-trivial engineering concern:
 
-1. **VAE memory:** The MAISI VAE adds ~500MB VRAM. On A100 80GB this is not an issue, but the agent must ensure the VAE is only loaded when needed (in `on_train_epoch_end` or a callback), not kept in GPU memory during the entire training loop.
+1. **VAE memory:** The MAISI VAE adds ~500MB VRAM. On A100 40GB this is not an issue, but the agent must ensure the VAE is only loaded when needed (in `on_train_epoch_end` or a callback), not kept in GPU memory during the entire training loop.
 2. **Denormalisation:** If latents are normalised during training (mean=0, std=1), the generated latents must be denormalised back to the original latent statistics before VAE decoding. Use the `latent_stats.json` from Phase 1 for this.
 3. **Scale factor:** The MAISI VAE uses `scale_factor=0.96240234375`. The decode call must undo this: `decoded = vae.decode(z_hat / scale_factor)`.
 4. **Sample saving:** Save both the raw latent tensors (`.pt`) and the decoded mid-sagittal/axial/coronal slices (`.png`) to `${RESULTS_DST}/phase_4/samples/epoch_{N}/`.

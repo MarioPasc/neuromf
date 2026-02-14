@@ -124,11 +124,22 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Dry run
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Trainer infrastructure (devices, strategy, accelerator)
+    # ------------------------------------------------------------------
+    trainer_cfg = config.get("trainer", {})
+    devices = int(trainer_cfg.get("devices", 1))
+    strategy = str(trainer_cfg.get("strategy", "auto"))
+    accelerator = str(trainer_cfg.get("accelerator", "auto"))
+    effective_batch = int(config.training.batch_size) * devices
+
     if args.dry_run:
         logger.info("=== DRY RUN ===")
         logger.info("UNet channels: %s", list(config.unet.channels))
         logger.info("Prediction type: %s", config.unet.prediction_type)
-        logger.info("Batch size: %d", config.training.batch_size)
+        logger.info("Batch size: %d (per-GPU)", config.training.batch_size)
+        logger.info("Devices: %d, Strategy: %s", devices, strategy)
+        logger.info("Effective batch size: %d", effective_batch)
         logger.info("Max epochs: %d", config.training.max_epochs)
         logger.info("LR: %.1e", config.training.lr)
         logger.info("Warmup steps: %d", config.training.warmup_steps)
@@ -248,7 +259,23 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Trainer
     # ------------------------------------------------------------------
+    logger.info(
+        "Trainer: devices=%d, strategy=%s, accelerator=%s",
+        devices,
+        strategy,
+        accelerator,
+    )
+    logger.info(
+        "Effective batch size: %d (per-GPU=%d × %d devices)",
+        effective_batch,
+        batch_size,
+        devices,
+    )
+
     trainer = pl.Trainer(
+        devices=devices,
+        strategy=strategy,
+        accelerator=accelerator,
         max_epochs=int(config.training.max_epochs),
         precision=precision,
         gradient_clip_val=float(config.training.gradient_clip_norm),

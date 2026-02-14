@@ -297,9 +297,9 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 pl_module.log(f"train/channel/loss_ch{c}", float(ch_mean[c]))
             summary["per_channel_loss"] = ch_mean.tolist()
 
-        # --- Write JSON summary ---
+        # --- Write JSON summary (rank 0 only in DDP) ---
         self._training_history.append(summary)
-        if self._diag_dir is not None:
+        if self._diag_dir is not None and trainer.is_global_zero:
             self._write_json_summary(epoch, summary)
 
     def _write_json_summary(self, epoch: int, summary: dict[str, Any]) -> None:

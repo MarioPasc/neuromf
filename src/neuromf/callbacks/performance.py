@@ -51,7 +51,9 @@ class PerformanceCallback(pl.Callback):
             return
 
         batch_size = batch["z"].shape[0] if isinstance(batch, dict) and "z" in batch else 1
+        world_size = trainer.world_size
         pl_module.log("perf/samples_per_sec", batch_size / elapsed)
+        pl_module.log("perf/total_samples_per_sec", batch_size * world_size / elapsed)
         pl_module.log("perf/steps_per_sec", 1.0 / elapsed)
 
         if torch.cuda.is_available():

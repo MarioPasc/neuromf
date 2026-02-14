@@ -1,9 +1,14 @@
 # Picasso-specific overrides for Phase 4 training
 # Merged: picasso/base.yaml + train_meanflow.yaml + this file
 #
-# GPU: A100-SXM4-40GB (DGX nodes may have 40GB or 80GB variants).
-# With gradient checkpointing enabled, batch_size=16 fits comfortably on 40GB.
-# If you confirm 80GB GPUs, increase to batch_size=32 or higher.
+# GPU: A100-SXM4-40GB (DGX nodes may have 40GB or 40GB variants).
+# With gradient checkpointing enabled, batch_size=16 fits comfortably on 40GB.#
+# Multi-GPU: Set trainer.devices to match N_GPUS in train.sh.
+# Effective batch = batch_size × devices. Consider scaling LR linearly
+# (Goyal et al. 2017) when increasing devices.
+#   devices=1 → effective_batch=16, lr=1e-4
+#   devices=2 → effective_batch=32, lr=2e-4
+#   devices=4 → effective_batch=64, lr=4e-4
 
 paths:
   latents_dir: "${paths.results_root}/latents"
@@ -13,9 +18,17 @@ paths:
   diagnostics_dir: "${paths.results_root}/phase_4/diagnostics"
   maisi_vae_weights: "${paths.checkpoints_root}/NV-Generate-MR/models/autoencoder_v2.pt"
 
+# Multi-GPU DDP within a single DGX node.
+# Lightning spawns processes internally — SLURM only needs 1 task with N GPUs.
+# NCCL backend is auto-selected for CUDA devices.
+trainer:
+  devices: 2          # GPUs per node (2 to start, scale up to 8)
+  strategy: ddp
+  accelerator: gpu
+
 training:
-  batch_size: 16
-  num_workers: 16
+  batch_size: 16      # Per-GPU batch size (effective = 16 × devices)
+  num_workers: 16     # Per-GPU DataLoader workers
   prefetch_factor: 4
 
 # Ensure gradient checkpointing is enabled for 40GB VRAM

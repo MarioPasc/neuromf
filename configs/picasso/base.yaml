@@ -25,6 +25,6 @@ paths:
   training_checkpoints: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/training_checkpoints"
 
 hardware:
-  gpu: "NVIDIA A100 80GB"
-  vram_gb: 80
-  max_batch_size_vae: 4  # 192^3 volumes on 80GB VRAM
+  gpu: "NVIDIA A100 40GB"
+  vram_gb: 40
+  max_batch_size_vae: 4  # 192^3 volumes on 40GB VRAM

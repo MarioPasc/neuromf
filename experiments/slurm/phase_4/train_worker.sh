@@ -2,21 +2,22 @@
 #SBATCH -J neuromf_p4_train
 #SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
 #SBATCH --constraint=dgx
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --output=train_%j.out
 #SBATCH --error=train_%j.err
 
 # =============================================================================
 # PHASE 4: MEANFLOW TRAINING WORKER
 #
-# Trains the Latent MeanFlow model on pre-computed latents using a single A100.
-# Produces model checkpoints, TensorBoard logs, and periodic sample images.
+# Trains the Latent MeanFlow model on pre-computed latents.
+# Supports single-GPU and multi-GPU (DDP) within one DGX node.
+# Lightning handles process spawning — no srun needed.
 #
 # Expected env vars (exported by train.sh launcher):
-#   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, RESUME_CKPT
+#   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, RESUME_CKPT, N_GPUS
 # =============================================================================
 
 set -euo pipefail
@@ -25,6 +26,23 @@ START_TIME=$(date +%s)
 echo "Phase 4 training started at: $(date)"
 echo "Hostname: $(hostname)"
 echo "SLURM Job ID: ${SLURM_JOB_ID:-local}"
+
+# ========================================================================
+# NCCL CONFIGURATION (multi-GPU communication)
+# ========================================================================
+# NCCL is the GPU communication backend for DDP. Within a DGX node,
+# GPUs communicate over NVLink (fast) with no special tuning needed.
+# These settings provide safe defaults and useful debug info.
+export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"       # WARN for production, INFO for debugging
+export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}" # Enable InfiniBand if available
+export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-0}" # Enable P2P (NVLink) transfers
+
+# Avoid NCCL timeout on slow filesystems during checkpoint saving
+export NCCL_BLOCKING_WAIT=0
+export TORCH_NCCL_BLOCKING_WAIT=0
+
+N_GPUS="${N_GPUS:-2}"
+echo "GPUs requested: ${N_GPUS}"
 
 # ========================================================================
 # ENVIRONMENT SETUP
@@ -56,7 +74,8 @@ python -c "import sys; print('Python', sys.version.split()[0])"
 python -c "import torch; print('PyTorch', torch.__version__); print('CUDA:', torch.cuda.is_available()); print('Devices:', torch.cuda.device_count())"
 python -c "import pytorch_lightning; print('Lightning', pytorch_lightning.__version__)"
 
-nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
+echo "NCCL_DEBUG=${NCCL_DEBUG}"
 
 # ========================================================================
 # PRE-FLIGHT CHECKS
@@ -94,6 +113,14 @@ if [ ! -f "${LATENT_DIR}/latent_stats.json" ]; then
 fi
 echo "[OK]   ${LATENT_DIR}/latent_stats.json"
 
+# Verify GPU count matches request
+VISIBLE_GPUS=$(python -c "import torch; print(torch.cuda.device_count())")
+echo "Visible GPUs: ${VISIBLE_GPUS} (requested: ${N_GPUS})"
+if [ "$VISIBLE_GPUS" -lt "$N_GPUS" ]; then
+    echo "WARNING: Only ${VISIBLE_GPUS} GPUs visible but ${N_GPUS} requested."
+    echo "         Training will use ${VISIBLE_GPUS} GPUs."
+fi
+
 # Quick import check
 python -c "
 from neuromf.models.latent_meanflow import LatentMeanFlow
@@ -115,7 +142,8 @@ echo ""
 echo "=========================================="
 echo "RUNNING PHASE 4 TRAINING"
 echo "=========================================="
-echo "Config dir: ${CONFIGS_DIR}"
+echo "Config dir:  ${CONFIGS_DIR}"
+echo "GPUs:        ${N_GPUS}"
 echo "Checkpoints: ${RESULTS_DST}/training_checkpoints/"
 echo "Logs:        ${RESULTS_DST}/phase_4/logs/"
 echo "Samples:     ${RESULTS_DST}/phase_4/samples/"
@@ -168,6 +196,7 @@ echo "PHASE 4 TRAINING COMPLETED"
 echo "=========================================="
 echo "Finished:   $(date)"
 echo "Duration:   $(($ELAPSED / 3600))h $((($ELAPSED / 60) % 60))m $(($ELAPSED % 60))s"
+echo "GPUs:       ${N_GPUS}"
 echo "Checkpts:   ${CKPT_COUNT} files in ${CKPT_DIR}"
 echo "Samples:    ${SAMPLE_COUNT} images"
 echo "Exit code:  ${TRAIN_EXIT}"
