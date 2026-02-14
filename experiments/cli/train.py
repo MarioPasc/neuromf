@@ -202,6 +202,9 @@ def main() -> None:
 
     diag_cfg = config.get("diagnostics", {})
     if diag_cfg.get("enabled", False):
+        from neuromf.callbacks.diagnostics import TrainingDiagnosticsCallback
+        from neuromf.callbacks.performance import PerformanceCallback
+
         diag_dir = Path(config.paths.get("diagnostics_dir", ""))
         if diag_dir:
             diag_dir.mkdir(parents=True, exist_ok=True)
