@@ -84,6 +84,10 @@ class LatentMeanFlow(pl.LightningModule):
         self._train_loss_history: list[float] = []
         self._val_loss_history: list[float] = []
 
+        # Diagnostics (enabled by TrainingDiagnosticsCallback)
+        self._diag_enabled: bool = False
+        self._step_diagnostics: dict | None = None
+
         # Lazy-loaded VAE for sample decoding
         self._vae: Any = None
 
@@ -157,17 +161,30 @@ class LatentMeanFlow(pl.LightningModule):
             device=z_0.device,
         )
 
-        result = self.loss_pipeline(self.net, z_0, eps, t, r)
+        result = self.loss_pipeline(
+            self.net,
+            z_0,
+            eps,
+            t,
+            r,
+            return_diagnostics=self._diag_enabled,
+        )
         loss = result["loss"]
 
         # NaN guard: skip step if loss is non-finite
         if not torch.isfinite(loss):
             logger.warning("Non-finite loss at step %d, skipping", self.global_step)
+            self._step_diagnostics = None
             return torch.tensor(0.0, device=self.device, requires_grad=True)
 
         self.log("train/loss_total", loss, prog_bar=True)
         self.log("train/loss_fm", result["loss_fm"])
         self.log("train/loss_mf", result["loss_mf"])
+
+        if self._diag_enabled:
+            self._step_diagnostics = result
+            self._step_diagnostics["t"] = t.detach()
+            self._step_diagnostics["r"] = r.detach()
 
         return loss
 

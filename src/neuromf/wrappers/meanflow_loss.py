@@ -114,6 +114,7 @@ class MeanFlowPipeline(nn.Module):
         eps: Tensor,
         t: Tensor,
         r: Tensor,
+        return_diagnostics: bool = False,
     ) -> dict[str, Tensor]:
         """Compute iMF combined loss (Eq. 13).
 
@@ -123,9 +124,12 @@ class MeanFlowPipeline(nn.Module):
             eps: Noise ``(B, C, ...)``.
             t: Upper time ``(B,)``.
             r: Lower time ``(B,)``.
+            return_diagnostics: If True, include detached diagnostic tensors
+                in the return dict (zero overhead when False).
 
         Returns:
-            Dict with ``"loss"``, ``"loss_fm"``, ``"loss_mf"``.
+            Dict with ``"loss"``, ``"loss_fm"``, ``"loss_mf"``, and optionally
+            ``"diag_*"`` keys when ``return_diagnostics=True``.
         """
         p = self.config.p
         adaptive = self.config.adaptive
@@ -173,8 +177,103 @@ class MeanFlowPipeline(nn.Module):
         loss_mf = loss_mf_per_sample.mean()
         loss = loss_fm + lambda_mf * loss_mf
 
-        return {
+        result: dict[str, Tensor] = {
             "loss": loss,
             "loss_fm": loss_fm,
             "loss_mf": loss_mf,
         }
+
+        if return_diagnostics:
+            result.update(
+                self._compute_diagnostics(
+                    u,
+                    V,
+                    v_tilde,
+                    v_c,
+                    t,
+                    r,
+                    p,
+                    lambda_mf,
+                    loss_fm_per_sample,
+                    loss_mf_per_sample,
+                    fm_weight if adaptive else None,
+                    mf_weight if adaptive else None,
+                )
+            )
+
+        return result
+
+    def _compute_diagnostics(
+        self,
+        u: Tensor,
+        V: Tensor,
+        v_tilde: Tensor,
+        v_c: Tensor,
+        t: Tensor,
+        r: Tensor,
+        p: float,
+        lambda_mf: float,
+        loss_fm_per_sample: Tensor,
+        loss_mf_per_sample: Tensor,
+        fm_weight: Tensor | None,
+        mf_weight: Tensor | None,
+    ) -> dict[str, Tensor]:
+        """Compute detached diagnostic tensors from existing intermediates.
+
+        All returned tensors are detached and do not participate in backward.
+
+        Args:
+            u: Average velocity ``(B, C, ...)``.
+            V: Compound velocity ``(B, C, ...)``.
+            v_tilde: Instantaneous velocity ``(B, C, ...)``.
+            v_c: Conditional velocity ``(B, C, ...)``.
+            t: Upper time ``(B,)``.
+            r: Lower time ``(B,)``.
+            p: Norm exponent.
+            lambda_mf: MeanFlow loss weight.
+            loss_fm_per_sample: Per-sample FM loss ``(B,)``.
+            loss_mf_per_sample: Per-sample MF loss ``(B,)``.
+            fm_weight: Adaptive FM weights (None if not adaptive).
+            mf_weight: Adaptive MF weights (None if not adaptive).
+
+        Returns:
+            Dict with ``diag_*`` keys, all detached scalars or small tensors.
+        """
+        diag: dict[str, Tensor] = {}
+
+        # Norm diagnostics (batch means of L2 norms)
+        diag["diag_u_norm"] = u.detach().flatten(1).norm(dim=1).mean()
+        diag["diag_v_tilde_norm"] = v_tilde.detach().flatten(1).norm(dim=1).mean()
+        diag["diag_compound_v_norm"] = V.detach().flatten(1).norm(dim=1).mean()
+        diag["diag_target_v_norm"] = v_c.detach().flatten(1).norm(dim=1).mean()
+
+        # JVP norm recovery: du/dt = (V - u) / (t - r) for MF samples
+        h = (t - r).detach()
+        mf_mask = h > 1e-6
+        if mf_mask.any():
+            h_broad = h[mf_mask].view(-1, *([1] * (u.ndim - 1)))
+            jvp_approx = (V[mf_mask].detach() - u[mf_mask].detach()) / h_broad
+            diag["diag_jvp_norm"] = jvp_approx.flatten(1).norm(dim=1).mean()
+        else:
+            diag["diag_jvp_norm"] = torch.tensor(0.0, device=u.device)
+
+        # Adaptive weight stats
+        if fm_weight is not None and mf_weight is not None:
+            all_weights = torch.cat([fm_weight.detach(), mf_weight.detach()])
+            diag["diag_adaptive_weight_mean"] = all_weights.mean()
+            diag["diag_adaptive_weight_std"] = all_weights.std()
+        else:
+            diag["diag_adaptive_weight_mean"] = torch.tensor(0.0, device=u.device)
+            diag["diag_adaptive_weight_std"] = torch.tensor(0.0, device=u.device)
+
+        # Per-channel loss (recompute cheaply from existing tensors)
+        spatial_dims = list(range(2, v_tilde.ndim))
+        ch_fm = (v_tilde.detach() - v_c.detach()).abs().pow(p).mean(dim=[0] + spatial_dims)
+        ch_mf = (V.detach() - v_c.detach()).abs().pow(p).mean(dim=[0] + spatial_dims)
+        diag["diag_loss_per_channel"] = ch_fm + lambda_mf * ch_mf
+
+        # Per-sample losses (pre-adaptive-weighting raw values)
+        diag["diag_loss_fm_per_sample"] = loss_fm_per_sample.detach()
+        diag["diag_loss_mf_per_sample"] = loss_mf_per_sample.detach()
+
+        return diag

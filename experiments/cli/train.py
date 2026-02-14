@@ -99,12 +99,22 @@ def main() -> None:
         logger.error("base.yaml not found at %s", base_path)
         sys.exit(1)
 
-    base_cfg = OmegaConf.load(base_path)
-    train_cfg = OmegaConf.load(config_path)
-    config = OmegaConf.merge(base_cfg, train_cfg)
+    # Three-layer config: base.yaml + main train config + overlay (--config)
+    # When --config IS the main config (local), the middle layer is redundant.
+    # When --config is a Picasso overlay, the middle layer provides defaults.
+    project_root = Path(__file__).resolve().parent.parent.parent
+    main_train_path = project_root / "configs" / "train_meanflow.yaml"
+
+    layers = [OmegaConf.load(base_path)]
+    if main_train_path.exists() and main_train_path.resolve() != config_path.resolve():
+        layers.append(OmegaConf.load(main_train_path))
+    layers.append(OmegaConf.load(config_path))
+
+    config = OmegaConf.merge(*layers)
     OmegaConf.resolve(config)
 
-    logger.info("Config loaded: %s + %s", base_path, config_path)
+    loaded = " + ".join(str(p) for p in [base_path, main_train_path, config_path] if p.exists())
+    logger.info("Config loaded: %s", loaded)
     logger.info("Latents dir: %s", config.paths.latents_dir)
     logger.info("Checkpoints dir: %s", config.paths.checkpoints_dir)
 
@@ -188,6 +198,27 @@ def main() -> None:
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
 
+    callbacks = [checkpoint_cb, lr_monitor]
+
+    diag_cfg = config.get("diagnostics", {})
+    if diag_cfg.get("enabled", False):
+        diag_dir = Path(config.paths.get("diagnostics_dir", ""))
+        if diag_dir:
+            diag_dir.mkdir(parents=True, exist_ok=True)
+        callbacks.append(
+            TrainingDiagnosticsCallback(
+                diag_every_n_epochs=int(diag_cfg.get("every_n_epochs", 25)),
+                diagnostics_dir=str(diag_dir) if diag_dir else "",
+                gradient_clip_val=float(config.training.gradient_clip_norm),
+            )
+        )
+        callbacks.append(
+            PerformanceCallback(
+                log_every_n_steps=int(config.training.log_every_n_steps),
+            )
+        )
+        logger.info("Diagnostics enabled (every %d epochs)", diag_cfg.get("every_n_epochs", 25))
+
     # ------------------------------------------------------------------
     # Logger
     # ------------------------------------------------------------------
@@ -216,7 +247,7 @@ def main() -> None:
         precision=precision,
         gradient_clip_val=float(config.training.gradient_clip_norm),
         gradient_clip_algorithm="norm",
-        callbacks=[checkpoint_cb, lr_monitor],
+        callbacks=callbacks,
         logger=tb_logger,
         check_val_every_n_epoch=int(config.training.val_every_n_epochs),
         log_every_n_steps=int(config.training.log_every_n_steps),

@@ -86,9 +86,15 @@ vae:
   scale_factor: 0.96240234375
   downsample_factor: 4
 
+# Diagnostics
+diagnostics:
+  enabled: false
+  every_n_epochs: 25
+
 # Paths (will be merged with base.yaml)
 paths:
   latents_dir: ${paths.results_root}/latents
   checkpoints_dir: ${paths.results_root}/training_checkpoints
   logs_dir: ${paths.results_root}/phase_4/logs
   samples_dir: ${paths.results_root}/phase_4/samples
+  diagnostics_dir: ${paths.results_root}/phase_4/diagnostics
