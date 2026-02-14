@@ -8,6 +8,7 @@ where the VAE is frozen and all latents are pre-encoded.
 from __future__ import annotations
 
 import logging
+import random
 from pathlib import Path
 
 import torch
@@ -16,6 +17,21 @@ from torch.utils.data import Dataset
 from neuromf.utils.latent_stats import load_latent_stats
 
 logger = logging.getLogger(__name__)
+
+
+def latent_collate_fn(batch: list[dict]) -> dict[str, torch.Tensor]:
+    """Collate function that only stacks ``z`` tensors.
+
+    Metadata contains strings that break the default collate. This
+    function stacks only the latent tensors into a batch.
+
+    Args:
+        batch: List of dataset items, each with ``"z"`` and ``"metadata"``.
+
+    Returns:
+        Dict with ``"z"`` tensor of shape ``(B, C, D, H, W)``.
+    """
+    return {"z": torch.stack([item["z"] for item in batch])}
 
 
 class LatentDataset(Dataset):
@@ -31,6 +47,10 @@ class LatentDataset(Dataset):
         stats_path: Path to ``latent_stats.json``. Required if
             ``normalise=True``. If None, defaults to
             ``latent_dir / "latent_stats.json"``.
+        split: If ``"train"`` or ``"val"``, return only the corresponding
+            subset. If None, return all data.
+        split_ratio: Fraction of data in the train split.
+        split_seed: Random seed for deterministic splitting.
     """
 
     def __init__(
@@ -38,16 +58,41 @@ class LatentDataset(Dataset):
         latent_dir: Path,
         normalise: bool = True,
         stats_path: Path | None = None,
+        split: str | None = None,
+        split_ratio: float = 0.9,
+        split_seed: int = 42,
     ) -> None:
         self.latent_dir = Path(latent_dir)
         self.normalise = normalise
 
         # Glob and sort .pt files for reproducible indexing
-        self.file_paths = sorted(self.latent_dir.glob("*.pt"))
-        if not self.file_paths:
+        all_files = sorted(self.latent_dir.glob("*.pt"))
+        if not all_files:
             raise FileNotFoundError(f"No .pt files found in {self.latent_dir}")
 
-        logger.info("LatentDataset: %d files from %s", len(self.file_paths), self.latent_dir)
+        # Apply train/val split if requested
+        if split is not None:
+            if split not in ("train", "val"):
+                raise ValueError(f"split must be 'train', 'val', or None; got '{split}'")
+            indices = list(range(len(all_files)))
+            random.Random(split_seed).shuffle(indices)
+            n_train = int(len(indices) * split_ratio)
+            if split == "train":
+                selected = sorted(indices[:n_train])
+            else:
+                selected = sorted(indices[n_train:])
+            self.file_paths = [all_files[i] for i in selected]
+            logger.info(
+                "LatentDataset: %d/%d files (%s split, ratio=%.2f, seed=%d)",
+                len(self.file_paths),
+                len(all_files),
+                split,
+                split_ratio,
+                split_seed,
+            )
+        else:
+            self.file_paths = all_files
+            logger.info("LatentDataset: %d files from %s", len(self.file_paths), self.latent_dir)
 
         # Load normalisation stats if needed
         self._norm_mean: torch.Tensor | None = None
@@ -71,6 +116,16 @@ class LatentDataset(Dataset):
                 [f"{m:.4f}" for m in means],
                 [f"{s:.4f}" for s in stds],
             )
+
+    @property
+    def norm_mean(self) -> torch.Tensor | None:
+        """Per-channel mean used for normalisation, shape ``(C, 1, 1, 1)``."""
+        return self._norm_mean
+
+    @property
+    def norm_std(self) -> torch.Tensor | None:
+        """Per-channel std used for normalisation, shape ``(C, 1, 1, 1)``."""
+        return self._norm_std
 
     def __len__(self) -> int:
         return len(self.file_paths)

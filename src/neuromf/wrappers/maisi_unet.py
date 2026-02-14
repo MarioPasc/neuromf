@@ -79,6 +79,7 @@ class MAISIUNetConfig:
     transformer_num_layers: int = 1
     use_flash_attention: bool = False
     with_conditioning: bool = False
+    use_checkpointing: bool = False
     prediction_type: str = "x"
     t_min: float = 0.05
 
@@ -106,6 +107,7 @@ class MAISIUNetConfig:
             transformer_num_layers=int(u.transformer_num_layers),
             use_flash_attention=bool(u.get("use_flash_attention", False)),
             with_conditioning=bool(u.get("with_conditioning", False)),
+            use_checkpointing=bool(u.get("gradient_checkpointing", False)),
             prediction_type=str(u.get("prediction_type", "x")),
             t_min=float(u.get("t_min", 0.05)),
         )
@@ -178,6 +180,11 @@ class MAISIUNetWrapper(nn.Module):
         self.t_min = config.t_min
         self._sinusoidal_dim = config.channels[0]
 
+        # Enable gradient checkpointing on residual blocks if requested
+        if config.use_checkpointing:
+            n_ckpt = self._enable_gradient_checkpointing()
+            logger.info("Enabled gradient checkpointing on %d modules", n_ckpt)
+
         # Patch in-place ops for JVP compatibility
         n_patched = patch_inplace_ops(self)
         if n_patched > 0:
@@ -190,6 +197,22 @@ class MAISIUNetWrapper(nn.Module):
             config.prediction_type,
             config.t_min,
         )
+
+    def _enable_gradient_checkpointing(self) -> int:
+        """Enable gradient checkpointing on UNet residual blocks.
+
+        Sets ``use_checkpoint=True`` on all internal modules that support it
+        (e.g. MONAI ResBlocks, SpatialTransformers).
+
+        Returns:
+            Number of modules with checkpointing enabled.
+        """
+        count = 0
+        for module in self.unet.modules():
+            if hasattr(module, "use_checkpoint"):
+                module.use_checkpoint = True
+                count += 1
+        return count
 
     def _forward_with_dual_emb(self, z_t: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
         """Forward through UNet blocks with pre-computed dual embedding.

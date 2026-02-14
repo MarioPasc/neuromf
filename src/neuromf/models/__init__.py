@@ -4,6 +4,7 @@ Contains the main Latent MeanFlow Lightning module, Rectified Flow baseline
 for ablation comparison, and LoRA injection utilities for domain adaptation.
 """
 
+from neuromf.models.latent_meanflow import LatentMeanFlow
 from neuromf.models.toy_mlp import ToyMLP
 
-__all__ = ["ToyMLP"]
+__all__ = ["LatentMeanFlow", "ToyMLP"]

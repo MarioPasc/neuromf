@@ -1,0 +1,18 @@
+# Picasso-specific overrides for Phase 4 training
+# Merged: picasso/base.yaml + train_meanflow.yaml + this file
+
+paths:
+  latents_dir: "${paths.results_root}/latents"
+  checkpoints_dir: "${paths.results_root}/training_checkpoints"
+  logs_dir: "${paths.results_root}/phase_4/logs"
+  samples_dir: "${paths.results_root}/phase_4/samples"
+  maisi_vae_weights: "${paths.checkpoints_root}/NV-Generate-MR/models/autoencoder_v2.pt"
+
+training:
+  num_workers: 16
+  prefetch_factor: 4
+
+# VAE overrides for A100 sample decoding
+vae:
+  norm_float16: true
+  num_splits: 1
