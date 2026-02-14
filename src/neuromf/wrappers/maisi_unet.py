@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn as nn
 from monai.networks.nets import DiffusionModelUNet
+from torch.utils.checkpoint import checkpoint as gradient_checkpoint
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -87,13 +88,23 @@ class MAISIUNetConfig:
     def from_omegaconf(cls, cfg: DictConfig) -> MAISIUNetConfig:
         """Build config from OmegaConf.
 
+        Reads UNet architecture from ``cfg.unet``. For ``gradient_checkpointing``,
+        checks both ``cfg.unet.gradient_checkpointing`` and
+        ``cfg.training.gradient_checkpointing`` (the latter takes precedence if set).
+
         Args:
-            cfg: OmegaConf config with a ``unet`` section.
+            cfg: OmegaConf config with a ``unet`` section and optionally a
+                ``training`` section.
 
         Returns:
             Populated ``MAISIUNetConfig``.
         """
         u = cfg.unet
+        # Check both unet and training sections for gradient checkpointing
+        use_ckpt = bool(u.get("gradient_checkpointing", False))
+        training_cfg = cfg.get("training", {})
+        if training_cfg and bool(training_cfg.get("gradient_checkpointing", False)):
+            use_ckpt = True
         return cls(
             spatial_dims=int(u.spatial_dims),
             in_channels=int(u.in_channels),
@@ -107,7 +118,7 @@ class MAISIUNetConfig:
             transformer_num_layers=int(u.transformer_num_layers),
             use_flash_attention=bool(u.get("use_flash_attention", False)),
             with_conditioning=bool(u.get("with_conditioning", False)),
-            use_checkpointing=bool(u.get("gradient_checkpointing", False)),
+            use_checkpointing=use_ckpt,
             prediction_type=str(u.get("prediction_type", "x")),
             t_min=float(u.get("t_min", 0.05)),
         )
@@ -137,6 +148,54 @@ def patch_inplace_ops(module: nn.Module) -> int:
     return count
 
 
+# ---------------------------------------------------------------------------
+# Helpers for gradient checkpointing
+# ---------------------------------------------------------------------------
+# These are module-level functions (not closures) to avoid issues with
+# checkpoint re-execution during backward when loop variables change.
+
+
+def _ckpt_block_forward(
+    block: nn.Module, h: torch.Tensor, emb: torch.Tensor
+) -> tuple[torch.Tensor, ...]:
+    """Run a down/middle block for use with ``gradient_checkpoint``.
+
+    Args:
+        block: UNet down-block or middle-block.
+        h: Hidden state tensor.
+        emb: Time embedding tensor.
+
+    Returns:
+        Block output (varies by block type).
+    """
+    return block(hidden_states=h, temb=emb, context=None)
+
+
+def _ckpt_up_block_forward(
+    block: nn.Module, h: torch.Tensor, emb: torch.Tensor, *res_samples: torch.Tensor
+) -> torch.Tensor:
+    """Run an up block for use with ``gradient_checkpoint``.
+
+    Residual tensors are passed as ``*args`` so each is individually tracked
+    by ``checkpoint`` for proper gradient computation.
+
+    Args:
+        block: UNet up-block.
+        h: Hidden state tensor.
+        emb: Time embedding tensor.
+        *res_samples: Residual tensors from the down path.
+
+    Returns:
+        Up-block output tensor.
+    """
+    return block(
+        hidden_states=h,
+        res_hidden_states_list=list(res_samples),
+        temb=emb,
+        context=None,
+    )
+
+
 class MAISIUNetWrapper(nn.Module):
     """MAISI 3D UNet adapted for MeanFlow dual time conditioning.
 
@@ -151,6 +210,7 @@ class MAISIUNetWrapper(nn.Module):
     def __init__(self, config: MAISIUNetConfig) -> None:
         super().__init__()
         self.config = config
+        self._use_checkpointing = config.use_checkpointing
 
         # Build MONAI UNet (provides t-embedding and all conv/attention blocks)
         self.unet = DiffusionModelUNet(
@@ -180,10 +240,13 @@ class MAISIUNetWrapper(nn.Module):
         self.t_min = config.t_min
         self._sinusoidal_dim = config.channels[0]
 
-        # Enable gradient checkpointing on residual blocks if requested
+        # Enable gradient checkpointing if requested
         if config.use_checkpointing:
-            n_ckpt = self._enable_gradient_checkpointing()
-            logger.info("Enabled gradient checkpointing on %d modules", n_ckpt)
+            n_ckpt = self._count_checkpointed_blocks()
+            logger.info(
+                "Gradient checkpointing enabled — %d blocks will be checkpointed",
+                n_ckpt,
+            )
 
         # Patch in-place ops for JVP compatibility
         n_patched = patch_inplace_ops(self)
@@ -198,27 +261,21 @@ class MAISIUNetWrapper(nn.Module):
             config.t_min,
         )
 
-    def _enable_gradient_checkpointing(self) -> int:
-        """Enable gradient checkpointing on UNet residual blocks.
-
-        Sets ``use_checkpoint=True`` on all internal modules that support it
-        (e.g. MONAI ResBlocks, SpatialTransformers).
+    def _count_checkpointed_blocks(self) -> int:
+        """Count UNet blocks that will be wrapped with gradient checkpointing.
 
         Returns:
-            Number of modules with checkpointing enabled.
+            Number of blocks (down + middle + up).
         """
-        count = 0
-        for module in self.unet.modules():
-            if hasattr(module, "use_checkpoint"):
-                module.use_checkpoint = True
-                count += 1
-        return count
+        return len(self.unet.down_blocks) + 1 + len(self.unet.up_blocks)
 
     def _forward_with_dual_emb(self, z_t: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
         """Forward through UNet blocks with pre-computed dual embedding.
 
         Replicates ``DiffusionModelUNet.forward()`` logic but skips the
-        built-in timestep embedding computation.
+        built-in timestep embedding computation. When ``_use_checkpointing``
+        is enabled and the model is in training mode, each block is wrapped
+        with ``torch.utils.checkpoint.checkpoint`` to trade compute for memory.
 
         Args:
             z_t: Input tensor ``(B, C, D, H, W)``.
@@ -227,29 +284,58 @@ class MAISIUNetWrapper(nn.Module):
         Returns:
             Output tensor ``(B, C, D, H, W)``.
         """
+        use_ckpt = self._use_checkpointing and self.training
         h = self.unet.conv_in(z_t)
 
         # Down path
         down_block_res_samples: list[torch.Tensor] = [h]
         for downsample_block in self.unet.down_blocks:
-            h, res_samples = downsample_block(hidden_states=h, temb=emb, context=None)
+            if use_ckpt:
+                h, res_samples = gradient_checkpoint(
+                    _ckpt_block_forward,
+                    downsample_block,
+                    h,
+                    emb,
+                    use_reentrant=False,
+                )
+            else:
+                h, res_samples = downsample_block(hidden_states=h, temb=emb, context=None)
             for residual in res_samples:
                 down_block_res_samples.append(residual)
 
         # Middle
-        h = self.unet.middle_block(hidden_states=h, temb=emb, context=None)
+        if use_ckpt:
+            h = gradient_checkpoint(
+                _ckpt_block_forward,
+                self.unet.middle_block,
+                h,
+                emb,
+                use_reentrant=False,
+            )
+        else:
+            h = self.unet.middle_block(hidden_states=h, temb=emb, context=None)
 
         # Up path
         for upsample_block in self.unet.up_blocks:
             idx: int = -len(upsample_block.resnets)
             res_samples = down_block_res_samples[idx:]
             down_block_res_samples = down_block_res_samples[:idx]
-            h = upsample_block(
-                hidden_states=h,
-                res_hidden_states_list=res_samples,
-                temb=emb,
-                context=None,
-            )
+            if use_ckpt:
+                h = gradient_checkpoint(
+                    _ckpt_up_block_forward,
+                    upsample_block,
+                    h,
+                    emb,
+                    *res_samples,
+                    use_reentrant=False,
+                )
+            else:
+                h = upsample_block(
+                    hidden_states=h,
+                    res_hidden_states_list=res_samples,
+                    temb=emb,
+                    context=None,
+                )
 
         return self.unet.out(h)
 

@@ -88,6 +88,9 @@ def main() -> None:
     """Main training entry point."""
     args = parse_args()
 
+    # Enable TF32 on Ampere+ GPUs (A100/H100) for faster matmuls
+    torch.set_float32_matmul_precision("high")
+
     # ------------------------------------------------------------------
     # Config loading
     # ------------------------------------------------------------------

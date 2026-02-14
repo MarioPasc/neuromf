@@ -1,16 +1,31 @@
 # Picasso-specific overrides for Phase 4 training
 # Merged: picasso/base.yaml + train_meanflow.yaml + this file
+#
+# GPU: A100-SXM4-40GB (DGX nodes may have 40GB or 80GB variants).
+# With gradient checkpointing enabled, batch_size=16 fits comfortably on 40GB.
+# If you confirm 80GB GPUs, increase to batch_size=32 or higher.
 
 paths:
   latents_dir: "${paths.results_root}/latents"
   checkpoints_dir: "${paths.results_root}/training_checkpoints"
   logs_dir: "${paths.results_root}/phase_4/logs"
   samples_dir: "${paths.results_root}/phase_4/samples"
+  diagnostics_dir: "${paths.results_root}/phase_4/diagnostics"
   maisi_vae_weights: "${paths.checkpoints_root}/NV-Generate-MR/models/autoencoder_v2.pt"
 
 training:
+  batch_size: 16
   num_workers: 16
   prefetch_factor: 4
+
+# Ensure gradient checkpointing is enabled for 40GB VRAM
+unet:
+  gradient_checkpointing: true
+
+# Use finite-difference JVP with checkpointing (torch.func.jvp is
+# incompatible with torch.utils.checkpoint recomputation)
+meanflow:
+  jvp_strategy: finite_difference
 
 diagnostics:
   enabled: true

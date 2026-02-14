@@ -17,6 +17,7 @@ unet:
   with_conditioning: false
   prediction_type: x
   t_min: 0.05
+  gradient_checkpointing: true
 
 # Training
 training:

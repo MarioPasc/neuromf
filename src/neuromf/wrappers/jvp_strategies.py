@@ -105,13 +105,27 @@ class FiniteDifferenceJVP:
         r: Tensor,
         v_tangent: Tensor,
     ) -> tuple[Tensor, Tensor]:
-        """Compute finite-difference JVP approximation."""
+        """Compute finite-difference JVP approximation.
+
+        The perturbed evaluation runs under ``torch.no_grad()`` since ``du_dt``
+        is always detached in the compound velocity. This saves one full
+        computation graph (~50% activation memory reduction for the JVP step).
+
+        The subtraction is performed in fp32 to avoid catastrophic cancellation
+        under bf16 mixed precision (bf16 has ~3 decimal digits of mantissa;
+        with h=1e-3 the difference would lose all significant digits).
+        """
         h = self.h
 
         u = u_fn(z_t, t, r)
-        u_perturbed = u_fn(z_t + h * v_tangent, t + h, r)
-
-        du_dt = (u_perturbed - u) / h
+        with torch.no_grad():
+            u_perturbed = u_fn(
+                z_t.detach() + h * v_tangent.detach(),
+                t.detach() + h,
+                r.detach(),
+            )
+        # fp32 subtraction to avoid bf16 catastrophic cancellation
+        du_dt = (u_perturbed.float() - u.detach().float()) / h
 
         V = _compound_velocity(u, du_dt, t, r, z_t)
         return u, V
