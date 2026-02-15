@@ -141,7 +141,8 @@ def main() -> None:
         strategy: str | DDPStrategy = DDPStrategy(broadcast_buffers=False)
     else:
         strategy = strategy_name
-    effective_batch = int(config.training.batch_size) * devices
+    accum_steps = int(config.training.get("accumulate_grad_batches", 1))
+    effective_batch = int(config.training.batch_size) * devices * accum_steps
 
     if args.dry_run:
         logger.info("=== DRY RUN ===")
@@ -152,16 +153,21 @@ def main() -> None:
         logger.info("Effective batch size: %d", effective_batch)
         logger.info("Max epochs: %d", config.training.max_epochs)
         logger.info("LR: %.1e", config.training.lr)
+        logger.info("Betas: %s", list(config.training.betas))
         logger.info("Warmup steps: %d", config.training.warmup_steps)
+        logger.info("LR schedule: %s", config.training.get("lr_schedule", "cosine"))
+        logger.info("Norm eps: %.2f", config.meanflow.norm_eps)
         logger.info(
-            "MeanFlow p=%.1f, adaptive=%s",
+            "MeanFlow p=%.1f, adaptive=%s, norm_p=%.2f",
             config.meanflow.p,
             config.meanflow.adaptive,
+            config.meanflow.get("norm_p", 1.0),
         )
         logger.info(
-            "Time sampling: mu=%.2f, sigma=%.2f",
+            "Time sampling: mu=%.2f, sigma=%.2f, data_proportion=%.2f",
             config.time_sampling.mu,
             config.time_sampling.sigma,
+            config.time_sampling.data_proportion,
         )
         logger.info("EMA decay: %.4f", config.ema.decay)
         logger.info("Config OK — dry run complete.")
@@ -175,10 +181,22 @@ def main() -> None:
         logger.error("Latent directory not found: %s", latent_dir)
         sys.exit(1)
 
+    split_ratio = float(config.training.get("split_ratio", 0.9))
+    split_seed = int(config.training.get("split_seed", 42))
     train_ds = LatentDataset(
-        latent_dir, normalise=True, split="train", split_ratio=0.9, split_seed=42
+        latent_dir,
+        normalise=True,
+        split="train",
+        split_ratio=split_ratio,
+        split_seed=split_seed,
     )
-    val_ds = LatentDataset(latent_dir, normalise=True, split="val", split_ratio=0.9, split_seed=42)
+    val_ds = LatentDataset(
+        latent_dir,
+        normalise=True,
+        split="val",
+        split_ratio=split_ratio,
+        split_seed=split_seed,
+    )
     logger.info("Train: %d samples, Val: %d samples", len(train_ds), len(val_ds))
 
     batch_size = int(config.training.batch_size)
@@ -276,10 +294,11 @@ def main() -> None:
         accelerator,
     )
     logger.info(
-        "Effective batch size: %d (per-GPU=%d × %d devices)",
+        "Effective batch size: %d (per-GPU=%d × %d devices × %d accum)",
         effective_batch,
         batch_size,
         devices,
+        accum_steps,
     )
 
     trainer = pl.Trainer(
@@ -290,6 +309,7 @@ def main() -> None:
         precision=precision,
         gradient_clip_val=float(config.training.gradient_clip_norm),
         gradient_clip_algorithm="norm",
+        accumulate_grad_batches=accum_steps,
         callbacks=callbacks,
         logger=tb_logger,
         check_val_every_n_epoch=int(config.training.val_every_n_epochs),

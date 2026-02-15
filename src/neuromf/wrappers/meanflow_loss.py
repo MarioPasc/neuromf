@@ -33,6 +33,7 @@ class MeanFlowPipelineConfig:
     jvp_strategy: str = "exact"
     fd_step_size: float = 1e-3
     channel_weights: list[float] | None = None
+    norm_p: float = 1.0
 
 
 class MeanFlowPipeline(nn.Module):
@@ -159,28 +160,38 @@ class MeanFlowPipeline(nn.Module):
 
         # --- Flow matching loss ---
         cw = self._channel_weights
-        loss_fm_per_sample = lp_loss(v_tilde, v_c, p=p, channel_weights=cw, reduction="none")
+        raw_fm_per_sample = lp_loss(v_tilde, v_c, p=p, channel_weights=cw, reduction="none")
 
         # --- MeanFlow loss ---
-        loss_mf_per_sample = lp_loss(V, v_c, p=p, channel_weights=cw, reduction="none")
+        raw_mf_per_sample = lp_loss(V, v_c, p=p, channel_weights=cw, reduction="none")
 
         # --- Adaptive weighting ---
         if adaptive:
-            fm_weight = loss_fm_per_sample.detach() + norm_eps
-            loss_fm_per_sample = loss_fm_per_sample / fm_weight
+            norm_p = self.config.norm_p
+            fm_weight = (raw_fm_per_sample.detach() + norm_eps) ** norm_p
+            loss_fm_per_sample = raw_fm_per_sample / fm_weight
 
-            mf_weight = loss_mf_per_sample.detach() + norm_eps
-            loss_mf_per_sample = loss_mf_per_sample / mf_weight
+            mf_weight = (raw_mf_per_sample.detach() + norm_eps) ** norm_p
+            loss_mf_per_sample = raw_mf_per_sample / mf_weight
+        else:
+            loss_fm_per_sample = raw_fm_per_sample
+            loss_mf_per_sample = raw_mf_per_sample
 
         # Combine
         loss_fm = loss_fm_per_sample.mean()
         loss_mf = loss_mf_per_sample.mean()
         loss = loss_fm + lambda_mf * loss_mf
 
+        # Raw (pre-adaptive) loss — always returned for observability
+        raw_loss_fm = raw_fm_per_sample.detach().mean()
+        raw_loss_mf = raw_mf_per_sample.detach().mean()
+
         result: dict[str, Tensor] = {
             "loss": loss,
             "loss_fm": loss_fm,
             "loss_mf": loss_mf,
+            "raw_loss_fm": raw_loss_fm,
+            "raw_loss_mf": raw_loss_mf,
         }
 
         if return_diagnostics:
@@ -194,8 +205,8 @@ class MeanFlowPipeline(nn.Module):
                     r,
                     p,
                     lambda_mf,
-                    loss_fm_per_sample,
-                    loss_mf_per_sample,
+                    raw_fm_per_sample,
+                    raw_mf_per_sample,
                     fm_weight if adaptive else None,
                     mf_weight if adaptive else None,
                 )
@@ -231,8 +242,8 @@ class MeanFlowPipeline(nn.Module):
             r: Lower time ``(B,)``.
             p: Norm exponent.
             lambda_mf: MeanFlow loss weight.
-            loss_fm_per_sample: Per-sample FM loss ``(B,)``.
-            loss_mf_per_sample: Per-sample MF loss ``(B,)``.
+            loss_fm_per_sample: Per-sample raw FM loss ``(B,)`` (pre-adaptive-weighting).
+            loss_mf_per_sample: Per-sample raw MF loss ``(B,)`` (pre-adaptive-weighting).
             fm_weight: Adaptive FM weights (None if not adaptive).
             mf_weight: Adaptive MF weights (None if not adaptive).
 

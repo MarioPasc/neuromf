@@ -51,8 +51,9 @@ def _tiny_config(**overrides) -> OmegaConf:
             "training": {
                 "lr": 1e-3,
                 "weight_decay": 0.0,
-                "betas": [0.9, 0.999],
-                "warmup_steps": 10,
+                "betas": [0.9, 0.95],
+                "warmup_steps": 0,
+                "lr_schedule": "constant",
                 "max_epochs": 2,
                 "batch_size": 2,
                 "gradient_clip_norm": 1.0,
@@ -62,23 +63,26 @@ def _tiny_config(**overrides) -> OmegaConf:
                 "save_every_n_epochs": 1,
                 "num_workers": 0,
                 "prefetch_factor": None,
+                "split_ratio": 0.9,
+                "split_seed": 42,
             },
             "meanflow": {
                 "p": 2.0,
                 "adaptive": True,
-                "norm_eps": 0.01,
+                "norm_eps": 1.0,
                 "lambda_mf": 1.0,
                 "prediction_type": "x",
                 "t_min": 0.05,
                 "jvp_strategy": "finite_difference",
                 "fd_step_size": 1e-3,
                 "channel_weights": None,
+                "norm_p": 1.0,
             },
             "time_sampling": {
                 "mu": -0.4,
                 "sigma": 1.0,
                 "t_min": 0.001,
-                "data_proportion": 0.25,
+                "data_proportion": 0.75,
             },
             "ema": {"decay": 0.999},
             "paths": {
@@ -339,3 +343,103 @@ class TestLatentMeanFlow:
             f"STDOUT: {result.stdout[-500:]}\n"
             f"STDERR: {result.stderr[-500:]}"
         )
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
+class TestLatentMeanFlowExtended:
+    """Phase 4 extended tests for configurability."""
+
+    def test_P4_T9_lr_schedule_options(self) -> None:
+        """P4-T9: Verify constant, cosine, and linear LR schedules work."""
+        import pytorch_lightning as pl
+        from torch.utils.data import DataLoader, TensorDataset
+
+        for schedule in ["constant", "cosine", "linear"]:
+            cfg = _tiny_config(**{"training": {"lr_schedule": schedule, "max_epochs": 1}})
+            model = LatentMeanFlow(cfg)
+
+            # Minimal dataset and trainer to trigger configure_optimizers
+            ds = TensorDataset(torch.randn(4, 4, 16, 16, 16))
+            dl = DataLoader(
+                ds, batch_size=2, collate_fn=lambda batch: {"z": torch.stack([b[0] for b in batch])}
+            )
+
+            trainer = pl.Trainer(
+                max_epochs=1,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                enable_checkpointing=False,
+                logger=False,
+                limit_train_batches=2,
+            )
+            # Just fit — if configure_optimizers raises, this fails
+            trainer.fit(model, dl)
+
+    def test_P4_T10_norm_p_configurable(self) -> None:
+        """P4-T10: Verify norm_p is wired through to MeanFlowPipeline."""
+        cfg = _tiny_config(**{"meanflow": {"norm_p": 0.5}})
+        model = LatentMeanFlow(cfg)
+        assert model.loss_pipeline.config.norm_p == 0.5
+
+        # Default should be 1.0
+        cfg_default = _tiny_config()
+        model_default = LatentMeanFlow(cfg_default)
+        assert model_default.loss_pipeline.config.norm_p == 1.0
+
+    def test_P4_T11_raw_loss_always_returned(self) -> None:
+        """P4-T11: raw_loss_fm/mf always in pipeline output (not gated by diagnostics)."""
+        from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
+        from neuromf.wrappers.meanflow_loss import MeanFlowPipeline, MeanFlowPipelineConfig
+
+        pipeline = MeanFlowPipeline(
+            MeanFlowPipelineConfig(
+                jvp_strategy="finite_difference",
+                norm_eps=1.0,
+            )
+        )
+        unet_cfg = MAISIUNetConfig(
+            spatial_dims=3,
+            in_channels=4,
+            out_channels=4,
+            channels=[8, 16, 32, 64],
+            attention_levels=[False] * 4,
+            num_res_blocks=1,
+            num_head_channels=[0, 0, 0, 8],
+            norm_num_groups=8,
+            use_flash_attention=False,
+        )
+        model = MAISIUNetWrapper(unet_cfg)
+        B, S = 2, 16
+        z_0 = torch.randn(B, 4, S, S, S)
+        eps = torch.randn(B, 4, S, S, S)
+        t = torch.rand(B).clamp(0.05, 0.95)
+        r = t * torch.rand(B) * 0.5
+
+        result = pipeline(model, z_0, eps, t, r, return_diagnostics=False)
+        assert "raw_loss_fm" in result
+        assert "raw_loss_mf" in result
+        assert torch.isfinite(result["raw_loss_fm"])
+        assert torch.isfinite(result["raw_loss_mf"])
+        # Raw losses should be >= weighted losses (adaptive weighting normalizes down)
+        assert result["raw_loss_fm"] >= result["loss_fm"] - 1e-6
+
+    def test_P4_T12_divergence_guard(self) -> None:
+        """P4-T12: Divergence guard raises RuntimeError when threshold exceeded."""
+        cfg = _tiny_config(**{"training": {"divergence_threshold": 1.5}})
+        model = LatentMeanFlow(cfg)
+        model.train()
+
+        # First step: sets initial_raw_loss
+        batch = _fake_batch()
+        loss = model.training_step(batch, batch_idx=0)
+        assert model._initial_raw_loss is not None
+        initial = model._initial_raw_loss
+
+        # Manually set initial to a tiny value so next step trivially exceeds 1.5×
+        model._initial_raw_loss = initial / 100.0
+
+        # Next step should trigger divergence guard (loss >> 1.5 × tiny_initial)
+        batch2 = _fake_batch()
+        with pytest.raises(RuntimeError, match="Divergence detected"):
+            model.training_step(batch2, batch_idx=1)

@@ -1,15 +1,25 @@
-# Picasso-specific overrides for Phase 4 training
-# Merged: picasso/base.yaml + train_meanflow.yaml + this file
+# Picasso A100 40GB overrides for Phase 4 training
+# Merged on top of: picasso/base.yaml → configs/train_meanflow.yaml → this file
 #
-# GPU: A100-SXM4-40GB (DGX nodes may have 40GB or 40GB variants).
-# With gradient checkpointing enabled, batch_size=16 fits comfortably on 40GB.#
-# Multi-GPU: Set trainer.devices to match N_GPUS in train.sh.
-# Effective batch = batch_size × devices. Consider scaling LR linearly
-# (Goyal et al. 2017) when increasing devices.
-#   devices=1 → effective_batch=16, lr=1e-4
-#   devices=2 → effective_batch=32, lr=2e-4
-#   devices=4 → effective_batch=64, lr=4e-4
+# Only contains values that DIFFER from configs/train_meanflow.yaml.
+# Everything else (betas, lr_schedule, data_proportion, norm_eps, etc.)
+# inherits from the base config via OmegaConf three-layer merge.
+#
+# Hardware: A100-SXM4-40GB, 2 GPUs per node (DDP)
+# UNet: 178M params, ~2.86 GB fixed (model + optimizer + grads)
+# Latent: (B, 4, 48, 48, 48) = 0.88 MB/sample in bf16
+#
+# Memory budget per GPU (40 GB):
+#   Fixed: ~2.9 GB (params fp32 + AdamW states + grads)
+#   Activations: ~15-20 GB with gradient checkpointing + bf16
+#   Headroom: ~17-20 GB for peaks and fragmentation
+#
+# Effective batch = batch_size × devices × accumulate = 16 × 2 × 4 = 128
+# With data_proportion=0.75: ~96 FM samples + 32 MF samples per update
+# Optimizer steps per epoch ≈ ceil(1117/2/16) / 4 ≈ 8-9
+# Total optimizer steps ≈ 500 × 9 = 4500
 
+# --- Picasso paths ---
 paths:
   latents_dir: "${paths.results_root}/latents"
   checkpoints_dir: "${paths.results_root}/training_checkpoints"
@@ -18,33 +28,36 @@ paths:
   diagnostics_dir: "${paths.results_root}/phase_4/diagnostics"
   maisi_vae_weights: "${paths.checkpoints_root}/NV-Generate-MR/models/autoencoder_v2.pt"
 
-# Multi-GPU DDP within a single DGX node.
-# Lightning spawns processes internally — SLURM only needs 1 task with N GPUs.
-# NCCL backend is auto-selected for CUDA devices.
+# --- Multi-GPU DDP ---
 trainer:
-  devices: 2          # GPUs per node (2 to start, scale up to 8)
+  devices: 2
   strategy: ddp
   accelerator: gpu
 
+# --- Training overrides for A100 ---
 training:
-  batch_size: 16      # Per-GPU batch size (effective = 16 × devices)
-  num_workers: 16     # Per-GPU DataLoader workers
+  batch_size: 16                    # per-GPU; proven safe on A100 40GB
+  num_workers: 16                   # 128 cores / 8 GPUs = 16 per GPU
   prefetch_factor: 4
+  accumulate_grad_batches: 4        # effective batch = 16 × 2 × 4 = 128
+  log_every_n_steps: 10             # ~9 steps/epoch → log ~every epoch
+  divergence_threshold: 100.0       # halt if raw_loss > 100× initial
 
-# Ensure gradient checkpointing is enabled for 40GB VRAM
+# --- UNet: enable flash attention (safe with FD-JVP) ---
 unet:
-  gradient_checkpointing: true
+  use_flash_attention: true         # FD-JVP does regular forward passes, no torch.func
+  gradient_checkpointing: true      # essential for 40 GB VRAM
 
-# Use finite-difference JVP with checkpointing (torch.func.jvp is
-# incompatible with torch.utils.checkpoint recomputation)
+# --- JVP: finite difference (required with gradient checkpointing) ---
 meanflow:
   jvp_strategy: finite_difference
 
+# --- Diagnostics: always on for Picasso runs ---
 diagnostics:
   enabled: true
   every_n_epochs: 25
 
-# VAE overrides for A100 sample decoding
+# --- VAE: A100 can decode without memory splits ---
 vae:
   norm_float16: true
   num_splits: 1

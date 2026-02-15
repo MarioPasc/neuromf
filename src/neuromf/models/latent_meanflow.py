@@ -60,6 +60,7 @@ class LatentMeanFlow(pl.LightningModule):
             jvp_strategy=str(mf.jvp_strategy),
             fd_step_size=float(mf.fd_step_size),
             channel_weights=(list(mf.channel_weights) if mf.channel_weights else None),
+            norm_p=float(mf.get("norm_p", 1.0)),
         )
         self.loss_pipeline = MeanFlowPipeline(pipeline_config)
 
@@ -87,6 +88,10 @@ class LatentMeanFlow(pl.LightningModule):
         # Diagnostics (enabled by TrainingDiagnosticsCallback)
         self._diag_enabled: bool = False
         self._step_diagnostics: dict | None = None
+
+        # Divergence guard
+        self._divergence_threshold = float(config.training.get("divergence_threshold", 0.0))
+        self._initial_raw_loss: float | None = None
 
         # Lazy-loaded VAE for sample decoding
         self._vae: Any = None
@@ -181,6 +186,27 @@ class LatentMeanFlow(pl.LightningModule):
         self.log("train/loss_fm", result["loss_fm"])
         self.log("train/loss_mf", result["loss_mf"])
 
+        # Always log raw (pre-adaptive) loss — negligible overhead, essential
+        # for detecting divergence that adaptive weighting would mask
+        raw_fm = result["raw_loss_fm"]
+        raw_mf = result["raw_loss_mf"]
+        raw_total = raw_fm + raw_mf
+        self.log("train/raw_loss_fm", raw_fm)
+        self.log("train/raw_loss_mf", raw_mf)
+        self.log("train/raw_loss_total", raw_total, prog_bar=True)
+
+        # Divergence guard: halt if raw loss explodes beyond threshold
+        if self._divergence_threshold > 0:
+            raw_val = raw_total.item()
+            if self._initial_raw_loss is None:
+                self._initial_raw_loss = raw_val
+            elif raw_val > self._divergence_threshold * self._initial_raw_loss:
+                raise RuntimeError(
+                    f"Divergence detected at step {self.global_step}: "
+                    f"raw_loss={raw_val:.1f} > "
+                    f"{self._divergence_threshold}x initial ({self._initial_raw_loss:.1f})"
+                )
+
         if self._diag_enabled:
             self._step_diagnostics = result
             self._step_diagnostics["t"] = t.detach()
@@ -270,7 +296,10 @@ class LatentMeanFlow(pl.LightningModule):
     # ------------------------------------------------------------------
 
     def configure_optimizers(self) -> dict:
-        """Build AdamW optimizer with linear warmup + cosine decay.
+        """Build AdamW optimizer with configurable LR schedule.
+
+        Supports ``"constant"`` (warmup then flat), ``"cosine"`` (warmup then
+        cosine decay), and ``"linear"`` (warmup then linear decay).
 
         Returns:
             Dict with ``optimizer`` and ``lr_scheduler``.
@@ -285,12 +314,33 @@ class LatentMeanFlow(pl.LightningModule):
 
         total_steps = self.trainer.estimated_stepping_batches
         warmup_steps = int(tr.warmup_steps)
+        lr_schedule = str(tr.get("lr_schedule", "cosine"))
 
-        def lr_lambda(step: int) -> float:
-            if step < warmup_steps:
-                return step / max(warmup_steps, 1)
-            progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
-            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        if lr_schedule == "constant":
+
+            def lr_lambda(step: int) -> float:
+                if warmup_steps > 0 and step < warmup_steps:
+                    return step / warmup_steps
+                return 1.0
+
+        elif lr_schedule == "cosine":
+
+            def lr_lambda(step: int) -> float:
+                if warmup_steps > 0 and step < warmup_steps:
+                    return step / warmup_steps
+                progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+                return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+        elif lr_schedule == "linear":
+
+            def lr_lambda(step: int) -> float:
+                if warmup_steps > 0 and step < warmup_steps:
+                    return step / warmup_steps
+                progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+                return max(0.0, 1.0 - progress)
+
+        else:
+            raise ValueError(f"Unknown lr_schedule: {lr_schedule!r}")
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 

@@ -152,8 +152,10 @@ class TestDiagnostics:
 
         result = pipeline(model, z_0, eps, t, r, return_diagnostics=False)
 
-        assert set(result.keys()) == {"loss", "loss_fm", "loss_mf"}
+        assert set(result.keys()) == {"loss", "loss_fm", "loss_mf", "raw_loss_fm", "raw_loss_mf"}
         assert torch.isfinite(result["loss"])
+        assert torch.isfinite(result["raw_loss_fm"])
+        assert torch.isfinite(result["raw_loss_mf"])
 
     def test_P4b_T2_pipeline_return_diagnostics_true(self) -> None:
         """return_diagnostics=True returns all diag_* keys, finite, detached."""
