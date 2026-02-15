@@ -172,6 +172,7 @@ class TestDiagnostics:
             "diag_u_norm",
             "diag_compound_v_norm",
             "diag_target_v_norm",
+            "diag_v_tilde_norm",
             "diag_adaptive_weight_mean",
             "diag_adaptive_weight_std",
             "diag_loss_per_channel",

@@ -1,10 +1,11 @@
 """Full MeanFlow loss pipeline with configurable JVP strategy.
 
 Wraps the JVP strategy, compound velocity computation, and unified
-MeanFlow loss into a single module. Uses v_c (ground-truth conditional
-velocity) as the JVP tangent and computes a single loss ||V - v_c||^p,
-matching all three reference implementations (JAX MeanFlow, PyTorch
-MeanFlow, pMF).
+MeanFlow loss into a single module. Uses the iMF formulation where
+the model's own predicted velocity v_tilde = u(z_t, t, t) serves as
+the JVP tangent, making V a legitimate prediction function of z_t
+alone (iMF Section 4.1, Algorithm 1). Computes a single loss
+||V - v_c||^p with optional adaptive weighting.
 """
 
 from __future__ import annotations
@@ -39,13 +40,18 @@ class MeanFlowPipelineConfig:
 
 
 class MeanFlowPipeline(nn.Module):
-    """Full MeanFlow loss computation pipeline.
+    """Full MeanFlow loss computation pipeline (iMF formulation).
 
     Orchestrates:
     1. Interpolation ``z_t = (1-t)*z_0 + t*eps``
-    2. Conditional velocity ``v_c = eps - z_0``
-    3. JVP-based compound velocity ``V`` using ``v_c`` as tangent
-    4. Single unified loss ``||V - v_c||^p`` with adaptive weighting
+    2. Conditional velocity ``v_c = eps - z_0`` (target)
+    3. Model predicted velocity ``v_tilde = u(z_t, t, t)`` (JVP tangent)
+    4. JVP-based compound velocity ``V`` using ``v_tilde`` as tangent
+    5. Single unified loss ``||V - v_c||^p`` with adaptive weighting
+
+    Using the model's own prediction as tangent (iMF Algorithm 1) makes
+    V depend only on z_t, not on the ground-truth e-x. This produces
+    lower-variance gradients and stable training (iMF Section 4.1).
 
     For FM samples (r=t), V reduces to u (instantaneous velocity),
     recovering the standard flow matching loss. For MF samples (r<t),
@@ -123,11 +129,12 @@ class MeanFlowPipeline(nn.Module):
         r: Tensor,
         return_diagnostics: bool = False,
     ) -> dict[str, Tensor]:
-        """Compute unified MeanFlow loss.
+        """Compute unified MeanFlow loss (iMF Algorithm 1).
 
-        Uses v_c (ground-truth conditional velocity) as the JVP tangent,
-        matching all three reference implementations. Computes a single
-        loss ``||V - v_c||^p`` where V is the compound velocity.
+        Uses the model's own predicted velocity ``v_tilde = u(z_t, t, t)``
+        as the JVP tangent, following the iMF formulation. This makes V a
+        function of z_t alone, enabling stable training. The target remains
+        ``v_c = eps - z_0``.
 
         Args:
             model: Network with ``forward(z_t, r, t) -> output``.
@@ -156,14 +163,20 @@ class MeanFlowPipeline(nn.Module):
 
         z_t = (1 - t_broad) * z_0 + t_broad * eps
 
-        # Ground-truth conditional velocity
+        # Ground-truth conditional velocity (target, not tangent)
         v_c = eps - z_0
 
         # Build u_fn closure
         u_fn = self._make_u_fn(model)
 
-        # Compound velocity via JVP with v_c as tangent (matches all references)
-        u, V = self.jvp.compute(u_fn, z_t, t, r, v_c)
+        # iMF Algorithm 1: model's predicted instantaneous velocity as tangent.
+        # v_tilde doesn't need gradients — it's only a direction for JVP,
+        # and du/dt is stop-gradiented in the compound velocity.
+        with torch.no_grad():
+            v_tilde = u_fn(z_t, t, t)
+
+        # Compound velocity via JVP with v_tilde as tangent (iMF formulation)
+        u, V = self.jvp.compute(u_fn, z_t, t, r, v_tilde)
 
         # Single unified loss: ||V - v_c||^p
         cw = self._channel_weights
@@ -192,6 +205,7 @@ class MeanFlowPipeline(nn.Module):
                     u,
                     V,
                     v_c,
+                    v_tilde,
                     t,
                     r,
                     p,
@@ -207,6 +221,7 @@ class MeanFlowPipeline(nn.Module):
         u: Tensor,
         V: Tensor,
         v_c: Tensor,
+        v_tilde: Tensor,
         t: Tensor,
         r: Tensor,
         p: float,
@@ -221,6 +236,7 @@ class MeanFlowPipeline(nn.Module):
             u: Average velocity ``(B, C, ...)``.
             V: Compound velocity ``(B, C, ...)``.
             v_c: Conditional velocity ``(B, C, ...)``.
+            v_tilde: Model predicted velocity used as JVP tangent ``(B, C, ...)``.
             t: Upper time ``(B,)``.
             r: Lower time ``(B,)``.
             p: Norm exponent.
@@ -236,6 +252,7 @@ class MeanFlowPipeline(nn.Module):
         diag["diag_u_norm"] = u.detach().flatten(1).norm(dim=1).mean()
         diag["diag_compound_v_norm"] = V.detach().flatten(1).norm(dim=1).mean()
         diag["diag_target_v_norm"] = v_c.detach().flatten(1).norm(dim=1).mean()
+        diag["diag_v_tilde_norm"] = v_tilde.detach().flatten(1).norm(dim=1).mean()
 
         # JVP norm recovery: du/dt = (V - u) / (t - r) for MF samples
         h = (t - r).detach()

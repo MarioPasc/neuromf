@@ -412,9 +412,15 @@ class LatentMeanFlow(pl.LightningModule):
             z_0_hat.max().item(),
         )
 
+        # Save latent channel visualization (no VAE needed)
+        samples_dir_str = self.cfg.paths.get("samples_dir", "")
+        if samples_dir_str:
+            epoch_dir = Path(samples_dir_str) / f"epoch_{self.current_epoch:04d}"
+            epoch_dir.mkdir(parents=True, exist_ok=True)
+            self._save_latent_channels(z_0_hat, epoch_dir)
+
         # Try to decode through VAE if weights are available
         vae_weights = self.cfg.paths.get("maisi_vae_weights", "")
-        samples_dir_str = self.cfg.paths.get("samples_dir", "")
         if vae_weights and Path(vae_weights).exists() and samples_dir_str:
             try:
                 vae = self._load_vae()
@@ -429,10 +435,7 @@ class LatentMeanFlow(pl.LightningModule):
                 torch.cuda.empty_cache()
                 decoded = torch.cat(decoded_list, dim=0)
 
-                epoch_dir = Path(samples_dir_str) / f"epoch_{self.current_epoch:04d}"
-                epoch_dir.mkdir(parents=True, exist_ok=True)
-
-                self._save_slices(decoded, epoch_dir)
+                self._save_sample_grid(decoded, epoch_dir)
                 self._log_images(decoded)
             except Exception as e:
                 logger.warning("Sample decoding failed: %s", e)
@@ -474,12 +477,12 @@ class LatentMeanFlow(pl.LightningModule):
         logger.info("Lazy-loaded MAISI VAE for sample decoding")
         return self._vae
 
-    def _save_slices(self, decoded: Tensor, epoch_dir: Path) -> None:
-        """Save mid-sagittal, axial, and coronal slices as PNG.
+    def _save_sample_grid(self, decoded: Tensor, epoch_dir: Path) -> None:
+        """Save all decoded samples as one N x 3 grid (rows=samples, cols=views).
 
         Args:
             decoded: Decoded volumes ``(B, 1, H, W, D)``.
-            epoch_dir: Directory to save slices.
+            epoch_dir: Directory to save the grid PNG.
         """
         try:
             import matplotlib
@@ -487,36 +490,123 @@ class LatentMeanFlow(pl.LightningModule):
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
         except ImportError:
-            logger.warning("matplotlib not available; skipping slice saving")
+            logger.warning("matplotlib not available; skipping sample grid")
             return
 
         n = decoded.shape[0]
         vol = decoded.cpu().float()
         mid = [s // 2 for s in vol.shape[2:]]
+        view_names = ["Sagittal", "Coronal", "Axial"]
+
+        fig, axes = plt.subplots(n, 3, figsize=(9, 3 * n))
+        if n == 1:
+            axes = axes[None, :]
+
+        # Compute global intensity range across all samples for consistent contrast
+        vmin = vol[:, 0].min().item()
+        vmax = vol[:, 0].max().item()
 
         for i in range(n):
-            v = vol[i, 0]  # (H, W, D)
-            slices = {
-                "sagittal": v[mid[0], :, :],
-                "coronal": v[:, mid[1], :],
-                "axial": v[:, :, mid[2]],
-            }
-            for name, sl in slices.items():
-                fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-                ax.imshow(sl.numpy().T, cmap="gray", origin="lower")
-                ax.set_axis_off()
-                ax.set_title(f"Sample {i} — {name}")
-                fig.savefig(
-                    epoch_dir / f"sample_{i:02d}_{name}.png",
-                    bbox_inches="tight",
-                    dpi=100,
-                )
-                plt.close(fig)
+            v = vol[i, 0]
+            slices = [
+                v[mid[0], :, :],
+                v[:, mid[1], :],
+                v[:, :, mid[2]],
+            ]
+            for j, sl in enumerate(slices):
+                axes[i, j].imshow(sl.numpy().T, cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+                axes[i, j].set_axis_off()
+                if i == 0:
+                    axes[i, j].set_title(view_names[j], fontsize=11)
+            axes[i, 0].set_ylabel(f"#{i}", fontsize=10, rotation=0, labelpad=20, va="center")
 
-        logger.info("Saved %d sample slices to %s", n * 3, epoch_dir)
+        fig.suptitle(
+            f"Generated Samples — Epoch {self.current_epoch}, Step {self.global_step}",
+            fontsize=12,
+            y=0.99,
+        )
+        fig.tight_layout(rect=[0.03, 0, 1, 0.97])
+        fig.savefig(epoch_dir / "samples_grid.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        logger.info("Saved sample grid (%d samples) to %s", n, epoch_dir)
+
+    def _save_latent_channels(self, z_0_hat: Tensor, epoch_dir: Path) -> None:
+        """Save 4-channel latent visualization for the first sample.
+
+        Shows each latent channel's mid-slices in a 4x3 grid with per-channel
+        statistics annotated — useful for diagnosing what the model learns
+        in latent space before VAE decoding.
+
+        Args:
+            z_0_hat: Generated latents ``(B, 4, D, H, W)`` (normalised space).
+            epoch_dir: Directory to save the grid PNG.
+        """
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except ImportError:
+            logger.warning("matplotlib not available; skipping latent channels")
+            return
+
+        lat = z_0_hat[0].cpu().float()  # (4, D, H, W)
+        C = lat.shape[0]
+        mid = [s // 2 for s in lat.shape[1:]]
+        view_names = ["Sagittal", "Coronal", "Axial"]
+
+        fig, axes = plt.subplots(C, 3, figsize=(9, 3 * C))
+
+        for ch in range(C):
+            ch_vol = lat[ch]  # (D, H, W)
+            slices = [
+                ch_vol[mid[0], :, :],
+                ch_vol[:, mid[1], :],
+                ch_vol[:, :, mid[2]],
+            ]
+            ch_min = ch_vol.min().item()
+            ch_max = ch_vol.max().item()
+            ch_mean = ch_vol.mean().item()
+            ch_std = ch_vol.std().item()
+
+            for j, sl in enumerate(slices):
+                im = axes[ch, j].imshow(
+                    sl.numpy().T, cmap="RdBu_r", origin="lower", vmin=ch_min, vmax=ch_max
+                )
+                axes[ch, j].set_axis_off()
+                if ch == 0:
+                    axes[ch, j].set_title(view_names[j], fontsize=11)
+
+            axes[ch, 0].set_ylabel(f"Ch {ch}", fontsize=10, rotation=0, labelpad=25, va="center")
+            # Annotate per-channel stats on rightmost panel
+            axes[ch, 2].text(
+                1.05,
+                0.5,
+                f"\u03bc={ch_mean:.3f}\n\u03c3={ch_std:.3f}\n[{ch_min:.2f}, {ch_max:.2f}]",
+                transform=axes[ch, 2].transAxes,
+                fontsize=8,
+                va="center",
+                ha="left",
+                family="monospace",
+                bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.8},
+            )
+            fig.colorbar(im, ax=axes[ch, 2], fraction=0.046, pad=0.08)
+
+        fig.suptitle(
+            f"Latent Channels (sample #0) — Epoch {self.current_epoch}, Step {self.global_step}",
+            fontsize=12,
+            y=0.99,
+        )
+        fig.tight_layout(rect=[0.04, 0, 0.96, 0.97])
+        fig.savefig(epoch_dir / "latent_channels.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        logger.info("Saved latent channel grid to %s", epoch_dir)
 
     def _log_images(self, decoded: Tensor) -> None:
-        """Log mid-axial slices to TensorBoard.
+        """Log a combined sample grid to TensorBoard.
+
+        Creates a single grid image with all samples showing 3 orthogonal
+        views, rather than logging individual slices.
 
         Args:
             decoded: Decoded volumes ``(B, 1, H, W, D)``.
@@ -529,16 +619,39 @@ class LatentMeanFlow(pl.LightningModule):
             return
 
         vol = decoded.cpu().float()
-        mid_ax = vol.shape[4] // 2
+        n = min(vol.shape[0], 8)
+        mid = [s // 2 for s in vol.shape[2:]]
 
-        for i in range(min(vol.shape[0], 4)):
-            sl = vol[i, 0, :, :, mid_ax]
-            # Normalize to [0, 1] for display
-            sl_min, sl_max = sl.min(), sl.max()
-            if sl_max > sl_min:
-                sl = (sl - sl_min) / (sl_max - sl_min)
-            tb.add_image(
-                f"samples/sample_{i}",
-                sl.unsqueeze(0),
-                global_step=self.global_step,
-            )
+        # Build a list of normalized slices: n_samples x 3 views
+        rows = []
+        for i in range(n):
+            v = vol[i, 0]
+            slices = [
+                v[mid[0], :, :].T,
+                v[:, mid[1], :].T,
+                v[:, :, mid[2]].T,
+            ]
+            # Pad to same height/width for grid assembly
+            max_h = max(s.shape[0] for s in slices)
+            max_w = max(s.shape[1] for s in slices)
+            padded = []
+            for sl in slices:
+                ph = max_h - sl.shape[0]
+                pw = max_w - sl.shape[1]
+                padded.append(torch.nn.functional.pad(sl, (0, pw, 0, ph)))
+            rows.append(torch.cat(padded, dim=1))  # (H, W*3)
+
+        grid = torch.stack(rows, dim=0)  # (N, H, W*3)
+
+        # Normalize to [0, 1]
+        g_min, g_max = grid.min(), grid.max()
+        if g_max > g_min:
+            grid = (grid - g_min) / (g_max - g_min)
+
+        # Stack rows vertically into one image
+        full_grid = torch.cat(list(grid), dim=0)  # (N*H, W*3)
+        tb.add_image(
+            "samples/grid",
+            full_grid.unsqueeze(0),
+            global_step=self.global_step,
+        )
