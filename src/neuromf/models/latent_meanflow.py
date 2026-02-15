@@ -555,8 +555,19 @@ class LatentMeanFlow(pl.LightningModule):
         mid = [s // 2 for s in lat.shape[1:]]
         view_names = ["Sagittal", "Coronal", "Axial"]
 
-        fig, axes = plt.subplots(C, 3, figsize=(9, 3 * C))
+        # Global color range across all channels for a single shared colorbar
+        global_min = lat.min().item()
+        global_max = lat.max().item()
+        abs_lim = max(abs(global_min), abs(global_max))
 
+        fig, axes = plt.subplots(
+            C,
+            3,
+            figsize=(9, 3 * C + 0.6),
+            gridspec_kw={"hspace": 0.15, "wspace": 0.05},
+        )
+
+        im = None
         for ch in range(C):
             ch_vol = lat[ch]  # (D, H, W)
             slices = [
@@ -564,40 +575,55 @@ class LatentMeanFlow(pl.LightningModule):
                 ch_vol[:, mid[1], :],
                 ch_vol[:, :, mid[2]],
             ]
-            ch_min = ch_vol.min().item()
-            ch_max = ch_vol.max().item()
             ch_mean = ch_vol.mean().item()
             ch_std = ch_vol.std().item()
+            ch_min = ch_vol.min().item()
+            ch_max = ch_vol.max().item()
 
             for j, sl in enumerate(slices):
                 im = axes[ch, j].imshow(
-                    sl.numpy().T, cmap="RdBu_r", origin="lower", vmin=ch_min, vmax=ch_max
+                    sl.numpy().T,
+                    cmap="RdBu_r",
+                    origin="lower",
+                    vmin=-abs_lim,
+                    vmax=abs_lim,
                 )
                 axes[ch, j].set_axis_off()
                 if ch == 0:
                     axes[ch, j].set_title(view_names[j], fontsize=11)
 
-            axes[ch, 0].set_ylabel(f"Ch {ch}", fontsize=10, rotation=0, labelpad=25, va="center")
-            # Annotate per-channel stats on rightmost panel
-            axes[ch, 2].text(
-                1.05,
-                0.5,
-                f"\u03bc={ch_mean:.3f}\n\u03c3={ch_std:.3f}\n[{ch_min:.2f}, {ch_max:.2f}]",
-                transform=axes[ch, 2].transAxes,
-                fontsize=8,
-                va="center",
+            # Per-channel stats as overlay inside the first panel
+            stats_str = (
+                f"Ch {ch}  \u03bc={ch_mean:+.3f}  \u03c3={ch_std:.3f}  [{ch_min:.2f}, {ch_max:.2f}]"
+            )
+            axes[ch, 0].text(
+                0.02,
+                0.97,
+                stats_str,
+                transform=axes[ch, 0].transAxes,
+                fontsize=7,
+                va="top",
                 ha="left",
                 family="monospace",
-                bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.8},
+                bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85},
             )
-            fig.colorbar(im, ax=axes[ch, 2], fraction=0.046, pad=0.08)
+
+        # Single horizontal colorbar spanning all columns at the bottom
+        cbar = fig.colorbar(
+            im,
+            ax=axes.ravel().tolist(),
+            orientation="horizontal",
+            fraction=0.03,
+            pad=0.04,
+            aspect=40,
+        )
+        cbar.set_label("Latent value", fontsize=10)
 
         fig.suptitle(
             f"Latent Channels (sample #0) — Epoch {self.current_epoch}, Step {self.global_step}",
             fontsize=12,
             y=0.99,
         )
-        fig.tight_layout(rect=[0.04, 0, 0.96, 0.97])
         fig.savefig(epoch_dir / "latent_channels.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
         logger.info("Saved latent channel grid to %s", epoch_dir)

@@ -38,7 +38,6 @@ export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}" # Enable InfiniBand if available
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-0}" # Enable P2P (NVLink) transfers
 
 # Avoid NCCL timeout on slow filesystems during checkpoint saving
-export NCCL_BLOCKING_WAIT=0
 export TORCH_NCCL_BLOCKING_WAIT=0
 
 N_GPUS="${N_GPUS:-2}"

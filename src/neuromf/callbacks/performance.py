@@ -79,4 +79,4 @@ class PerformanceCallback(pl.Callback):
     ) -> None:
         """Log epoch wall time."""
         elapsed = time.monotonic() - self._epoch_start
-        pl_module.log("perf/epoch_time_sec", elapsed)
+        pl_module.log("perf/epoch_time_sec", elapsed, sync_dist=True)
