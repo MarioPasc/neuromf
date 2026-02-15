@@ -142,7 +142,7 @@ class TestDiagnostics:
     """Phase 4b diagnostics tests."""
 
     def test_P4b_T1_pipeline_return_diagnostics_false(self) -> None:
-        """return_diagnostics=False returns exactly 3 keys, no regression."""
+        """return_diagnostics=False returns exactly 2 keys (loss, raw_loss)."""
         pipeline, model = _tiny_pipeline()
         B, S = 2, 16
         z_0 = torch.randn(B, 4, S, S, S)
@@ -152,10 +152,9 @@ class TestDiagnostics:
 
         result = pipeline(model, z_0, eps, t, r, return_diagnostics=False)
 
-        assert set(result.keys()) == {"loss", "loss_fm", "loss_mf", "raw_loss_fm", "raw_loss_mf"}
+        assert set(result.keys()) == {"loss", "raw_loss"}
         assert torch.isfinite(result["loss"])
-        assert torch.isfinite(result["raw_loss_fm"])
-        assert torch.isfinite(result["raw_loss_mf"])
+        assert torch.isfinite(result["raw_loss"])
 
     def test_P4b_T2_pipeline_return_diagnostics_true(self) -> None:
         """return_diagnostics=True returns all diag_* keys, finite, detached."""
@@ -171,14 +170,13 @@ class TestDiagnostics:
         expected_diag_keys = {
             "diag_jvp_norm",
             "diag_u_norm",
-            "diag_v_tilde_norm",
             "diag_compound_v_norm",
             "diag_target_v_norm",
             "diag_adaptive_weight_mean",
             "diag_adaptive_weight_std",
             "diag_loss_per_channel",
-            "diag_loss_fm_per_sample",
-            "diag_loss_mf_per_sample",
+            "diag_loss_per_sample",
+            "diag_fm_fraction",
         }
         actual_diag_keys = {k for k in result if k.startswith("diag_")}
         assert expected_diag_keys == actual_diag_keys

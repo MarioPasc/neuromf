@@ -388,7 +388,7 @@ class TestLatentMeanFlowExtended:
         assert model_default.loss_pipeline.config.norm_p == 1.0
 
     def test_P4_T11_raw_loss_always_returned(self) -> None:
-        """P4-T11: raw_loss_fm/mf always in pipeline output (not gated by diagnostics)."""
+        """P4-T11: raw_loss always in pipeline output (not gated by diagnostics)."""
         from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
         from neuromf.wrappers.meanflow_loss import MeanFlowPipeline, MeanFlowPipelineConfig
 
@@ -417,29 +417,25 @@ class TestLatentMeanFlowExtended:
         r = t * torch.rand(B) * 0.5
 
         result = pipeline(model, z_0, eps, t, r, return_diagnostics=False)
-        assert "raw_loss_fm" in result
-        assert "raw_loss_mf" in result
-        assert torch.isfinite(result["raw_loss_fm"])
-        assert torch.isfinite(result["raw_loss_mf"])
-        # Raw losses should be >= weighted losses (adaptive weighting normalizes down)
-        assert result["raw_loss_fm"] >= result["loss_fm"] - 1e-6
+        assert set(result.keys()) == {"loss", "raw_loss"}
+        assert torch.isfinite(result["raw_loss"])
+        assert torch.isfinite(result["loss"])
 
     def test_P4_T12_divergence_guard(self) -> None:
-        """P4-T12: Divergence guard raises RuntimeError when threshold exceeded."""
+        """P4-T12: EMA-based divergence guard raises RuntimeError when threshold exceeded."""
         cfg = _tiny_config(**{"training": {"divergence_threshold": 1.5}})
         model = LatentMeanFlow(cfg)
         model.train()
 
-        # First step: sets initial_raw_loss
+        # First step: initialises raw_loss_ema
         batch = _fake_batch()
         loss = model.training_step(batch, batch_idx=0)
-        assert model._initial_raw_loss is not None
-        initial = model._initial_raw_loss
+        assert model._raw_loss_ema is not None
 
-        # Manually set initial to a tiny value so next step trivially exceeds 1.5×
-        model._initial_raw_loss = initial / 100.0
+        # Manually set EMA to a tiny value so next step trivially exceeds 1.5x
+        model._raw_loss_ema = model._raw_loss_ema / 100.0
 
-        # Next step should trigger divergence guard (loss >> 1.5 × tiny_initial)
+        # Next step should trigger divergence guard (loss >> 1.5 × tiny_ema)
         batch2 = _fake_batch()
         with pytest.raises(RuntimeError, match="Divergence detected"):
             model.training_step(batch2, batch_idx=1)

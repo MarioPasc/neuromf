@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 class LatentMeanFlow(pl.LightningModule):
     """Latent MeanFlow training module.
 
-    Orchestrates the full training loop: time sampling, MeanFlow loss
-    computation (FM + MF with adaptive weighting), EMA tracking, and
+    Orchestrates the full training loop: time sampling, unified MeanFlow
+    loss (single ||V - v_c||^p with adaptive weighting), EMA tracking, and
     periodic 1-NFE sample generation decoded through the frozen MAISI VAE.
 
     Args:
@@ -89,9 +89,9 @@ class LatentMeanFlow(pl.LightningModule):
         self._diag_enabled: bool = False
         self._step_diagnostics: dict | None = None
 
-        # Divergence guard
+        # EMA-based divergence guard
         self._divergence_threshold = float(config.training.get("divergence_threshold", 0.0))
-        self._initial_raw_loss: float | None = None
+        self._raw_loss_ema: float | None = None
 
         # Lazy-loaded VAE for sample decoding
         self._vae: Any = None
@@ -182,30 +182,25 @@ class LatentMeanFlow(pl.LightningModule):
             self._step_diagnostics = None
             return torch.tensor(0.0, device=self.device, requires_grad=True)
 
-        self.log("train/loss_total", loss, prog_bar=True)
-        self.log("train/loss_fm", result["loss_fm"])
-        self.log("train/loss_mf", result["loss_mf"])
+        self.log("train/loss", loss, prog_bar=True)
 
-        # Always log raw (pre-adaptive) loss — negligible overhead, essential
-        # for detecting divergence that adaptive weighting would mask
-        raw_fm = result["raw_loss_fm"]
-        raw_mf = result["raw_loss_mf"]
-        raw_total = raw_fm + raw_mf
-        self.log("train/raw_loss_fm", raw_fm)
-        self.log("train/raw_loss_mf", raw_mf)
-        self.log("train/raw_loss_total", raw_total, prog_bar=True)
+        # Always log raw (pre-adaptive) loss — essential for convergence monitoring
+        raw_loss = result["raw_loss"]
+        self.log("train/raw_loss", raw_loss, prog_bar=True)
 
-        # Divergence guard: halt if raw loss explodes beyond threshold
+        # EMA-based divergence guard: compares step loss to running average
         if self._divergence_threshold > 0:
-            raw_val = raw_total.item()
-            if self._initial_raw_loss is None:
-                self._initial_raw_loss = raw_val
-            elif raw_val > self._divergence_threshold * self._initial_raw_loss:
-                raise RuntimeError(
-                    f"Divergence detected at step {self.global_step}: "
-                    f"raw_loss={raw_val:.1f} > "
-                    f"{self._divergence_threshold}x initial ({self._initial_raw_loss:.1f})"
-                )
+            raw_val = raw_loss.item()
+            if self._raw_loss_ema is None:
+                self._raw_loss_ema = raw_val
+            else:
+                self._raw_loss_ema = 0.99 * self._raw_loss_ema + 0.01 * raw_val
+                if raw_val > self._divergence_threshold * self._raw_loss_ema:
+                    raise RuntimeError(
+                        f"Divergence detected at step {self.global_step}: "
+                        f"raw_loss={raw_val:.1f} > "
+                        f"{self._divergence_threshold}x EMA ({self._raw_loss_ema:.1f})"
+                    )
 
         if self._diag_enabled:
             self._step_diagnostics = result
@@ -262,9 +257,8 @@ class LatentMeanFlow(pl.LightningModule):
 
         result = self.loss_pipeline(self.net, z_0, eps, t, r)
 
-        self.log("val/loss_total", result["loss"], sync_dist=True)
-        self.log("val/loss_fm", result["loss_fm"], sync_dist=True)
-        self.log("val/loss_mf", result["loss_mf"], sync_dist=True)
+        self.log("val/loss", result["loss"], sync_dist=True)
+        self.log("val/raw_loss", result["raw_loss"], sync_dist=True)
 
     # ------------------------------------------------------------------
     # Epoch hooks
@@ -276,7 +270,7 @@ class LatentMeanFlow(pl.LightningModule):
         Sample generation runs on rank 0 only to avoid redundant VAE
         loading and filesystem races in multi-GPU DDP.
         """
-        avg_loss = self.trainer.callback_metrics.get("train/loss_total")
+        avg_loss = self.trainer.callback_metrics.get("train/loss")
         if avg_loss is not None:
             self._train_loss_history.append(float(avg_loss))
 
@@ -287,7 +281,7 @@ class LatentMeanFlow(pl.LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         """Record validation loss."""
-        avg_loss = self.trainer.callback_metrics.get("val/loss_total")
+        avg_loss = self.trainer.callback_metrics.get("val/loss")
         if avg_loss is not None:
             self._val_loss_history.append(float(avg_loss))
 

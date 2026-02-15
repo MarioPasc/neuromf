@@ -118,22 +118,15 @@ class TrainingDiagnosticsCallback(pl.Callback):
             return
 
         loss_total = diag.get("loss")
-        loss_fm = diag.get("loss_fm")
 
         # Accumulate for epoch stats
         if loss_total is not None:
             self._epoch_losses.append(float(loss_total.detach()))
 
-        # Tier 1: step-level logging (respects trainer.log_every_n_steps)
-        if loss_total is not None and loss_fm is not None:
-            ratio = float(loss_fm.detach()) / max(float(loss_total.detach()), 1e-8)
-            pl_module.log("train/loss_ratio_fm", ratio)
-
         # Velocity norms
         for key in (
             "diag_jvp_norm",
             "diag_u_norm",
-            "diag_v_tilde_norm",
             "diag_compound_v_norm",
             "diag_target_v_norm",
         ):
@@ -141,8 +134,8 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 short = key.replace("diag_", "")
                 pl_module.log(f"train/meanflow/{short}", float(diag[key]))
 
-        # Adaptive weight stats
-        for key in ("diag_adaptive_weight_mean", "diag_adaptive_weight_std"):
+        # Adaptive weight stats and FM fraction
+        for key in ("diag_adaptive_weight_mean", "diag_adaptive_weight_std", "diag_fm_fraction"):
             if key in diag:
                 short = key.replace("diag_", "")
                 pl_module.log(f"train/meanflow/{short}", float(diag[key]))

@@ -1,8 +1,10 @@
 """Full MeanFlow loss pipeline with configurable JVP strategy.
 
-Wraps the JVP strategy, compound velocity computation, and iMF combined
-loss (Eq. 13) into a single module. Supports both exact JVP and
-finite-difference approximation for hardware flexibility.
+Wraps the JVP strategy, compound velocity computation, and unified
+MeanFlow loss into a single module. Uses v_c (ground-truth conditional
+velocity) as the JVP tangent and computes a single loss ||V - v_c||^p,
+matching all three reference implementations (JAX MeanFlow, PyTorch
+MeanFlow, pMF).
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ class MeanFlowPipelineConfig:
     p: float = 2.0
     adaptive: bool = True
     norm_eps: float = 0.01
-    lambda_mf: float = 1.0
+    lambda_mf: float = 1.0  # kept for backward compat, unused in forward
     prediction_type: str = "x"
     t_min: float = 0.05
     jvp_strategy: str = "exact"
@@ -41,9 +43,13 @@ class MeanFlowPipeline(nn.Module):
 
     Orchestrates:
     1. Interpolation ``z_t = (1-t)*z_0 + t*eps``
-    2. Instantaneous velocity ``v_tilde = u(z_t, t, t)``
-    3. JVP-based compound velocity ``V``
-    4. iMF combined loss (Eq. 13) with per-channel Lp and adaptive weighting
+    2. Conditional velocity ``v_c = eps - z_0``
+    3. JVP-based compound velocity ``V`` using ``v_c`` as tangent
+    4. Single unified loss ``||V - v_c||^p`` with adaptive weighting
+
+    For FM samples (r=t), V reduces to u (instantaneous velocity),
+    recovering the standard flow matching loss. For MF samples (r<t),
+    V = u + (t-r)*sg[du/dt] enforces the MeanFlow self-consistency.
 
     Args:
         config: Pipeline configuration.
@@ -117,7 +123,11 @@ class MeanFlowPipeline(nn.Module):
         r: Tensor,
         return_diagnostics: bool = False,
     ) -> dict[str, Tensor]:
-        """Compute iMF combined loss (Eq. 13).
+        """Compute unified MeanFlow loss.
+
+        Uses v_c (ground-truth conditional velocity) as the JVP tangent,
+        matching all three reference implementations. Computes a single
+        loss ``||V - v_c||^p`` where V is the compound velocity.
 
         Args:
             model: Network with ``forward(z_t, r, t) -> output``.
@@ -129,13 +139,13 @@ class MeanFlowPipeline(nn.Module):
                 in the return dict (zero overhead when False).
 
         Returns:
-            Dict with ``"loss"``, ``"loss_fm"``, ``"loss_mf"``, and optionally
+            Dict with ``"loss"`` and ``"raw_loss"``, and optionally
             ``"diag_*"`` keys when ``return_diagnostics=True``.
         """
         p = self.config.p
         adaptive = self.config.adaptive
         norm_eps = self.config.norm_eps
-        lambda_mf = self.config.lambda_mf
+        norm_p = self.config.norm_p
 
         # Interpolate: z_t = (1-t)*z_0 + t*eps
         if z_0.ndim > 1:
@@ -146,52 +156,34 @@ class MeanFlowPipeline(nn.Module):
 
         z_t = (1 - t_broad) * z_0 + t_broad * eps
 
-        # Conditional velocity
+        # Ground-truth conditional velocity
         v_c = eps - z_0
 
         # Build u_fn closure
         u_fn = self._make_u_fn(model)
 
-        # Instantaneous velocity: v_tilde = u(z_t, t, t)
-        v_tilde = u_fn(z_t, t, t)
+        # Compound velocity via JVP with v_c as tangent (matches all references)
+        u, V = self.jvp.compute(u_fn, z_t, t, r, v_c)
 
-        # Compound velocity via JVP
-        u, V = self.jvp.compute(u_fn, z_t, t, r, v_tilde)
-
-        # --- Flow matching loss ---
+        # Single unified loss: ||V - v_c||^p
         cw = self._channel_weights
-        raw_fm_per_sample = lp_loss(v_tilde, v_c, p=p, channel_weights=cw, reduction="none")
+        raw_loss_per_sample = lp_loss(V, v_c, p=p, channel_weights=cw, reduction="none")
 
-        # --- MeanFlow loss ---
-        raw_mf_per_sample = lp_loss(V, v_c, p=p, channel_weights=cw, reduction="none")
-
-        # --- Adaptive weighting ---
+        # Adaptive weighting (single term)
         if adaptive:
-            norm_p = self.config.norm_p
-            fm_weight = (raw_fm_per_sample.detach() + norm_eps) ** norm_p
-            loss_fm_per_sample = raw_fm_per_sample / fm_weight
-
-            mf_weight = (raw_mf_per_sample.detach() + norm_eps) ** norm_p
-            loss_mf_per_sample = raw_mf_per_sample / mf_weight
+            adp_weight = (raw_loss_per_sample.detach() + norm_eps) ** norm_p
+            loss_per_sample = raw_loss_per_sample / adp_weight
         else:
-            loss_fm_per_sample = raw_fm_per_sample
-            loss_mf_per_sample = raw_mf_per_sample
+            loss_per_sample = raw_loss_per_sample
 
-        # Combine
-        loss_fm = loss_fm_per_sample.mean()
-        loss_mf = loss_mf_per_sample.mean()
-        loss = loss_fm + lambda_mf * loss_mf
+        loss = loss_per_sample.mean()
 
         # Raw (pre-adaptive) loss — always returned for observability
-        raw_loss_fm = raw_fm_per_sample.detach().mean()
-        raw_loss_mf = raw_mf_per_sample.detach().mean()
+        raw_loss = raw_loss_per_sample.detach().mean()
 
         result: dict[str, Tensor] = {
             "loss": loss,
-            "loss_fm": loss_fm,
-            "loss_mf": loss_mf,
-            "raw_loss_fm": raw_loss_fm,
-            "raw_loss_mf": raw_loss_mf,
+            "raw_loss": raw_loss,
         }
 
         if return_diagnostics:
@@ -199,16 +191,12 @@ class MeanFlowPipeline(nn.Module):
                 self._compute_diagnostics(
                     u,
                     V,
-                    v_tilde,
                     v_c,
                     t,
                     r,
                     p,
-                    lambda_mf,
-                    raw_fm_per_sample,
-                    raw_mf_per_sample,
-                    fm_weight if adaptive else None,
-                    mf_weight if adaptive else None,
+                    raw_loss_per_sample,
+                    adp_weight if adaptive else None,
                 )
             )
 
@@ -218,16 +206,12 @@ class MeanFlowPipeline(nn.Module):
         self,
         u: Tensor,
         V: Tensor,
-        v_tilde: Tensor,
         v_c: Tensor,
         t: Tensor,
         r: Tensor,
         p: float,
-        lambda_mf: float,
-        loss_fm_per_sample: Tensor,
-        loss_mf_per_sample: Tensor,
-        fm_weight: Tensor | None,
-        mf_weight: Tensor | None,
+        raw_loss_per_sample: Tensor,
+        adp_weight: Tensor | None,
     ) -> dict[str, Tensor]:
         """Compute detached diagnostic tensors from existing intermediates.
 
@@ -236,16 +220,12 @@ class MeanFlowPipeline(nn.Module):
         Args:
             u: Average velocity ``(B, C, ...)``.
             V: Compound velocity ``(B, C, ...)``.
-            v_tilde: Instantaneous velocity ``(B, C, ...)``.
             v_c: Conditional velocity ``(B, C, ...)``.
             t: Upper time ``(B,)``.
             r: Lower time ``(B,)``.
             p: Norm exponent.
-            lambda_mf: MeanFlow loss weight.
-            loss_fm_per_sample: Per-sample raw FM loss ``(B,)`` (pre-adaptive-weighting).
-            loss_mf_per_sample: Per-sample raw MF loss ``(B,)`` (pre-adaptive-weighting).
-            fm_weight: Adaptive FM weights (None if not adaptive).
-            mf_weight: Adaptive MF weights (None if not adaptive).
+            raw_loss_per_sample: Per-sample raw loss ``(B,)`` (pre-adaptive).
+            adp_weight: Adaptive weights (None if not adaptive).
 
         Returns:
             Dict with ``diag_*`` keys, all detached scalars or small tensors.
@@ -254,7 +234,6 @@ class MeanFlowPipeline(nn.Module):
 
         # Norm diagnostics (batch means of L2 norms)
         diag["diag_u_norm"] = u.detach().flatten(1).norm(dim=1).mean()
-        diag["diag_v_tilde_norm"] = v_tilde.detach().flatten(1).norm(dim=1).mean()
         diag["diag_compound_v_norm"] = V.detach().flatten(1).norm(dim=1).mean()
         diag["diag_target_v_norm"] = v_c.detach().flatten(1).norm(dim=1).mean()
 
@@ -269,22 +248,23 @@ class MeanFlowPipeline(nn.Module):
             diag["diag_jvp_norm"] = torch.tensor(0.0, device=u.device)
 
         # Adaptive weight stats
-        if fm_weight is not None and mf_weight is not None:
-            all_weights = torch.cat([fm_weight.detach(), mf_weight.detach()])
-            diag["diag_adaptive_weight_mean"] = all_weights.mean()
-            diag["diag_adaptive_weight_std"] = all_weights.std()
+        if adp_weight is not None:
+            diag["diag_adaptive_weight_mean"] = adp_weight.detach().mean()
+            diag["diag_adaptive_weight_std"] = adp_weight.detach().std()
         else:
             diag["diag_adaptive_weight_mean"] = torch.tensor(0.0, device=u.device)
             diag["diag_adaptive_weight_std"] = torch.tensor(0.0, device=u.device)
 
-        # Per-channel loss (recompute cheaply from existing tensors)
-        spatial_dims = list(range(2, v_tilde.ndim))
-        ch_fm = (v_tilde.detach() - v_c.detach()).abs().pow(p).mean(dim=[0] + spatial_dims)
-        ch_mf = (V.detach() - v_c.detach()).abs().pow(p).mean(dim=[0] + spatial_dims)
-        diag["diag_loss_per_channel"] = ch_fm + lambda_mf * ch_mf
+        # Per-channel loss from (V - v_c)
+        spatial_dims = list(range(2, V.ndim))
+        ch_loss = (V.detach() - v_c.detach()).abs().pow(p).mean(dim=[0] + spatial_dims)
+        diag["diag_loss_per_channel"] = ch_loss
 
-        # Per-sample losses (pre-adaptive-weighting raw values)
-        diag["diag_loss_fm_per_sample"] = loss_fm_per_sample.detach()
-        diag["diag_loss_mf_per_sample"] = loss_mf_per_sample.detach()
+        # Per-sample raw loss (pre-adaptive-weighting)
+        diag["diag_loss_per_sample"] = raw_loss_per_sample.detach()
+
+        # FM/MF split for monitoring
+        fm_mask = h < 1e-6
+        diag["diag_fm_fraction"] = fm_mask.float().mean()
 
         return diag

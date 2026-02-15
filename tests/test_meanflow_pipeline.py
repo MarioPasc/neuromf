@@ -64,14 +64,12 @@ def test_P3_T4_meanflow_loss_finite_positive(model_and_pipeline) -> None:
     result = pipeline(model, z_0, eps, t, r)
 
     assert "loss" in result
-    assert "loss_fm" in result
-    assert "loss_mf" in result
+    assert "raw_loss" in result
 
     loss = result["loss"]
     assert torch.isfinite(loss), f"Loss is not finite: {loss.item()}"
     assert 0 < loss.item() < 1000, f"Loss out of range: {loss.item()}"
-    assert torch.isfinite(result["loss_fm"])
-    assert torch.isfinite(result["loss_mf"])
+    assert torch.isfinite(result["raw_loss"])
 
 
 @pytest.mark.phase3
@@ -128,8 +126,8 @@ def test_P3_T5_gradients_flow_to_all_params() -> None:
 
 @pytest.mark.phase3
 @pytest.mark.critical
-def test_P3_T9_combined_imf_loss(model_and_pipeline) -> None:
-    """P3-T9: Combined iMF loss (FM + MF) computes without error."""
+def test_P3_T9_unified_loss(model_and_pipeline) -> None:
+    """P3-T9: Unified MeanFlow loss computes for both FM (r=t) and MF (r<t) samples."""
     model, pipeline = model_and_pipeline
     B, C, D, H, W = 2, 4, 16, 16, 16
     z_0 = torch.randn(B, C, D, H, W)
@@ -139,11 +137,10 @@ def test_P3_T9_combined_imf_loss(model_and_pipeline) -> None:
 
     result = pipeline(model, z_0, eps, t, r)
 
-    # Verify combined loss equals fm + lambda_mf * mf
-    expected = result["loss_fm"] + pipeline.config.lambda_mf * result["loss_mf"]
-    assert torch.allclose(result["loss"], expected, atol=1e-5), (
-        f"Combined loss mismatch: {result['loss'].item()} vs {expected.item()}"
-    )
+    assert torch.isfinite(result["loss"]), f"Loss not finite: {result['loss'].item()}"
+    assert torch.isfinite(result["raw_loss"]), "Raw loss not finite"
+    # Adaptive weighting normalises loss; raw_loss captures true magnitude
+    assert result["raw_loss"] > 0, "Raw loss should be positive"
 
 
 @pytest.mark.phase3
@@ -176,8 +173,7 @@ def test_P3_T10_bf16_mixed_precision() -> None:
         result = pipeline(model, z_0, eps, t, r)
 
     assert torch.isfinite(result["loss"]), f"Loss is NaN under bf16: {result['loss']}"
-    assert torch.isfinite(result["loss_fm"])
-    assert torch.isfinite(result["loss_mf"])
+    assert torch.isfinite(result["raw_loss"])
 
 
 @pytest.mark.phase3
@@ -223,7 +219,7 @@ def test_P3_adaptive_weighting_normalises_loss() -> None:
 
     result = pipeline(model, z_0, eps, t, r)
 
-    # With adaptive weighting, total loss should be around 2.0 (1.0 per term)
+    # With adaptive weighting, loss should be around 1.0 (single normalised term)
     assert result["loss"].item() < 10.0, (
         f"Adaptive loss suspiciously large: {result['loss'].item()}"
     )

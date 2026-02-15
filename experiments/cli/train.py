@@ -233,9 +233,9 @@ def main() -> None:
         dirpath=str(ckpt_dir),
         every_n_epochs=int(config.training.get("save_every_n_epochs", 50)),
         save_top_k=3,
-        monitor="val/loss_total",
+        monitor="val/loss",
         mode="min",
-        filename="epoch_{epoch:03d}_vloss_{val/loss_total:.4f}",
+        filename="epoch_{epoch:03d}_vloss_{val/loss:.4f}",
         save_last=True,
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
