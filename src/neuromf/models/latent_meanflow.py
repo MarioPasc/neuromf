@@ -374,7 +374,16 @@ class LatentMeanFlow(pl.LightningModule):
         if vae_weights and Path(vae_weights).exists() and samples_dir_str:
             try:
                 vae = self._load_vae()
-                decoded = vae.decode(z_0_denorm)
+
+                # Decode one sample at a time to avoid OOM — the VAE
+                # decoder activations for 192³ are ~3GB per sample.
+                decoded_list = []
+                for i in range(n_samples):
+                    decoded_i = vae.decode(z_0_denorm[i : i + 1])
+                    decoded_list.append(decoded_i.cpu())
+                    del decoded_i
+                torch.cuda.empty_cache()
+                decoded = torch.cat(decoded_list, dim=0)
 
                 epoch_dir = Path(samples_dir_str) / f"epoch_{self.current_epoch:04d}"
                 epoch_dir.mkdir(parents=True, exist_ok=True)

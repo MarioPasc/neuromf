@@ -129,8 +129,18 @@ def main() -> None:
     # ------------------------------------------------------------------
     trainer_cfg = config.get("trainer", {})
     devices = int(trainer_cfg.get("devices", 1))
-    strategy = str(trainer_cfg.get("strategy", "auto"))
+    strategy_name = str(trainer_cfg.get("strategy", "auto"))
     accelerator = str(trainer_cfg.get("accelerator", "auto"))
+
+    # For DDP, disable buffer broadcasting — we use GroupNorm (not
+    # BatchNorm), so there are no running stats to sync.  Our only
+    # registered buffers (latent_mean/std) are deterministic constants.
+    if strategy_name == "ddp":
+        from pytorch_lightning.strategies import DDPStrategy
+
+        strategy: str | DDPStrategy = DDPStrategy(broadcast_buffers=False)
+    else:
+        strategy = strategy_name
     effective_batch = int(config.training.batch_size) * devices
 
     if args.dry_run:

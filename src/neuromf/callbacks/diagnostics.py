@@ -223,7 +223,7 @@ class TrainingDiagnosticsCallback(pl.Callback):
         if len(self._epoch_losses) > 1:
             loss_t = torch.tensor(self._epoch_losses)
             loss_std = float(loss_t.std())
-            pl_module.log("train/loss_std", loss_std)
+            pl_module.log("train/loss_std", loss_std, sync_dist=True)
             summary["loss_mean"] = float(loss_t.mean())
             summary["loss_std"] = loss_std
 
@@ -231,7 +231,7 @@ class TrainingDiagnosticsCallback(pl.Callback):
         if self._epoch_grad_norms:
             clipped = sum(1 for g in self._epoch_grad_norms if g > self._clip_val)
             clip_frac = clipped / len(self._epoch_grad_norms)
-            pl_module.log("train/gradients/clip_fraction", clip_frac)
+            pl_module.log("train/gradients/clip_fraction", clip_frac, sync_dist=True)
             summary["grad_clip_fraction"] = clip_frac
 
         # --- Per-block gradient norms (RMS over epoch) ---
@@ -240,7 +240,7 @@ class TrainingDiagnosticsCallback(pl.Callback):
             count = self._epoch_block_grad_counts.get(block, 1)
             rms = (sq_sum / count) ** 0.5
             block_norms[block] = rms
-            pl_module.log(f"train/gradients/{block}", rms)
+            pl_module.log(f"train/gradients/{block}", rms, sync_dist=True)
         if block_norms:
             summary["block_grad_norms"] = block_norms
 
@@ -254,7 +254,7 @@ class TrainingDiagnosticsCallback(pl.Callback):
                     update_sq += diff.norm().item() ** 2
                     theta_sq += p.data.norm().item() ** 2
             rel_update = update_sq**0.5 / (theta_sq**0.5 + 1e-8)
-            pl_module.log("train/updates/relative_update_norm", rel_update)
+            pl_module.log("train/updates/relative_update_norm", rel_update, sync_dist=True)
             summary["relative_update_norm"] = rel_update
             self._param_snapshot.clear()
 
@@ -268,7 +268,7 @@ class TrainingDiagnosticsCallback(pl.Callback):
                     diff_sq += (p.data - ema.shadow[name].to(p.device)).norm().item() ** 2
                     theta_sq += p.data.norm().item() ** 2
             ema_div = diff_sq**0.5 / (theta_sq**0.5 + 1e-8)
-            pl_module.log("ema/param_divergence", ema_div)
+            pl_module.log("ema/param_divergence", ema_div, sync_dist=True)
             summary["ema_divergence"] = ema_div
 
         # --- Sampling stats ---
@@ -276,11 +276,11 @@ class TrainingDiagnosticsCallback(pl.Callback):
             t_tensor = torch.tensor(self._epoch_t_values)
             r_tensor = torch.tensor(self._epoch_r_values)
             h_tensor = t_tensor - r_tensor
-            pl_module.log("train/sampling/t_mean", float(t_tensor.mean()))
-            pl_module.log("train/sampling/t_std", float(t_tensor.std()))
-            pl_module.log("train/sampling/h_mean", float(h_tensor.mean()))
+            pl_module.log("train/sampling/t_mean", float(t_tensor.mean()), sync_dist=True)
+            pl_module.log("train/sampling/t_std", float(t_tensor.std()), sync_dist=True)
+            pl_module.log("train/sampling/h_mean", float(h_tensor.mean()), sync_dist=True)
             h_zero_frac = float((h_tensor < 1e-6).float().mean())
-            pl_module.log("train/sampling/h_zero_frac", h_zero_frac)
+            pl_module.log("train/sampling/h_zero_frac", h_zero_frac, sync_dist=True)
             summary["sampling"] = {
                 "t_mean": float(t_tensor.mean()),
                 "t_std": float(t_tensor.std()),
@@ -294,7 +294,7 @@ class TrainingDiagnosticsCallback(pl.Callback):
             stacked = torch.stack(self._epoch_channel_losses)
             ch_mean = stacked.mean(dim=0)
             for c in range(ch_mean.shape[0]):
-                pl_module.log(f"train/channel/loss_ch{c}", float(ch_mean[c]))
+                pl_module.log(f"train/channel/loss_ch{c}", float(ch_mean[c]), sync_dist=True)
             summary["per_channel_loss"] = ch_mean.tolist()
 
         # --- Write JSON summary (rank 0 only in DDP) ---
