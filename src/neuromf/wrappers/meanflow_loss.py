@@ -37,6 +37,7 @@ class MeanFlowPipelineConfig:
     fd_step_size: float = 1e-3
     channel_weights: list[float] | None = None
     norm_p: float = 1.0
+    spatial_mask_ratio: float = 0.0  # 0.0=disabled, 0.5=mask 50% spatial voxels
 
 
 class MeanFlowPipeline(nn.Module):
@@ -178,9 +179,29 @@ class MeanFlowPipeline(nn.Module):
         # Compound velocity via JVP with v_tilde as tangent (iMF formulation)
         u, V = self.jvp.compute(u_fn, z_t, t, r, v_tilde)
 
+        # Spatial loss masking (Phase C, toggleable via config)
+        mask_ratio = self.config.spatial_mask_ratio
+        if mask_ratio > 0.0:
+            keep_prob = 1.0 - mask_ratio
+            spatial_shape = V.shape[2:]  # (D, H, W)
+            # (B, 1, D, H, W) — broadcast across C, same mask per sample
+            mask = (torch.rand(V.shape[0], 1, *spatial_shape, device=V.device) < keep_prob).float()
+            V_for_loss = V * mask
+            v_c_for_loss = v_c * mask
+        else:
+            V_for_loss = V
+            v_c_for_loss = v_c
+            keep_prob = 1.0
+
         # Single unified loss: ||V - v_c||^p
         cw = self._channel_weights
-        raw_loss_per_sample = lp_loss(V, v_c, p=p, channel_weights=cw, reduction="none")
+        raw_loss_per_sample = lp_loss(
+            V_for_loss, v_c_for_loss, p=p, channel_weights=cw, reduction="none"
+        )
+
+        # Normalize by keep fraction so loss magnitude is scale-invariant
+        if mask_ratio > 0.0:
+            raw_loss_per_sample = raw_loss_per_sample / keep_prob
 
         # Adaptive weighting (single term)
         if adaptive:
@@ -211,6 +232,7 @@ class MeanFlowPipeline(nn.Module):
                     p,
                     raw_loss_per_sample,
                     adp_weight if adaptive else None,
+                    z_t=z_t,
                 )
             )
 
@@ -227,6 +249,7 @@ class MeanFlowPipeline(nn.Module):
         p: float,
         raw_loss_per_sample: Tensor,
         adp_weight: Tensor | None,
+        z_t: Tensor | None = None,
     ) -> dict[str, Tensor]:
         """Compute detached diagnostic tensors from existing intermediates.
 
@@ -242,46 +265,86 @@ class MeanFlowPipeline(nn.Module):
             p: Norm exponent.
             raw_loss_per_sample: Per-sample raw loss ``(B,)`` (pre-adaptive).
             adp_weight: Adaptive weights (None if not adaptive).
+            z_t: Noisy interpolation ``(B, C, ...)`` (optional, for x-hat stats).
 
         Returns:
             Dict with ``diag_*`` keys, all detached scalars or small tensors.
         """
         diag: dict[str, Tensor] = {}
+        _zero = torch.tensor(0.0, device=u.device)
 
-        # Norm diagnostics (batch means of L2 norms)
-        diag["diag_u_norm"] = u.detach().flatten(1).norm(dim=1).mean()
-        diag["diag_compound_v_norm"] = V.detach().flatten(1).norm(dim=1).mean()
-        diag["diag_target_v_norm"] = v_c.detach().flatten(1).norm(dim=1).mean()
-        diag["diag_v_tilde_norm"] = v_tilde.detach().flatten(1).norm(dim=1).mean()
+        # --- Norm diagnostics (batch means of L2 norms) ---
+        u_norms = u.detach().flatten(1).norm(dim=1)
+        V_norms = V.detach().flatten(1).norm(dim=1)
+        vc_norms = v_c.detach().flatten(1).norm(dim=1)
+        vtilde_norms = v_tilde.detach().flatten(1).norm(dim=1)
 
-        # JVP norm recovery: du/dt = (V - u) / (t - r) for MF samples
+        diag["diag_u_norm"] = u_norms.mean()
+        diag["diag_compound_v_norm"] = V_norms.mean()
+        diag["diag_target_v_norm"] = vc_norms.mean()
+        diag["diag_v_tilde_norm"] = vtilde_norms.mean()
+
+        # --- JVP norm: du/dt = (V - u) / (t - r) for MF samples ---
         h = (t - r).detach()
         mf_mask = h > 1e-6
+        fm_mask = h < 1e-6
         if mf_mask.any():
             h_broad = h[mf_mask].view(-1, *([1] * (u.ndim - 1)))
             jvp_approx = (V[mf_mask].detach() - u[mf_mask].detach()) / h_broad
             diag["diag_jvp_norm"] = jvp_approx.flatten(1).norm(dim=1).mean()
         else:
-            diag["diag_jvp_norm"] = torch.tensor(0.0, device=u.device)
+            diag["diag_jvp_norm"] = _zero
 
-        # Adaptive weight stats
+        # --- Adaptive weight stats ---
         if adp_weight is not None:
             diag["diag_adaptive_weight_mean"] = adp_weight.detach().mean()
             diag["diag_adaptive_weight_std"] = adp_weight.detach().std()
         else:
-            diag["diag_adaptive_weight_mean"] = torch.tensor(0.0, device=u.device)
-            diag["diag_adaptive_weight_std"] = torch.tensor(0.0, device=u.device)
+            diag["diag_adaptive_weight_mean"] = _zero
+            diag["diag_adaptive_weight_std"] = _zero
 
-        # Per-channel loss from (V - v_c)
+        # --- Per-channel loss from (V - v_c) ---
         spatial_dims = list(range(2, V.ndim))
         ch_loss = (V.detach() - v_c.detach()).abs().pow(p).mean(dim=[0] + spatial_dims)
         diag["diag_loss_per_channel"] = ch_loss
 
-        # Per-sample raw loss (pre-adaptive-weighting)
+        # --- Per-sample raw loss (pre-adaptive-weighting) ---
         diag["diag_loss_per_sample"] = raw_loss_per_sample.detach()
 
-        # FM/MF split for monitoring
-        fm_mask = h < 1e-6
+        # --- FM/MF split ---
         diag["diag_fm_fraction"] = fm_mask.float().mean()
+        if fm_mask.any():
+            diag["diag_raw_loss_fm"] = raw_loss_per_sample[fm_mask].detach().mean()
+        else:
+            diag["diag_raw_loss_fm"] = _zero
+        if mf_mask.any():
+            diag["diag_raw_loss_mf"] = raw_loss_per_sample[mf_mask].detach().mean()
+        else:
+            diag["diag_raw_loss_mf"] = _zero
+
+        # --- Cosine similarity: V vs v_c (direction alignment) ---
+        V_flat = V.detach().flatten(1)
+        vc_flat = v_c.detach().flatten(1)
+        cos_sim = torch.nn.functional.cosine_similarity(V_flat, vc_flat, dim=1)
+        diag["diag_cosine_sim_V_vc"] = cos_sim.mean()
+
+        # --- Relative prediction error: ||V - v_c|| / ||v_c|| ---
+        error_norms = (V.detach() - v_c.detach()).flatten(1).norm(dim=1)
+        rel_error = error_norms / (vc_norms + 1e-8)
+        diag["diag_relative_error"] = rel_error.mean()
+
+        # --- v_tilde alignment with v_c (tangent quality) ---
+        vtilde_flat = v_tilde.detach().flatten(1)
+        cos_sim_tangent = torch.nn.functional.cosine_similarity(vtilde_flat, vc_flat, dim=1)
+        diag["diag_cosine_sim_vtilde_vc"] = cos_sim_tangent.mean()
+
+        # --- x-hat statistics (x-prediction mode) ---
+        if self.config.prediction_type == "x" and z_t is not None:
+            t_safe = t.detach().view(-1, *([1] * (z_t.ndim - 1))).clamp(min=self.config.t_min)
+            x_hat = z_t.detach() - t_safe * u.detach()
+            diag["diag_x_hat_mean"] = x_hat.mean()
+            diag["diag_x_hat_std"] = x_hat.std()
+            diag["diag_x_hat_min"] = x_hat.min()
+            diag["diag_x_hat_max"] = x_hat.max()
 
         return diag

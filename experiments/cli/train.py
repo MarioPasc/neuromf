@@ -170,6 +170,18 @@ def main() -> None:
             config.time_sampling.data_proportion,
         )
         logger.info("EMA decay: %.4f", config.ema.decay)
+        logger.info("Weight decay: %.1e", config.training.weight_decay)
+        logger.info(
+            "Divergence guard: threshold=%.1f, grace_steps=%d",
+            config.training.get("divergence_threshold", 0.0),
+            config.training.get("divergence_grace_steps", 100),
+        )
+        logger.info(
+            "Spatial mask ratio: %.2f",
+            config.meanflow.get("spatial_mask_ratio", 0.0),
+        )
+        aug_enabled = config.training.get("augmentation", {}).get("enabled", False)
+        logger.info("Augmentation: %s", "enabled" if aug_enabled else "disabled")
         logger.info("Config OK — dry run complete.")
         return
 
@@ -181,6 +193,16 @@ def main() -> None:
         logger.error("Latent directory not found: %s", latent_dir)
         sys.exit(1)
 
+    # Build augmentation pipeline (Phase B, toggleable)
+    aug_cfg = OmegaConf.to_container(config.training.get("augmentation", {}), resolve=True)
+    aug_transform = None
+    if aug_cfg and aug_cfg.get("enabled", False):
+        from neuromf.data.latent_augmentation import build_latent_augmentation
+
+        stats_path = Path(config.paths.latents_dir) / "latent_stats.json"
+        aug_transform = build_latent_augmentation(aug_cfg, latent_stats_path=stats_path)
+        logger.info("Latent augmentation enabled")
+
     split_ratio = float(config.training.get("split_ratio", 0.9))
     split_seed = int(config.training.get("split_seed", 42))
     train_ds = LatentDataset(
@@ -189,6 +211,7 @@ def main() -> None:
         split="train",
         split_ratio=split_ratio,
         split_seed=split_seed,
+        transform=aug_transform,
     )
     val_ds = LatentDataset(
         latent_dir,
@@ -238,9 +261,17 @@ def main() -> None:
         filename="epoch_{epoch:03d}_vloss_{val/loss:.4f}",
         save_last=True,
     )
+    best_raw_cb = ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        monitor="train/raw_loss",
+        mode="min",
+        save_top_k=1,
+        filename="best_raw_{epoch:03d}_{train/raw_loss:.4f}",
+        save_last=False,
+    )
     lr_monitor = LearningRateMonitor(logging_interval="step")
 
-    callbacks = [checkpoint_cb, lr_monitor]
+    callbacks = [checkpoint_cb, best_raw_cb, lr_monitor]
 
     diag_cfg = config.get("diagnostics", {})
     if diag_cfg.get("enabled", False):
@@ -263,6 +294,37 @@ def main() -> None:
             )
         )
         logger.info("Diagnostics enabled (every %d epochs)", diag_cfg.get("every_n_epochs", 25))
+
+    # Sample collector callback (replaces inline sample generation)
+    sample_cfg = config.get("sample_collector", {})
+    if sample_cfg.get("enabled", True):
+        from neuromf.callbacks.sample_collector import SampleCollectorCallback
+
+        samples_dir = str(config.paths.get("samples_dir", ""))
+        if samples_dir:
+            callbacks.append(
+                SampleCollectorCallback(
+                    samples_dir=samples_dir,
+                    collect_every_n_epochs=int(
+                        sample_cfg.get(
+                            "collect_every_n_epochs",
+                            config.get("sample_every_n_epochs", 25),
+                        )
+                    ),
+                    n_samples=int(sample_cfg.get("n_samples", config.get("n_samples_per_log", 8))),
+                    nfe_steps=list(sample_cfg.get("nfe_steps", [1, 2, 5, 10])),
+                    seed=int(sample_cfg.get("seed", 42)),
+                    prediction_type=str(config.unet.prediction_type),
+                )
+            )
+            logger.info(
+                "SampleCollector enabled (every %d epochs, NFE=%s)",
+                sample_cfg.get(
+                    "collect_every_n_epochs",
+                    config.get("sample_every_n_epochs", 25),
+                ),
+                list(sample_cfg.get("nfe_steps", [1, 2, 5, 10])),
+            )
 
     # ------------------------------------------------------------------
     # Logger

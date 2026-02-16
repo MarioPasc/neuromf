@@ -51,6 +51,9 @@ class LatentDataset(Dataset):
             subset. If None, return all data.
         split_ratio: Fraction of data in the train split.
         split_seed: Random seed for deterministic splitting.
+        transform: Optional callable applied to the ``z`` tensor after
+            normalisation. Receives ``(C, D, H, W)`` tensor, must return
+            same shape.
     """
 
     def __init__(
@@ -61,9 +64,11 @@ class LatentDataset(Dataset):
         split: str | None = None,
         split_ratio: float = 0.9,
         split_seed: int = 42,
+        transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         self.latent_dir = Path(latent_dir)
         self.normalise = normalise
+        self.transform = transform
 
         # Glob and sort .pt files for reproducible indexing
         all_files = sorted(self.latent_dir.glob("*.pt"))
@@ -146,5 +151,8 @@ class LatentDataset(Dataset):
 
         if self.normalise and self._norm_mean is not None and self._norm_std is not None:
             z = (z - self._norm_mean) / self._norm_std
+
+        if self.transform is not None:
+            z = self.transform(z)
 
         return {"z": z, "metadata": metadata}

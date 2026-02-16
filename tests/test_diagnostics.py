@@ -178,6 +178,15 @@ class TestDiagnostics:
             "diag_loss_per_channel",
             "diag_loss_per_sample",
             "diag_fm_fraction",
+            "diag_raw_loss_fm",
+            "diag_raw_loss_mf",
+            "diag_cosine_sim_V_vc",
+            "diag_cosine_sim_vtilde_vc",
+            "diag_relative_error",
+            "diag_x_hat_mean",
+            "diag_x_hat_std",
+            "diag_x_hat_min",
+            "diag_x_hat_max",
         }
         actual_diag_keys = {k for k in result if k.startswith("diag_")}
         assert expected_diag_keys == actual_diag_keys
@@ -292,16 +301,18 @@ class TestDiagnostics:
         # End epoch
         callback.on_train_epoch_end(mock_trainer, model)
 
-        # Check JSON was written
-        epoch_json = tmp_path / "epoch_000" / "summary.json"
+        # Check JSON was written in new folder structure
+        epoch_json = tmp_path / "per_epoch_metrics" / "epoch_000" / "summary.json"
         assert epoch_json.exists(), f"Expected {epoch_json}"
 
         summary = json.loads(epoch_json.read_text())
         assert summary["epoch"] == 0
         assert "sampling" in summary
+        assert "epoch_time_sec" in summary
+        assert summary["epoch_time_sec"] > 0
 
         # Check cumulative summary
-        cumul_json = tmp_path / "training_summary.json"
+        cumul_json = tmp_path / "aggregate_results" / "training_summary.json"
         assert cumul_json.exists()
         history = json.loads(cumul_json.read_text())
         assert len(history) == 1

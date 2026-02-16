@@ -422,20 +422,52 @@ class TestLatentMeanFlowExtended:
         assert torch.isfinite(result["loss"])
 
     def test_P4_T12_divergence_guard(self) -> None:
-        """P4-T12: EMA-based divergence guard raises RuntimeError when threshold exceeded."""
-        cfg = _tiny_config(**{"training": {"divergence_threshold": 1.5}})
+        """P4-T12: Min-tracking divergence guard raises RuntimeError when threshold exceeded."""
+        cfg = _tiny_config(
+            **{
+                "training": {
+                    "divergence_threshold": 1.5,
+                    "divergence_grace_steps": 0,
+                }
+            }
+        )
         model = LatentMeanFlow(cfg)
         model.train()
 
-        # First step: initialises raw_loss_ema
+        # First step: initialises min_raw_loss
         batch = _fake_batch()
         loss = model.training_step(batch, batch_idx=0)
-        assert model._raw_loss_ema is not None
+        assert model._min_raw_loss is not None
 
-        # Manually set EMA to a tiny value so next step trivially exceeds 1.5x
-        model._raw_loss_ema = model._raw_loss_ema / 100.0
+        # Manually set min to a tiny value so next step trivially exceeds 1.5x
+        model._min_raw_loss = model._min_raw_loss / 100.0
 
-        # Next step should trigger divergence guard (loss >> 1.5 × tiny_ema)
+        # Next step should trigger divergence guard (loss >> 1.5 × tiny_min)
         batch2 = _fake_batch()
         with pytest.raises(RuntimeError, match="Divergence detected"):
             model.training_step(batch2, batch_idx=1)
+
+    def test_P4d_T10_grace_period(self) -> None:
+        """P4d-T10: Divergence guard does not fire during grace period."""
+        cfg = _tiny_config(
+            **{
+                "training": {
+                    "divergence_threshold": 1.5,
+                    "divergence_grace_steps": 9999,
+                }
+            }
+        )
+        model = LatentMeanFlow(cfg)
+        model.train()
+
+        # First step
+        batch = _fake_batch()
+        loss = model.training_step(batch, batch_idx=0)
+
+        # Set min to tiny value — would fire without grace period
+        model._min_raw_loss = 1e-10
+
+        # But global_step < grace_steps, so it should NOT raise
+        batch2 = _fake_batch()
+        loss2 = model.training_step(batch2, batch_idx=1)
+        assert torch.isfinite(loss2)

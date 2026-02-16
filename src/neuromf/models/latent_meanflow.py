@@ -1,8 +1,8 @@
 """PyTorch Lightning module for Latent MeanFlow training.
 
 Implements Algorithm 1 from the methodology: MeanFlow on pre-computed 3D
-brain MRI latents with EMA tracking, periodic 1-NFE sample generation,
-and TensorBoard logging.
+brain MRI latents with EMA tracking and TensorBoard logging. Sample
+generation is handled by ``SampleCollectorCallback``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
-from neuromf.sampling.one_step import sample_one_step
 from neuromf.utils.ema import EMAModel
 from neuromf.utils.time_sampler import sample_t_and_r
 from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
@@ -31,8 +30,8 @@ class LatentMeanFlow(pl.LightningModule):
     """Latent MeanFlow training module.
 
     Orchestrates the full training loop: time sampling, unified MeanFlow
-    loss (single ||V - v_c||^p with adaptive weighting), EMA tracking, and
-    periodic 1-NFE sample generation decoded through the frozen MAISI VAE.
+    loss (single ||V - v_c||^p with adaptive weighting), and EMA tracking.
+    Sample generation is delegated to ``SampleCollectorCallback``.
 
     Args:
         config: Merged OmegaConf config with ``unet``, ``training``,
@@ -61,6 +60,7 @@ class LatentMeanFlow(pl.LightningModule):
             fd_step_size=float(mf.fd_step_size),
             channel_weights=(list(mf.channel_weights) if mf.channel_weights else None),
             norm_p=float(mf.get("norm_p", 1.0)),
+            spatial_mask_ratio=float(mf.get("spatial_mask_ratio", 0.0)),
         )
         self.loss_pipeline = MeanFlowPipeline(pipeline_config)
 
@@ -89,12 +89,15 @@ class LatentMeanFlow(pl.LightningModule):
         self._diag_enabled: bool = False
         self._step_diagnostics: dict | None = None
 
-        # EMA-based divergence guard
+        # Min-tracking divergence guard
         self._divergence_threshold = float(config.training.get("divergence_threshold", 0.0))
-        self._raw_loss_ema: float | None = None
+        self._divergence_grace_steps = int(config.training.get("divergence_grace_steps", 100))
+        self._min_raw_loss: float | None = None
+        self._divergence_warned_3x: bool = False
+        self._divergence_warned_5x: bool = False
 
-        # Lazy-loaded VAE for sample decoding
-        self._vae: Any = None
+        # Set by SampleCollectorCallback to disable legacy sample generation
+        self._sample_collector_active: bool = False
 
         n_params = sum(p.numel() for p in self.net.parameters())
         logger.info("LatentMeanFlow: %d trainable params", n_params)
@@ -188,19 +191,39 @@ class LatentMeanFlow(pl.LightningModule):
         raw_loss = result["raw_loss"]
         self.log("train/raw_loss", raw_loss, prog_bar=True)
 
-        # EMA-based divergence guard: compares step loss to running average
+        # Min-tracking divergence guard: compares step loss to running minimum
         if self._divergence_threshold > 0:
             raw_val = raw_loss.item()
-            if self._raw_loss_ema is None:
-                self._raw_loss_ema = raw_val
+            if self._min_raw_loss is None:
+                self._min_raw_loss = raw_val
             else:
-                self._raw_loss_ema = 0.99 * self._raw_loss_ema + 0.01 * raw_val
-                if raw_val > self._divergence_threshold * self._raw_loss_ema:
+                self._min_raw_loss = min(self._min_raw_loss, raw_val)
+            # Check after grace period
+            if self.global_step >= self._divergence_grace_steps and self._min_raw_loss > 0:
+                ratio = raw_val / self._min_raw_loss
+                if ratio > 3.0 and not self._divergence_warned_3x:
+                    logger.warning(
+                        "Step %d: raw_loss=%.1f is 3x min (%.1f)",
+                        self.global_step,
+                        raw_val,
+                        self._min_raw_loss,
+                    )
+                    self._divergence_warned_3x = True
+                if ratio > 5.0 and not self._divergence_warned_5x:
+                    logger.warning(
+                        "Step %d: raw_loss=%.1f is 5x min (%.1f)",
+                        self.global_step,
+                        raw_val,
+                        self._min_raw_loss,
+                    )
+                    self._divergence_warned_5x = True
+                if ratio > self._divergence_threshold:
                     raise RuntimeError(
                         f"Divergence detected at step {self.global_step}: "
                         f"raw_loss={raw_val:.1f} > "
-                        f"{self._divergence_threshold}x EMA ({self._raw_loss_ema:.1f})"
+                        f"{self._divergence_threshold}x min ({self._min_raw_loss:.1f})"
                     )
+            self.log("train/min_raw_loss", self._min_raw_loss)
 
         if self._diag_enabled:
             self._step_diagnostics = result
@@ -265,19 +288,10 @@ class LatentMeanFlow(pl.LightningModule):
     # ------------------------------------------------------------------
 
     def on_train_epoch_end(self) -> None:
-        """Record training loss and generate periodic samples.
-
-        Sample generation runs on rank 0 only to avoid redundant VAE
-        loading and filesystem races in multi-GPU DDP.
-        """
+        """Record training loss history."""
         avg_loss = self.trainer.callback_metrics.get("train/loss")
         if avg_loss is not None:
             self._train_loss_history.append(float(avg_loss))
-
-        sample_every = int(self.cfg.get("sample_every_n_epochs", 25))
-        if (self.current_epoch + 1) % sample_every == 0 and self.global_rank == 0:
-            n_samples = int(self.cfg.get("n_samples_per_log", 8))
-            self._generate_samples(n_samples)
 
     def on_validation_epoch_end(self) -> None:
         """Record validation loss."""
@@ -361,6 +375,11 @@ class LatentMeanFlow(pl.LightningModule):
             "train": self._train_loss_history,
             "val": self._val_loss_history,
         }
+        checkpoint["divergence_state"] = {
+            "min_raw_loss": self._min_raw_loss,
+            "warned_3x": self._divergence_warned_3x,
+            "warned_5x": self._divergence_warned_5x,
+        }
 
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         """Restore EMA state and loss history from checkpoint.
@@ -373,311 +392,8 @@ class LatentMeanFlow(pl.LightningModule):
         if "loss_history" in checkpoint:
             self._train_loss_history = checkpoint["loss_history"].get("train", [])
             self._val_loss_history = checkpoint["loss_history"].get("val", [])
-
-    # ------------------------------------------------------------------
-    # Sample generation
-    # ------------------------------------------------------------------
-
-    @torch.no_grad()
-    def _generate_samples(self, n_samples: int = 8) -> None:
-        """Generate 1-NFE samples and optionally decode through frozen VAE.
-
-        Uses EMA shadow weights for generation. Decodes through the MAISI
-        VAE if weights are available, saving mid-sagittal/axial/coronal
-        slices as PNG.
-
-        Args:
-            n_samples: Number of samples to generate.
-        """
-        S = self._latent_spatial
-        noise = torch.randn(n_samples, self._in_channels, S, S, S, device=self.device)
-
-        # Apply EMA weights for sampling
-        self.ema.apply_shadow(self.net)
-        try:
-            z_0_hat = sample_one_step(
-                self.net, noise, prediction_type=self.cfg.unet.prediction_type
-            )
-        finally:
-            self.ema.restore(self.net)
-
-        # Denormalize back to original latent statistics
-        z_0_denorm = z_0_hat * self.latent_std + self.latent_mean
-
-        logger.info(
-            "Generated %d samples at epoch %d (latent range: [%.3f, %.3f])",
-            n_samples,
-            self.current_epoch,
-            z_0_hat.min().item(),
-            z_0_hat.max().item(),
-        )
-
-        # Save latent channel visualization (no VAE needed)
-        samples_dir_str = self.cfg.paths.get("samples_dir", "")
-        if samples_dir_str:
-            epoch_dir = Path(samples_dir_str) / f"epoch_{self.current_epoch:04d}"
-            epoch_dir.mkdir(parents=True, exist_ok=True)
-            self._save_latent_channels(z_0_hat, epoch_dir)
-
-        # Try to decode through VAE if weights are available
-        vae_weights = self.cfg.paths.get("maisi_vae_weights", "")
-        if vae_weights and Path(vae_weights).exists() and samples_dir_str:
-            try:
-                vae = self._load_vae()
-
-                # Decode one sample at a time to avoid OOM — the VAE
-                # decoder activations for 192³ are ~3GB per sample.
-                decoded_list = []
-                for i in range(n_samples):
-                    decoded_i = vae.decode(z_0_denorm[i : i + 1])
-                    decoded_list.append(decoded_i.cpu())
-                    del decoded_i
-                torch.cuda.empty_cache()
-                decoded = torch.cat(decoded_list, dim=0)
-
-                self._save_sample_grid(decoded, epoch_dir)
-                self._log_images(decoded)
-            except Exception as e:
-                logger.warning("Sample decoding failed: %s", e)
-
-    def _load_vae(self) -> Any:
-        """Lazy-load the frozen MAISI VAE for sample decoding.
-
-        Returns:
-            ``MAISIVAEWrapper`` instance on the current device.
-        """
-        if self._vae is not None:
-            return self._vae
-
-        from neuromf.wrappers.maisi_vae import MAISIVAEConfig, MAISIVAEWrapper
-
-        vae_cfg = self.cfg.vae
-        vae_config = MAISIVAEConfig(
-            weights_path=str(self.cfg.paths.maisi_vae_weights),
-            scale_factor=float(vae_cfg.scale_factor),
-            spatial_dims=int(vae_cfg.spatial_dims),
-            in_channels=int(vae_cfg.in_channels),
-            out_channels=int(vae_cfg.out_channels),
-            latent_channels=int(vae_cfg.latent_channels),
-            num_channels=list(vae_cfg.num_channels),
-            num_res_blocks=list(vae_cfg.num_res_blocks),
-            norm_num_groups=int(vae_cfg.norm_num_groups),
-            norm_eps=float(vae_cfg.norm_eps),
-            attention_levels=list(vae_cfg.attention_levels),
-            with_encoder_nonlocal_attn=bool(vae_cfg.with_encoder_nonlocal_attn),
-            with_decoder_nonlocal_attn=bool(vae_cfg.with_decoder_nonlocal_attn),
-            use_checkpointing=bool(vae_cfg.use_checkpointing),
-            use_convtranspose=bool(vae_cfg.use_convtranspose),
-            norm_float16=bool(vae_cfg.norm_float16),
-            num_splits=int(vae_cfg.num_splits),
-            dim_split=int(vae_cfg.dim_split),
-            downsample_factor=int(vae_cfg.downsample_factor),
-        )
-        self._vae = MAISIVAEWrapper(vae_config, device=self.device)
-        logger.info("Lazy-loaded MAISI VAE for sample decoding")
-        return self._vae
-
-    def _save_sample_grid(self, decoded: Tensor, epoch_dir: Path) -> None:
-        """Save all decoded samples as one N x 3 grid (rows=samples, cols=views).
-
-        Args:
-            decoded: Decoded volumes ``(B, 1, H, W, D)``.
-            epoch_dir: Directory to save the grid PNG.
-        """
-        try:
-            import matplotlib
-
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-        except ImportError:
-            logger.warning("matplotlib not available; skipping sample grid")
-            return
-
-        n = decoded.shape[0]
-        vol = decoded.cpu().float()
-        mid = [s // 2 for s in vol.shape[2:]]
-        view_names = ["Sagittal", "Coronal", "Axial"]
-
-        fig, axes = plt.subplots(n, 3, figsize=(9, 3 * n))
-        if n == 1:
-            axes = axes[None, :]
-
-        # Compute global intensity range across all samples for consistent contrast
-        vmin = vol[:, 0].min().item()
-        vmax = vol[:, 0].max().item()
-
-        for i in range(n):
-            v = vol[i, 0]
-            slices = [
-                v[mid[0], :, :],
-                v[:, mid[1], :],
-                v[:, :, mid[2]],
-            ]
-            for j, sl in enumerate(slices):
-                axes[i, j].imshow(sl.numpy().T, cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
-                axes[i, j].set_axis_off()
-                if i == 0:
-                    axes[i, j].set_title(view_names[j], fontsize=11)
-            axes[i, 0].set_ylabel(f"#{i}", fontsize=10, rotation=0, labelpad=20, va="center")
-
-        fig.suptitle(
-            f"Generated Samples — Epoch {self.current_epoch}, Step {self.global_step}",
-            fontsize=12,
-            y=0.99,
-        )
-        fig.tight_layout(rect=[0.03, 0, 1, 0.97])
-        fig.savefig(epoch_dir / "samples_grid.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        logger.info("Saved sample grid (%d samples) to %s", n, epoch_dir)
-
-    def _save_latent_channels(self, z_0_hat: Tensor, epoch_dir: Path) -> None:
-        """Save 4-channel latent visualization for the first sample.
-
-        Shows each latent channel's mid-slices in a 4x3 grid with per-channel
-        statistics annotated — useful for diagnosing what the model learns
-        in latent space before VAE decoding.
-
-        Args:
-            z_0_hat: Generated latents ``(B, 4, D, H, W)`` (normalised space).
-            epoch_dir: Directory to save the grid PNG.
-        """
-        try:
-            import matplotlib
-
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-        except ImportError:
-            logger.warning("matplotlib not available; skipping latent channels")
-            return
-
-        lat = z_0_hat[0].cpu().float()  # (4, D, H, W)
-        C = lat.shape[0]
-        mid = [s // 2 for s in lat.shape[1:]]
-        view_names = ["Sagittal", "Coronal", "Axial"]
-
-        # Global color range across all channels for a single shared colorbar
-        global_min = lat.min().item()
-        global_max = lat.max().item()
-        abs_lim = max(abs(global_min), abs(global_max))
-
-        fig, axes = plt.subplots(
-            C,
-            3,
-            figsize=(9, 3 * C + 0.6),
-            gridspec_kw={"hspace": 0.15, "wspace": 0.05},
-        )
-
-        im = None
-        for ch in range(C):
-            ch_vol = lat[ch]  # (D, H, W)
-            slices = [
-                ch_vol[mid[0], :, :],
-                ch_vol[:, mid[1], :],
-                ch_vol[:, :, mid[2]],
-            ]
-            ch_mean = ch_vol.mean().item()
-            ch_std = ch_vol.std().item()
-            ch_min = ch_vol.min().item()
-            ch_max = ch_vol.max().item()
-
-            for j, sl in enumerate(slices):
-                im = axes[ch, j].imshow(
-                    sl.numpy().T,
-                    cmap="RdBu_r",
-                    origin="lower",
-                    vmin=-abs_lim,
-                    vmax=abs_lim,
-                )
-                axes[ch, j].set_axis_off()
-                if ch == 0:
-                    axes[ch, j].set_title(view_names[j], fontsize=11)
-
-            # Per-channel stats as overlay inside the first panel
-            stats_str = (
-                f"Ch {ch}  \u03bc={ch_mean:+.3f}  \u03c3={ch_std:.3f}  [{ch_min:.2f}, {ch_max:.2f}]"
-            )
-            axes[ch, 0].text(
-                0.02,
-                0.97,
-                stats_str,
-                transform=axes[ch, 0].transAxes,
-                fontsize=7,
-                va="top",
-                ha="left",
-                family="monospace",
-                bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85},
-            )
-
-        # Single horizontal colorbar spanning all columns at the bottom
-        cbar = fig.colorbar(
-            im,
-            ax=axes.ravel().tolist(),
-            orientation="horizontal",
-            fraction=0.03,
-            pad=0.04,
-            aspect=40,
-        )
-        cbar.set_label("Latent value", fontsize=10)
-
-        fig.suptitle(
-            f"Latent Channels (sample #0) — Epoch {self.current_epoch}, Step {self.global_step}",
-            fontsize=12,
-            y=0.99,
-        )
-        fig.savefig(epoch_dir / "latent_channels.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        logger.info("Saved latent channel grid to %s", epoch_dir)
-
-    def _log_images(self, decoded: Tensor) -> None:
-        """Log a combined sample grid to TensorBoard.
-
-        Creates a single grid image with all samples showing 3 orthogonal
-        views, rather than logging individual slices.
-
-        Args:
-            decoded: Decoded volumes ``(B, 1, H, W, D)``.
-        """
-        if self.logger is None:
-            return
-
-        tb = getattr(self.logger, "experiment", None)
-        if tb is None or not hasattr(tb, "add_image"):
-            return
-
-        vol = decoded.cpu().float()
-        n = min(vol.shape[0], 8)
-        mid = [s // 2 for s in vol.shape[2:]]
-
-        # Build a list of normalized slices: n_samples x 3 views
-        rows = []
-        for i in range(n):
-            v = vol[i, 0]
-            slices = [
-                v[mid[0], :, :].T,
-                v[:, mid[1], :].T,
-                v[:, :, mid[2]].T,
-            ]
-            # Pad to same height/width for grid assembly
-            max_h = max(s.shape[0] for s in slices)
-            max_w = max(s.shape[1] for s in slices)
-            padded = []
-            for sl in slices:
-                ph = max_h - sl.shape[0]
-                pw = max_w - sl.shape[1]
-                padded.append(torch.nn.functional.pad(sl, (0, pw, 0, ph)))
-            rows.append(torch.cat(padded, dim=1))  # (H, W*3)
-
-        grid = torch.stack(rows, dim=0)  # (N, H, W*3)
-
-        # Normalize to [0, 1]
-        g_min, g_max = grid.min(), grid.max()
-        if g_max > g_min:
-            grid = (grid - g_min) / (g_max - g_min)
-
-        # Stack rows vertically into one image
-        full_grid = torch.cat(list(grid), dim=0)  # (N*H, W*3)
-        tb.add_image(
-            "samples/grid",
-            full_grid.unsqueeze(0),
-            global_step=self.global_step,
-        )
+        if "divergence_state" in checkpoint:
+            ds = checkpoint["divergence_state"]
+            self._min_raw_loss = ds.get("min_raw_loss")
+            self._divergence_warned_3x = ds.get("warned_3x", False)
+            self._divergence_warned_5x = ds.get("warned_5x", False)

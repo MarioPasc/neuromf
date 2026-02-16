@@ -41,7 +41,10 @@ training:
   prefetch_factor: 4
   accumulate_grad_batches: 4        # effective batch = 16 × 2 × 4 = 128
   log_every_n_steps: 10             # ~9 steps/epoch → log ~every epoch
-  divergence_threshold: 500.0       # halt if raw_loss > 500× EMA
+  divergence_threshold: 10.0        # halt if raw_loss > 10× min raw loss
+  divergence_grace_steps: 100      # skip early unstable steps
+  augmentation:
+    enabled: false                   # Phase B OFF for v2
 
 # --- UNet: enable flash attention (safe with FD-JVP) ---
 unet:
@@ -56,6 +59,14 @@ meanflow:
 diagnostics:
   enabled: true
   every_n_epochs: 25
+
+# --- Sample collection ---
+sample_collector:
+  enabled: true
+  collect_every_n_epochs: 25
+  n_samples: 8
+  nfe_steps: [1, 2, 5, 10]
+  seed: 42
 
 # --- VAE: A100 can decode without memory splits ---
 vae:
