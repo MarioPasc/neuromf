@@ -4,10 +4,18 @@
 fomo60k:
   datasets:
     - name: PT001_OASIS1
-      groups: ["Control", "nondemented", ""]  # include NaN-group subjects
+      groups: ["Control", "Nondemented", ""]  # include NaN-group subjects
     - name: PT002_OASIS2
       groups: ["Control", "Nondemented", ""]
+    - name: PT003_BraTS-GEN
+      groups: ["Control", "Nondemented", ""] 
+    - name: PT004_MSD_Braintumor
+      groups: ["Control", "Nondemented", ""] 
     - name: PT005_IXI
-      groups: ["Control", ""]
+      groups: ["Control", "Nondemented", ""]
+    - name: PT007_NIMH
+      groups: ["Control", "Nondemented", ""]
+    - name: PT008_DLBS
+      groups: ["Control", "Nondemented", ""]
   sequences: ["t1"]
-  primary_scan_only: true
+  primary_scan_only: false

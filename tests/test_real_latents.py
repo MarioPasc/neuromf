@@ -1,13 +1,15 @@
 """Tests for real latent smoke test — Phase 3 verification.
 
-P3-T13: Load real .pt latent files and forward through UNet.
+P3-T13: Load real latents from HDF5 shards and forward through UNet.
 """
 
 from pathlib import Path
 
+import h5py
 import pytest
 import torch
 
+from neuromf.data.latent_hdf5 import build_global_index, discover_shards, read_sample
 from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
 
 LATENTS_DIR = Path("/media/mpascual/Sandisk2TB/research/neuromf/results/latents")
@@ -16,27 +18,31 @@ LATENTS_DIR = Path("/media/mpascual/Sandisk2TB/research/neuromf/results/latents"
 @pytest.mark.phase3
 @pytest.mark.informational
 def test_P3_T13_real_latent_smoke_test(device: torch.device) -> None:
-    """P3-T13: Load 5 real .pt files, forward through UNet, check output.
+    """P3-T13: Load 5 real latents from HDF5 shards, forward through UNet, check output.
 
-    Skipped if latent files are not available (e.g., Phase 1 not run yet).
+    Skipped if latent shards are not available (e.g., Phase 1 not run yet).
     """
     if not LATENTS_DIR.exists():
         pytest.skip(f"Latents directory not found: {LATENTS_DIR}")
 
-    pt_files = sorted(LATENTS_DIR.glob("*.pt"))[:5]
-    if len(pt_files) < 5:
-        pytest.skip(f"Need at least 5 .pt files, found {len(pt_files)}")
+    shard_paths = discover_shards(LATENTS_DIR)
+    if not shard_paths:
+        pytest.skip(f"No .h5 shard files found in {LATENTS_DIR}")
 
-    # Load latents and detect spatial size
+    global_idx = build_global_index(shard_paths)
+    if len(global_idx) < 5:
+        pytest.skip(f"Need at least 5 written samples, found {len(global_idx)}")
+
+    # Load first 5 latents
     latents = []
-    for pt_file in pt_files:
-        data = torch.load(pt_file, map_location="cpu", weights_only=False)
-        z = data["z"] if isinstance(data, dict) else data
-        assert z.ndim == 4 and z.shape[0] == 4, f"Unexpected shape {z.shape} in {pt_file.name}"
+    for shard_path, local_idx in global_idx[:5]:
+        with h5py.File(str(shard_path), "r") as f:
+            z, _ = read_sample(f, local_idx)
+        assert z.ndim == 4 and z.shape[0] == 4, f"Unexpected shape {z.shape}"
         spatial = z.shape[1]
         if spatial not in (32, 48):
-            pytest.fail(f"Unexpected spatial dim {spatial} in {pt_file.name} (expected 32 or 48)")
-        assert torch.isfinite(z).all(), f"NaN/Inf in {pt_file.name}"
+            pytest.fail(f"Unexpected spatial dim {spatial} (expected 32 or 48)")
+        assert torch.isfinite(z).all(), "NaN/Inf in latent"
         latents.append(z)
 
     spatial = latents[0].shape[1]  # 32 or 48

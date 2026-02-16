@@ -137,8 +137,23 @@ echo "OUTPUT VERIFICATION"
 echo "=========================================="
 
 LATENT_DIR="${RESULTS_DST}/latents"
-PT_COUNT=$(find "${LATENT_DIR}" -name "*.pt" 2>/dev/null | wc -l)
-echo "Latent .pt files: ${PT_COUNT}"
+H5_COUNT=$(find "${LATENT_DIR}" -name "*.h5" 2>/dev/null | wc -l)
+echo "HDF5 shard files: ${H5_COUNT}"
+
+# Count written samples across all shards
+python -c "
+import h5py
+from pathlib import Path
+latent_dir = Path('${LATENT_DIR}')
+total = 0
+for h5_path in sorted(latent_dir.glob('*.h5')):
+    with h5py.File(str(h5_path), 'r') as f:
+        n_written = int(f['written'][:].sum())
+        n_total = len(f['written'])
+        print(f'  {h5_path.name}: {n_written}/{n_total} written')
+        total += n_written
+print(f'Total written samples: {total}')
+" 2>/dev/null || echo "Could not inspect HDF5 shards"
 
 EXPECTED_FILES=(
     "${LATENT_DIR}/latent_stats.json"
@@ -190,7 +205,7 @@ echo "PHASE 1 ENCODING COMPLETED"
 echo "=========================================="
 echo "Finished:   $(date)"
 echo "Duration:   $(($ELAPSED / 3600))h $((($ELAPSED / 60) % 60))m $(($ELAPSED % 60))s"
-echo "Latents:    ${PT_COUNT} files in ${LATENT_DIR}"
+echo "Latents:    ${H5_COUNT} shards in ${LATENT_DIR}"
 echo "Exit code:  ${ENCODE_EXIT}"
 
 if [ "$ENCODE_EXIT" -eq 0 ]; then

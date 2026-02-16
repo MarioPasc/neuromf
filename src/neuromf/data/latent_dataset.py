@@ -1,19 +1,22 @@
-"""PyTorch Dataset for pre-computed ``.pt`` latent representations.
+"""PyTorch Dataset for pre-computed latents stored in HDF5 shard files.
 
-Loads latent files lazily from disk with optional per-channel normalisation
-using pre-computed statistics (mean, std). Designed for MeanFlow training
-where the VAE is frozen and all latents are pre-encoded.
+Loads latent tensors lazily from per-dataset HDF5 shards with optional
+per-channel normalisation using pre-computed statistics. Designed for
+MeanFlow training where the VAE is frozen and all latents are pre-encoded.
 """
 
 from __future__ import annotations
 
 import logging
 import random
+from collections.abc import Callable
 from pathlib import Path
 
+import h5py
 import torch
 from torch.utils.data import Dataset
 
+from neuromf.data.latent_hdf5 import build_global_index, discover_shards, read_sample
 from neuromf.utils.latent_stats import load_latent_stats
 
 logger = logging.getLogger(__name__)
@@ -34,14 +37,31 @@ def latent_collate_fn(batch: list[dict]) -> dict[str, torch.Tensor]:
     return {"z": torch.stack([item["z"] for item in batch])}
 
 
-class LatentDataset(Dataset):
-    """PyTorch Dataset of pre-computed ``.pt`` latents with optional normalisation.
+def hdf5_worker_init_fn(worker_id: int) -> None:
+    """DataLoader worker init function that clears stale HDF5 handles.
 
-    Each ``.pt`` file is expected to contain a dict with at least
-    ``{"z": Tensor(4, 48, 48, 48), "metadata": {...}}``.
+    HDF5 file handles opened before ``fork()`` are unsafe in child
+    processes. This function is passed to ``DataLoader(worker_init_fn=...)``
+    to ensure each worker opens its own handles lazily on first access.
 
     Args:
-        latent_dir: Directory containing ``.pt`` latent files.
+        worker_id: Worker index (unused, required by DataLoader API).
+    """
+    # Nothing to do — LatentDataset._h5_handles starts empty and handles
+    # are opened lazily in __getitem__. This function exists as a safety
+    # hook for any future cleanup needs and as documentation of the pattern.
+    pass
+
+
+class LatentDataset(Dataset):
+    """PyTorch Dataset backed by HDF5 latent shard files.
+
+    Each shard is a ``.h5`` file containing latents for one FOMO-60K
+    dataset. A flat global index maps dataset indices to
+    ``(shard_path, local_idx)`` pairs.
+
+    Args:
+        latent_dir: Directory containing ``.h5`` shard files.
         normalise: If True, apply per-channel ``(z - mean) / std``
             normalisation using statistics from ``stats_path``.
         stats_path: Path to ``latent_stats.json``. Required if
@@ -70,34 +90,46 @@ class LatentDataset(Dataset):
         self.normalise = normalise
         self.transform = transform
 
-        # Glob and sort .pt files for reproducible indexing
-        all_files = sorted(self.latent_dir.glob("*.pt"))
-        if not all_files:
-            raise FileNotFoundError(f"No .pt files found in {self.latent_dir}")
+        # Discover shards and build global index
+        shard_paths = discover_shards(self.latent_dir)
+        if not shard_paths:
+            raise FileNotFoundError(f"No .h5 shard files found in {self.latent_dir}")
+
+        all_entries = build_global_index(shard_paths)
+        if not all_entries:
+            raise FileNotFoundError(f"No written samples found in shards at {self.latent_dir}")
 
         # Apply train/val split if requested
         if split is not None:
             if split not in ("train", "val"):
                 raise ValueError(f"split must be 'train', 'val', or None; got '{split}'")
-            indices = list(range(len(all_files)))
+            indices = list(range(len(all_entries)))
             random.Random(split_seed).shuffle(indices)
             n_train = int(len(indices) * split_ratio)
             if split == "train":
                 selected = sorted(indices[:n_train])
             else:
                 selected = sorted(indices[n_train:])
-            self.file_paths = [all_files[i] for i in selected]
+            self._entries = [all_entries[i] for i in selected]
             logger.info(
-                "LatentDataset: %d/%d files (%s split, ratio=%.2f, seed=%d)",
-                len(self.file_paths),
-                len(all_files),
+                "LatentDataset: %d/%d samples (%s split, ratio=%.2f, seed=%d)",
+                len(self._entries),
+                len(all_entries),
                 split,
                 split_ratio,
                 split_seed,
             )
         else:
-            self.file_paths = all_files
-            logger.info("LatentDataset: %d files from %s", len(self.file_paths), self.latent_dir)
+            self._entries = all_entries
+            logger.info(
+                "LatentDataset: %d samples from %d shards in %s",
+                len(self._entries),
+                len(shard_paths),
+                self.latent_dir,
+            )
+
+        # Lazy per-worker HDF5 file handle cache
+        self._h5_handles: dict[Path, h5py.File] = {}
 
         # Load normalisation stats if needed
         self._norm_mean: torch.Tensor | None = None
@@ -132,11 +164,28 @@ class LatentDataset(Dataset):
         """Per-channel std used for normalisation, shape ``(C, 1, 1, 1)``."""
         return self._norm_std
 
+    def _get_h5_handle(self, shard_path: Path) -> h5py.File:
+        """Get or lazily open an HDF5 file handle for a shard.
+
+        Handles are cached per shard path and opened in read-only mode.
+        In multi-worker DataLoaders, each worker process opens its own
+        handles after fork (handles are NOT shared across processes).
+
+        Args:
+            shard_path: Path to the ``.h5`` shard file.
+
+        Returns:
+            Open ``h5py.File`` in read-only mode.
+        """
+        if shard_path not in self._h5_handles:
+            self._h5_handles[shard_path] = h5py.File(str(shard_path), "r")
+        return self._h5_handles[shard_path]
+
     def __len__(self) -> int:
-        return len(self.file_paths)
+        return len(self._entries)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        """Load a single latent file and optionally normalise.
+        """Load a single latent from HDF5 and optionally normalise.
 
         Args:
             idx: Dataset index.
@@ -145,9 +194,10 @@ class LatentDataset(Dataset):
             Dict with ``"z"`` (float32 tensor of shape ``(C, D, H, W)``)
             and ``"metadata"`` dict.
         """
-        data = torch.load(self.file_paths[idx], map_location="cpu", weights_only=True)
-        z = data["z"].float()
-        metadata = data.get("metadata", {})
+        shard_path, local_idx = self._entries[idx]
+        h5f = self._get_h5_handle(shard_path)
+        z, metadata = read_sample(h5f, local_idx)
+        z = z.float()
 
         if self.normalise and self._norm_mean is not None and self._norm_std is not None:
             z = (z - self._norm_mean) / self._norm_std
@@ -156,3 +206,12 @@ class LatentDataset(Dataset):
             z = self.transform(z)
 
         return {"z": z, "metadata": metadata}
+
+    def __del__(self) -> None:
+        """Close all cached HDF5 file handles."""
+        for handle in self._h5_handles.values():
+            try:
+                handle.close()
+            except Exception:
+                pass
+        self._h5_handles.clear()

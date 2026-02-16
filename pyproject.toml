@@ -64,6 +64,8 @@ dependencies = [
     # Data handling
     "pandas>=2.0",
     "tqdm>=4.65",
+    # HDF5 shard storage for latents
+    "h5py>=3.10",
 ]
 
 [project.optional-dependencies]

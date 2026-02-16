@@ -9,13 +9,51 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
 
 from neuromf.data.latent_dataset import LatentDataset
+from neuromf.data.latent_hdf5 import (
+    build_global_index,
+    create_shard,
+    discover_shards,
+    get_written_mask,
+    read_sample,
+    write_sample,
+)
 from neuromf.utils.latent_stats import LatentStatsAccumulator, load_latent_stats
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _create_mock_shard(
+    path: Path,
+    n_vols: int,
+    n_ch: int = 4,
+    spatial: int = 32,
+    dataset_name: str = "MOCK_DS",
+) -> None:
+    """Create a test HDF5 shard with random latent data.
+
+    Args:
+        path: Output ``.h5`` file path.
+        n_vols: Number of volumes to write.
+        n_ch: Number of latent channels.
+        spatial: Spatial dimension (cubic).
+        dataset_name: Dataset name attribute.
+    """
+    shape = (n_ch, spatial, spatial, spatial)
+    f = create_shard(path, dataset_name, n_vols, latent_shape=shape)
+    for i in range(n_vols):
+        z = torch.randn(*shape)
+        write_sample(f, i, z, f"sub_{i:03d}", f"ses_{i}", f"/path/to/vol_{i}.nii.gz")
+    f.close()
+
 
 # ---------------------------------------------------------------------------
 # Module-scoped fixtures
@@ -77,22 +115,25 @@ def test_P1_T1_all_volumes_encode_without_error(encoding_log: dict) -> None:
 @pytest.mark.phase1
 @pytest.mark.critical
 def test_P1_T2_latent_shape_correct(latent_dir: Path) -> None:
-    """All .pt files must have z.shape == (4, 48, 48, 48)."""
-    pt_files = sorted(latent_dir.glob("*.pt"))
-    if not pt_files:
-        pytest.skip("No .pt files found — run encoding first")
+    """All HDF5 shard latents must have z.shape == (4, 48, 48, 48)."""
+    shard_paths = discover_shards(latent_dir)
+    if not shard_paths:
+        pytest.skip("No .h5 shard files found — run encoding first")
 
-    # Check 10 random files (or all if fewer)
     rng = np.random.default_rng(42)
-    n_check = min(10, len(pt_files))
-    indices = rng.choice(len(pt_files), size=n_check, replace=False)
-
-    for idx in indices:
-        data = torch.load(pt_files[idx], map_location="cpu", weights_only=True)
-        z = data["z"]
-        assert z.shape == (4, 48, 48, 48), (
-            f"{pt_files[idx].name}: expected (4,48,48,48), got {z.shape}"
-        )
+    for shard_path in shard_paths:
+        with h5py.File(str(shard_path), "r") as f:
+            mask = get_written_mask(f)
+            written_indices = np.where(mask)[0]
+            if len(written_indices) == 0:
+                continue
+            n_check = min(10, len(written_indices))
+            check_indices = rng.choice(written_indices, size=n_check, replace=False)
+            for idx in check_indices:
+                z, _ = read_sample(f, int(idx))
+                assert z.shape == (4, 48, 48, 48), (
+                    f"{shard_path.name}[{idx}]: expected (4,48,48,48), got {z.shape}"
+                )
 
 
 @pytest.mark.phase1
@@ -116,42 +157,41 @@ def test_P1_T4_per_channel_std_in_range(latent_stats: dict) -> None:
 @pytest.mark.phase1
 @pytest.mark.critical
 def test_P1_T5_no_nan_inf_in_latents(latent_dir: Path) -> None:
-    """No NaN or Inf in latent tensors (spot-check 50 files)."""
-    pt_files = sorted(latent_dir.glob("*.pt"))
-    if not pt_files:
-        pytest.skip("No .pt files found — run encoding first")
+    """No NaN or Inf in latent tensors (spot-check 50 samples across shards)."""
+    shard_paths = discover_shards(latent_dir)
+    if not shard_paths:
+        pytest.skip("No .h5 shard files found — run encoding first")
 
     rng = np.random.default_rng(42)
-    n_check = min(50, len(pt_files))
-    indices = rng.choice(len(pt_files), size=n_check, replace=False)
+    global_idx = build_global_index(shard_paths)
+    if not global_idx:
+        pytest.skip("No written samples found — run encoding first")
 
-    for idx in indices:
-        data = torch.load(pt_files[idx], map_location="cpu", weights_only=True)
-        z = data["z"]
-        assert torch.isfinite(z).all(), f"{pt_files[idx].name} contains NaN or Inf"
+    n_check = min(50, len(global_idx))
+    check_indices = rng.choice(len(global_idx), size=n_check, replace=False)
+
+    for i in check_indices:
+        shard_path, local_idx = global_idx[i]
+        with h5py.File(str(shard_path), "r") as f:
+            z, _ = read_sample(f, local_idx)
+            assert torch.isfinite(z).all(), f"{shard_path.name}[{local_idx}] contains NaN or Inf"
 
 
 @pytest.mark.phase1
 @pytest.mark.critical
 def test_P1_T6_latent_dataset_loads_correctly(tmp_path: Path) -> None:
-    """LatentDataset loads mock .pt files with correct shape and normalisation."""
+    """LatentDataset loads mock HDF5 shards with correct shape and normalisation."""
     n_channels = 4
-    spatial = (32, 32, 32)
+    spatial = 32
     n_mock = 3
 
-    # Create mock .pt files
-    for i in range(n_mock):
-        z = torch.randn(n_channels, *spatial)
-        data = {
-            "z": z,
-            "metadata": {"subject_id": f"test_{i:03d}", "dataset": "mock"},
-        }
-        torch.save(data, tmp_path / f"mock_{i:03d}.pt")
+    # Create mock HDF5 shard
+    _create_mock_shard(tmp_path / "MOCK_DS.h5", n_mock, n_ch=n_channels, spatial=spatial)
 
     # Create mock latent_stats.json
     stats = {
         "n_files": n_mock,
-        "n_voxels_per_channel": n_mock * 32 * 32 * 32,
+        "n_voxels_per_channel": n_mock * spatial**3,
         "per_channel": {},
         "cross_channel_correlation": np.eye(n_channels).tolist(),
     }
@@ -170,14 +210,14 @@ def test_P1_T6_latent_dataset_loads_correctly(tmp_path: Path) -> None:
     ds_raw = LatentDataset(tmp_path, normalise=False)
     assert len(ds_raw) == n_mock
     sample = ds_raw[0]
-    assert sample["z"].shape == (n_channels, *spatial)
+    assert sample["z"].shape == (n_channels, spatial, spatial, spatial)
     assert sample["z"].dtype == torch.float32
     assert "metadata" in sample
 
     # Test normalise=True (with mean=0, std=1 => should be identity)
     ds_norm = LatentDataset(tmp_path, normalise=True)
     sample_norm = ds_norm[0]
-    assert sample_norm["z"].shape == (n_channels, *spatial)
+    assert sample_norm["z"].shape == (n_channels, spatial, spatial, spatial)
     assert torch.allclose(sample["z"], sample_norm["z"], atol=1e-6), (
         "With mean=0, std=1, normalised output should match raw"
     )
@@ -203,19 +243,23 @@ def test_P1_T7_round_trip_ssim(
     merged_config: OmegaConf,
     device: torch.device,
 ) -> None:
-    """Round-trip decode(load(.pt)) ~ original, SSIM > 0.89 for 5 volumes."""
+    """Round-trip decode(load(shard)) ~ original, SSIM > 0.89 for 5 volumes."""
     from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
     from neuromf.metrics.ssim_psnr import compute_ssim_3d
     from neuromf.wrappers.maisi_vae import MAISIVAEConfig, MAISIVAEWrapper
 
-    pt_files = sorted(latent_dir.glob("*.pt"))
-    if not pt_files:
-        pytest.skip("No .pt files found — run encoding first")
+    shard_paths = discover_shards(latent_dir)
+    if not shard_paths:
+        pytest.skip("No .h5 shard files found — run encoding first")
 
-    # Pick 5 random files
+    global_idx = build_global_index(shard_paths)
+    if not global_idx:
+        pytest.skip("No written samples found — run encoding first")
+
+    # Pick 5 random samples
     rng = np.random.default_rng(42)
-    n_check = min(5, len(pt_files))
-    indices = rng.choice(len(pt_files), size=n_check, replace=False)
+    n_check = min(5, len(global_idx))
+    indices = rng.choice(len(global_idx), size=n_check, replace=False)
 
     # Load VAE
     vae_config = MAISIVAEConfig.from_omegaconf(merged_config)
@@ -224,10 +268,12 @@ def test_P1_T7_round_trip_ssim(
     # Build preprocessing
     transform = build_mri_preprocessing_from_config(merged_config)
 
-    for idx in indices:
-        data = torch.load(pt_files[idx], map_location="cpu", weights_only=True)
-        z = data["z"].unsqueeze(0).to(device)  # (1, 4, 48, 48, 48)
-        metadata = data.get("metadata", {})
+    for i in indices:
+        shard_path, local_idx = global_idx[i]
+        with h5py.File(str(shard_path), "r") as f:
+            z_tensor, metadata = read_sample(f, local_idx)
+
+        z = z_tensor.unsqueeze(0).to(device)  # (1, 4, 48, 48, 48)
 
         # Decode latent
         x_hat = vae.decode(z)  # (1, 1, 192, 192, 192)
@@ -242,7 +288,7 @@ def test_P1_T7_round_trip_ssim(
 
         ssim_val = compute_ssim_3d(x_orig, x_hat.cpu())
         assert ssim_val > 0.89, (
-            f"Volume {pt_files[idx].name}: round-trip SSIM={ssim_val:.4f} < 0.89"
+            f"Shard {shard_path.name}[{local_idx}]: round-trip SSIM={ssim_val:.4f} < 0.89"
         )
 
         del z, x_hat, x_orig
@@ -260,26 +306,29 @@ def test_P1_T8_normalised_latents_near_standard_normal(tmp_path: Path) -> None:
     """After normalisation, per-channel mean ~ 0, std ~ 1."""
     n_channels = 4
     n_files = 20
-    spatial = (32, 32, 32)
+    spatial = 32
+    shape = (n_channels, spatial, spatial, spatial)
 
     # Generate mock latents with known non-zero mean/std
     true_means = [1.5, -0.3, 0.8, -1.2]
     true_stds = [0.7, 1.4, 0.9, 1.1]
 
+    # Create shard with known distributions
+    shard_path = tmp_path / "NORM_TEST.h5"
+    f = create_shard(shard_path, "NORM_TEST", n_files, latent_shape=shape)
     for i in range(n_files):
-        z = torch.zeros(n_channels, *spatial)
+        z = torch.zeros(*shape)
         for c in range(n_channels):
-            z[c] = torch.randn(spatial) * true_stds[c] + true_means[c]
-        torch.save(
-            {"z": z, "metadata": {"subject_id": f"test_{i}"}},
-            tmp_path / f"test_{i}.pt",
-        )
+            z[c] = torch.randn(spatial, spatial, spatial) * true_stds[c] + true_means[c]
+        write_sample(f, i, z, f"sub_{i}", f"ses_{i}", f"/path/{i}")
+    f.close()
 
     # Compute stats with our accumulator
     acc = LatentStatsAccumulator(n_channels=n_channels)
-    for i in range(n_files):
-        data = torch.load(tmp_path / f"test_{i}.pt", map_location="cpu", weights_only=True)
-        acc.update(data["z"])
+    with h5py.File(str(shard_path), "r") as rf:
+        for i in range(n_files):
+            z_read, _ = read_sample(rf, i)
+            acc.update(z_read)
     stats = acc.finalize()
     stats["n_files"] = n_files
     (tmp_path / "latent_stats.json").write_text(json.dumps(stats))
@@ -299,10 +348,11 @@ def test_P1_T8_normalised_latents_near_standard_normal(tmp_path: Path) -> None:
 @pytest.mark.phase1
 @pytest.mark.informational
 def test_P1_T9_latent_file_count(latent_dir: Path) -> None:
-    """Expected ~1100 .pt files (informational — not a hard gate)."""
-    pt_files = list(latent_dir.glob("*.pt"))
-    if not pt_files:
-        pytest.skip("No .pt files found — run encoding first")
-    n = len(pt_files)
-    assert n >= 500, f"Only {n} latent files found, expected ~1100"
-    print(f"INFO: {n} latent files found in {latent_dir}")
+    """Expected ~1100 samples across shards (informational — not a hard gate)."""
+    shard_paths = discover_shards(latent_dir)
+    if not shard_paths:
+        pytest.skip("No .h5 shard files found — run encoding first")
+    global_idx = build_global_index(shard_paths)
+    n = len(global_idx)
+    assert n >= 500, f"Only {n} latent samples found, expected ~1100"
+    print(f"INFO: {n} latent samples found across {len(shard_paths)} shards")

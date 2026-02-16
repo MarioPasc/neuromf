@@ -294,10 +294,13 @@ def main() -> None:
     prefetch = int(prefetch) if prefetch is not None else None
 
     # prefetch_factor requires num_workers > 0
+    from neuromf.data.latent_dataset import hdf5_worker_init_fn
+
     dl_kwargs: dict = {
         "num_workers": num_workers,
         "pin_memory": torch.cuda.is_available(),
         "collate_fn": latent_collate_fn,
+        "worker_init_fn": hdf5_worker_init_fn,
     }
     if num_workers > 0 and prefetch is not None:
         dl_kwargs["prefetch_factor"] = prefetch
@@ -457,6 +460,53 @@ def main() -> None:
     logger.info("Starting training...")
     trainer.fit(model, train_dl, val_dl, ckpt_path=resume_path)
     logger.info("Training complete. Best model: %s", checkpoint_cb.best_model_path)
+
+    # ------------------------------------------------------------------
+    # Post-training sample evolution plots (rank 0 only)
+    # ------------------------------------------------------------------
+    if trainer.is_global_zero:
+        samples_dir = Path(config.paths.get("samples_dir", ""))
+        archive_path = samples_dir / "sample_archive.pt"
+        if archive_path.exists():
+            generate_sample_plots(archive_path, samples_dir)
+        else:
+            logger.info("No sample_archive.pt found; skipping evolution plots.")
+
+
+def generate_sample_plots(archive_path: Path, output_dir: Path) -> None:
+    """Generate evolution plots from the sample archive.
+
+    Reads ``sample_archive.pt`` and produces publication-quality figures
+    showing how generated samples evolve across training epochs:
+
+    1. Sample & channel evolution grid (axial mid-slices)
+    2. Per-channel statistics panel (mean/std/skewness/kurtosis)
+    3. Radially-averaged power spectrum evolution
+
+    Args:
+        archive_path: Path to the ``sample_archive.pt`` file.
+        output_dir: Directory to save generated plots.
+    """
+    from neuromf.utils.sample_plots import (
+        plot_channel_stats_evolution,
+        plot_sample_evolution_grid,
+        plot_spectral_evolution,
+    )
+
+    logger.info("Loading sample archive: %s", archive_path)
+    archive = torch.load(archive_path, map_location="cpu", weights_only=False)
+
+    n_epochs = len(archive.get("epochs", []))
+    logger.info("Archive contains %d epochs, generating plots...", n_epochs)
+
+    plots_dir = output_dir / "evolution_plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_sample_evolution_grid(archive, plots_dir)
+    plot_channel_stats_evolution(archive, plots_dir)
+    plot_spectral_evolution(archive, plots_dir)
+
+    logger.info("All sample evolution plots saved to %s", plots_dir)
 
 
 if __name__ == "__main__":

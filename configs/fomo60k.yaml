@@ -3,11 +3,31 @@
 
 fomo60k:
   datasets:
+    # --- Tier 1: skull-stripped, ready ---
     - name: PT001_OASIS1
-      groups: ["Control", "nondemented", ""]  # include NaN-group subjects
+      groups: ["nondemented", "very_mild_dementia", "mild_dementia", ""]
     - name: PT002_OASIS2
-      groups: ["Control", "Nondemented", ""]
+      groups: ["Nondemented", "Converted"]
     - name: PT005_IXI
-      groups: ["Control", ""]
+      groups: ["Control"]
+    - name: PT007_NIMH
+      groups: ["Control"]
+    - name: PT008_DLBS
+      groups: ["Control"]
+    # --- Tier 2: verify sequences are T1w ---
+    - name: PT013_MGH_Wild
+      groups: ["Memory complaints"]
+    # --- Tier 3: skull-strip with SynthStrip first ---
+    - name: PT015_NKI
+      groups: [""]
+    - name: PT011_MBSR
+      groups: [""]
+    - name: PT012_UCLA
+      groups: ["CONTROL"]
+    # --- Tier 3 conditional (include after baseline established) ---
+    # - name: PT014_QTAB    # adolescent — include if FCD cohort is paediatric
+    #   groups: [""]
+    # - name: PT009_IDEAS   # Alzheimer's study — sensitivity analysis
+    #   groups: [""]
   sequences: ["t1"]
-  primary_scan_only: true
+  primary_scan_only: false

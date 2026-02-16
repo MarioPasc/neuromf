@@ -128,17 +128,19 @@ class TestLatentAugmentation:
     def test_P4d_T6_dataset_with_transform(self, tmp_path: Path) -> None:
         """P4d-T6: LatentDataset applies transform in __getitem__."""
         from neuromf.data.latent_dataset import LatentDataset
+        from neuromf.data.latent_hdf5 import create_shard, write_sample
 
-        # Create fake .pt files and stats
+        # Create fake HDF5 shard and stats
         S = 8
+        shape = (4, S, S, S)
         stats = {"per_channel": {f"channel_{c}": {"mean": 0.0, "std": 1.0} for c in range(4)}}
         (tmp_path / "latent_stats.json").write_text(json.dumps(stats))
+
+        shard_path = tmp_path / "MOCK.h5"
+        f = create_shard(shard_path, "MOCK", 5, latent_shape=shape)
         for i in range(5):
-            data = {
-                "z": torch.randn(4, S, S, S),
-                "metadata": {"subject_id": f"sub_{i}"},
-            }
-            torch.save(data, tmp_path / f"sample_{i:03d}.pt")
+            write_sample(f, i, torch.randn(*shape), f"sub_{i}", f"ses_{i}", f"/p/{i}")
+        f.close()
 
         # Track how many times transform was called
         call_count = [0]

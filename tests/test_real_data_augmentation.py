@@ -1,7 +1,7 @@
 """Real-data integration tests for augmentation & spatial masking (Phase 4d).
 
 Exercises augmentation transforms and masking against the **real** pre-computed
-latents (1,100 ``.pt`` files) and optionally decodes through the MAISI VAE.
+latents (HDF5 shards) and optionally decodes through the MAISI VAE.
 All tests skip gracefully when the external drive is not mounted.
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import h5py
 import pytest
 import torch
 
@@ -16,6 +17,7 @@ from neuromf.data.latent_augmentation import (
     PerChannelGaussianNoise,
     build_latent_augmentation,
 )
+from neuromf.data.latent_hdf5 import build_global_index, discover_shards, read_sample
 from neuromf.utils.latent_stats import load_latent_stats
 
 # ---------------------------------------------------------------------------
@@ -29,18 +31,23 @@ VAE_WEIGHTS = Path(
 )
 
 skip_no_latents = pytest.mark.skipif(
-    not LATENTS_DIR.exists(), reason="Real latent data not available"
+    not LATENTS_DIR.exists() or not list(LATENTS_DIR.glob("*.h5")),
+    reason="Real latent HDF5 shards not available",
 )
 skip_no_vae = pytest.mark.skipif(not VAE_WEIGHTS.exists(), reason="VAE checkpoint not available")
 
 
 def _load_n_latents(n: int) -> list[torch.Tensor]:
-    """Load the first *n* raw (un-normalised) latent tensors."""
-    files = sorted(LATENTS_DIR.glob("*.pt"))[:n]
+    """Load the first *n* raw (un-normalised) latent tensors from HDF5 shards."""
+    shard_paths = discover_shards(LATENTS_DIR)
+    if not shard_paths:
+        return []
+    global_idx = build_global_index(shard_paths)
     latents = []
-    for f in files:
-        data = torch.load(f, map_location="cpu", weights_only=True)
-        latents.append(data["z"].float())
+    for shard_path, local_idx in global_idx[:n]:
+        with h5py.File(str(shard_path), "r") as f:
+            z, _ = read_sample(f, local_idx)
+        latents.append(z.float())
     return latents
 
 
@@ -259,10 +266,13 @@ class TestRealDataVAEDecode:
         means = torch.tensor([per_ch[f"channel_{c}"]["mean"] for c in range(4)]).view(1, 4, 1, 1, 1)
         stds = torch.tensor([per_ch[f"channel_{c}"]["std"] for c in range(4)]).view(1, 4, 1, 1, 1)
 
-        # Load first latent and denormalize
-        files = sorted(LATENTS_DIR.glob("*.pt"))
-        data = torch.load(files[0], map_location="cpu", weights_only=True)
-        z_raw = data["z"].float().unsqueeze(0)  # (1, 4, 48, 48, 48)
+        # Load first latent from HDF5 shard
+        shard_paths = discover_shards(LATENTS_DIR)
+        global_idx = build_global_index(shard_paths)
+        shard_path, local_idx = global_idx[0]
+        with h5py.File(str(shard_path), "r") as f:
+            z_tensor, _ = read_sample(f, local_idx)
+        z_raw = z_tensor.float().unsqueeze(0)  # (1, 4, 48, 48, 48)
 
         # z_raw is un-normalised from encoding — use directly
         z_orig = z_raw

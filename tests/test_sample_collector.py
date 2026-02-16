@@ -157,7 +157,7 @@ class TestSampleCollector:
         )
 
     def test_P4_T14_archive_structure(self, tmp_path: Path) -> None:
-        """P4-T14: Saved .pt has all expected keys and shapes."""
+        """P4-T14: Single sample_archive.pt has all expected keys and shapes."""
         config = _tiny_config()
         model = LatentMeanFlow(config)
         model.eval()
@@ -177,37 +177,33 @@ class TestSampleCollector:
         # Trigger collection
         cb.on_train_epoch_end(trainer, model)
 
-        # Check archive file exists
-        archive_path = tmp_path / "generated_samples" / "epoch_0000.pt"
+        # Check single archive file exists
+        archive_path = tmp_path / "sample_archive.pt"
         assert archive_path.exists(), f"Archive not saved at {archive_path}"
 
         archive = torch.load(archive_path, map_location="cpu", weights_only=False)
 
-        # Check all expected keys
-        expected_keys = {
-            "epoch",
-            "global_step",
-            "noise_seed",
-            "noise",
-            "latent_mean",
-            "latent_std",
-            "stats",
-            "nfe_consistency",
-            "nfe_1",
-            "nfe_5",
-        }
-        assert expected_keys.issubset(set(archive.keys())), (
-            f"Missing keys: {expected_keys - set(archive.keys())}"
+        # Check top-level keys
+        expected_top = {"metadata", "noise", "latent_mean", "latent_std", "epochs", "epoch_0000"}
+        assert expected_top.issubset(set(archive.keys())), (
+            f"Missing keys: {expected_top - set(archive.keys())}"
+        )
+
+        # Check epoch entry keys
+        epoch_data = archive["epoch_0000"]
+        expected_epoch_keys = {"global_step", "stats", "nfe_consistency", "nfe_1", "nfe_5"}
+        assert expected_epoch_keys.issubset(set(epoch_data.keys())), (
+            f"Missing epoch keys: {expected_epoch_keys - set(epoch_data.keys())}"
         )
 
         # Check shapes
         S = 16  # tiny model spatial size
         assert archive["noise"].shape == (2, 4, S, S, S)
-        assert archive["nfe_1"].shape == (2, 4, S, S, S)
-        assert archive["nfe_5"].shape == (2, 4, S, S, S)
-        assert archive["epoch"] == 0
-        assert archive["global_step"] == 10
-        assert archive["noise_seed"] == 42
+        assert epoch_data["nfe_1"].shape == (2, 4, S, S, S)
+        assert epoch_data["nfe_5"].shape == (2, 4, S, S, S)
+        assert epoch_data["global_step"] == 10
+        assert archive["metadata"]["noise_seed"] == 42
+        assert archive["epochs"] == [0]
 
     def test_P4_T15_multi_nfe_different(self, tmp_path: Path) -> None:
         """P4-T15: NFE-1 and NFE-5 produce different results.
@@ -245,11 +241,12 @@ class TestSampleCollector:
         cb.on_fit_start(trainer, model)
         cb.on_train_epoch_end(trainer, model)
 
-        archive_path = tmp_path / "generated_samples" / "epoch_0000.pt"
+        archive_path = tmp_path / "sample_archive.pt"
         archive = torch.load(archive_path, map_location="cpu", weights_only=False)
 
-        nfe_1 = archive["nfe_1"]
-        nfe_5 = archive["nfe_5"]
+        epoch_data = archive["epoch_0000"]
+        nfe_1 = epoch_data["nfe_1"]
+        nfe_5 = epoch_data["nfe_5"]
 
         # Multi-step should give different results from 1-step
         assert not torch.allclose(nfe_1, nfe_5, atol=1e-3), (
@@ -317,12 +314,14 @@ class TestSampleCollectorExtended:
         # Epoch 0: (0+1) % 5 != 0 -> skip
         trainer.current_epoch = 0
         cb.on_train_epoch_end(trainer, model)
-        assert not (tmp_path / "generated_samples" / "epoch_0000.pt").exists()
+        assert not (tmp_path / "sample_archive.pt").exists()
 
         # Epoch 4: (4+1) % 5 == 0 -> collect
         trainer.current_epoch = 4
         cb.on_train_epoch_end(trainer, model)
-        assert (tmp_path / "generated_samples" / "epoch_0004.pt").exists()
+        archive = torch.load(tmp_path / "sample_archive.pt", map_location="cpu", weights_only=False)
+        assert archive["epochs"] == [4]
+        assert "epoch_0004" in archive
 
     def test_P4_T18_stats_finite(self, tmp_path: Path) -> None:
         """P4-T18: All per-NFE stats are finite."""
@@ -343,13 +342,14 @@ class TestSampleCollectorExtended:
         cb.on_train_epoch_end(trainer, model)
 
         archive = torch.load(
-            tmp_path / "generated_samples" / "epoch_0000.pt",
+            tmp_path / "sample_archive.pt",
             map_location="cpu",
             weights_only=False,
         )
 
+        epoch_data = archive["epoch_0000"]
         for nfe_key in ["nfe_1", "nfe_2"]:
-            s = archive["stats"][nfe_key]
+            s = epoch_data["stats"][nfe_key]
             for stat_name in ["mean", "std"]:
                 vals = s[stat_name]
                 assert all(abs(v) < 1e6 for v in vals), (
@@ -375,12 +375,12 @@ class TestSampleCollectorExtended:
         cb.on_train_epoch_end(trainer, model)
 
         archive = torch.load(
-            tmp_path / "generated_samples" / "epoch_0000.pt",
+            tmp_path / "sample_archive.pt",
             map_location="cpu",
             weights_only=False,
         )
 
-        nfe_con = archive["nfe_consistency"]
+        nfe_con = archive["epoch_0000"]["nfe_consistency"]
         assert "mse_1vs5" in nfe_con
         assert "mse_1vs10" in nfe_con
         assert "cosine_1vs5" in nfe_con
@@ -389,8 +389,8 @@ class TestSampleCollectorExtended:
         for key, val in nfe_con.items():
             assert abs(val) < 1e6, f"{key} is extreme: {val}"
 
-    def test_P4_T20_latent_channel_png(self, tmp_path: Path) -> None:
-        """P4-T20: Latent visualization PNG is saved."""
+    def test_P4_T20_multi_epoch_accumulation(self, tmp_path: Path) -> None:
+        """P4-T20: Multiple epochs accumulate in a single archive file."""
         config = _tiny_config()
         model = LatentMeanFlow(config)
         model.eval()
@@ -403,12 +403,25 @@ class TestSampleCollectorExtended:
             seed=42,
         )
 
-        trainer = _make_mock_trainer(epoch=0)
+        trainer = _make_mock_trainer(epoch=0, global_step=10)
         cb.on_fit_start(trainer, model)
+
+        # Collect at epoch 0
         cb.on_train_epoch_end(trainer, model)
 
-        png_path = tmp_path / "epoch_0000" / "latent_channels.png"
-        assert png_path.exists(), f"Latent channels PNG not saved at {png_path}"
+        # Collect at epoch 1
+        trainer.current_epoch = 1
+        trainer.global_step = 20
+        cb.on_train_epoch_end(trainer, model)
+
+        archive_path = tmp_path / "sample_archive.pt"
+        archive = torch.load(archive_path, map_location="cpu", weights_only=False)
+
+        assert archive["epochs"] == [0, 1]
+        assert "epoch_0000" in archive
+        assert "epoch_0001" in archive
+        assert archive["epoch_0000"]["global_step"] == 10
+        assert archive["epoch_0001"]["global_step"] == 20
 
     def test_P4_T21_rank_guard(self, tmp_path: Path) -> None:
         """P4-T21: Non-rank-0 processes skip collection."""
@@ -431,7 +444,7 @@ class TestSampleCollectorExtended:
         cb.on_train_epoch_end(trainer, model)
 
         # No archive should be saved
-        assert not (tmp_path / "generated_samples").exists()
+        assert not (tmp_path / "sample_archive.pt").exists()
 
 
 @pytest.mark.phase4

@@ -141,42 +141,62 @@ class LatentStatsAccumulator:
 
 
 def compute_latent_stats(latent_dir: Path) -> dict:
-    """Compute per-channel statistics from all ``.pt`` latent files.
+    """Compute per-channel statistics from all HDF5 latent shards.
 
     Single-pass, constant-memory computation of mean, std, skewness,
     kurtosis, min, max, and cross-channel Pearson correlation.
 
     Args:
-        latent_dir: Directory containing ``.pt`` latent files.
+        latent_dir: Directory containing ``.h5`` shard files.
 
     Returns:
         Dict with ``per_channel`` and ``cross_channel_correlation`` keys.
     """
+    import h5py
+
+    from neuromf.data.latent_hdf5 import discover_shards, get_written_mask, read_sample
+
     latent_dir = Path(latent_dir)
-    pt_files = sorted(latent_dir.glob("*.pt"))
-    if not pt_files:
-        raise FileNotFoundError(f"No .pt files found in {latent_dir}")
+    shard_paths = discover_shards(latent_dir)
+    if not shard_paths:
+        raise FileNotFoundError(f"No .h5 shard files found in {latent_dir}")
 
-    logger.info("Computing latent stats from %d files in %s", len(pt_files), latent_dir)
+    # Count total samples
+    total_samples = 0
+    for sp in shard_paths:
+        with h5py.File(str(sp), "r") as f:
+            total_samples += int(get_written_mask(f).sum())
 
-    first = torch.load(pt_files[0], map_location="cpu", weights_only=True)
-    z0 = first["z"] if isinstance(first, dict) else first
-    n_channels = z0.shape[0]
+    logger.info(
+        "Computing latent stats from %d samples across %d shards in %s",
+        total_samples,
+        len(shard_paths),
+        latent_dir,
+    )
 
-    acc = LatentStatsAccumulator(n_channels=n_channels)
+    acc: LatentStatsAccumulator | None = None
+    n_processed = 0
 
-    for i, pt_path in enumerate(pt_files):
-        data = torch.load(pt_path, map_location="cpu", weights_only=True)
-        z = data["z"] if isinstance(data, dict) else data
-        acc.update(z)
-        if (i + 1) % 100 == 0:
-            logger.info("  Processed %d / %d files", i + 1, len(pt_files))
+    for shard_path in shard_paths:
+        with h5py.File(str(shard_path), "r") as f:
+            mask = get_written_mask(f)
+            for idx in np.where(mask)[0]:
+                z, _ = read_sample(f, int(idx))
+                if acc is None:
+                    acc = LatentStatsAccumulator(n_channels=z.shape[0])
+                acc.update(z)
+                n_processed += 1
+                if n_processed % 100 == 0:
+                    logger.info("  Processed %d / %d samples", n_processed, total_samples)
+
+    if acc is None:
+        raise FileNotFoundError(f"No written samples found in shards at {latent_dir}")
 
     stats = acc.finalize()
-    stats["n_files"] = len(pt_files)
+    stats["n_files"] = total_samples
     logger.info(
-        "Latent stats computed: %d files, %d voxels/channel",
-        len(pt_files),
+        "Latent stats computed: %d samples, %d voxels/channel",
+        total_samples,
         stats["n_voxels_per_channel"],
     )
     return stats

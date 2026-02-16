@@ -1,8 +1,8 @@
 """CLI script for encoding all FOMO-60K volumes through the frozen MAISI VAE.
 
-Produces ``.pt`` latent files, per-channel statistics, and rich HTML/Markdown
-reports. Designed for both local (batch_size=1) and cluster (multi-worker)
-execution.
+Produces per-dataset HDF5 shard files, per-channel statistics, and rich
+HTML/Markdown reports. Designed for both local (batch_size=1) and cluster
+(multi-worker) execution. Supports resuming from partially-written shards.
 
 Usage:
     ~/.conda/envs/neuromf/bin/python experiments/cli/encode_dataset.py \
@@ -16,9 +16,11 @@ import json
 import logging
 import time
 import traceback
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import h5py
 import numpy as np
 import torch
 from omegaconf import OmegaConf
@@ -26,6 +28,12 @@ from rich.logging import RichHandler
 from tqdm import tqdm
 
 from neuromf.data.fomo60k import FOMO60KConfig, get_fomo60k_file_list
+from neuromf.data.latent_hdf5 import (
+    create_shard,
+    get_written_mask,
+    read_sample,
+    write_sample,
+)
 from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
 from neuromf.metrics.ssim_psnr import compute_psnr, compute_ssim_3d
 from neuromf.utils.latent_stats import (
@@ -51,22 +59,31 @@ logger = logging.getLogger(__name__)
 _HIST_SUBSAMPLE = 4096
 
 
-def _build_latent_filename(filepath: Path) -> str:
-    """Build a unique .pt filename from the FOMO-60K path hierarchy.
-
-    Convention: ``{dataset}_{participant_id}_{session_id}.pt``
-    e.g. ``PT005_IXI_sub_002_ses_1.pt``
+def _extract_dataset_name(filepath: Path) -> str:
+    """Extract FOMO-60K dataset name from file path hierarchy.
 
     Args:
         filepath: Absolute path to a NIfTI file within FOMO-60K.
 
     Returns:
-        Filename string (no directory).
+        Dataset name (e.g. ``"PT005_IXI"``).
+    """
+    return filepath.parent.parent.parent.name
+
+
+def _extract_metadata(filepath: Path) -> tuple[str, str, str]:
+    """Extract subject_id, session_id, dataset_name from FOMO-60K path.
+
+    Args:
+        filepath: Absolute path to a NIfTI file within FOMO-60K.
+
+    Returns:
+        Tuple of ``(subject_id, session_id, dataset_name)``.
     """
     session_id = filepath.parent.name
-    participant_id = filepath.parent.parent.name
+    subject_id = filepath.parent.parent.name
     dataset_name = filepath.parent.parent.parent.name
-    return f"{dataset_name}_{participant_id}_{session_id}.pt"
+    return subject_id, session_id, dataset_name
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +162,7 @@ def generate_html_report(
         t = entry.get("encoding_time_s", 0)
         log_rows += (
             f"<tr><td>{entry.get('dataset', '')}</td>"
-            f"<td>{entry.get('filename', '')}</td>"
+            f"<td>{entry.get('subject_id', '')}/{entry.get('session_id', '')}</td>"
             f"<td>{t:.1f}s</td>"
             f'<td style="color:{color};font-weight:bold">{status_str}</td></tr>\n'
         )
@@ -216,7 +233,7 @@ summary {{ cursor: pointer; font-weight: bold; color: #555; }}
 <details>
 <summary>Click to expand ({n_total} volumes)</summary>
 <table>
-<tr><th>Dataset</th><th>Volume</th><th>Time</th><th>Status</th></tr>
+<tr><th>Dataset</th><th>Subject/Session</th><th>Time</th><th>Status</th></tr>
 {log_rows}
 </table>
 </details>
@@ -344,7 +361,54 @@ def main() -> None:
     n_save_per_dataset = config.encoding.n_save_per_dataset
     n_round_trip_check = config.data.n_round_trip_check
 
+    # ------------------------------------------------------------------
+    # Group file_list by dataset and create/open HDF5 shards
+    # ------------------------------------------------------------------
+    dataset_groups: dict[str, list[tuple[int, Path]]] = defaultdict(list)
+    for i, data_dict in enumerate(file_list):
+        filepath = Path(data_dict["image"])
+        ds_name = _extract_dataset_name(filepath)
+        dataset_groups[ds_name].append((i, filepath))
+
+    logger.info(
+        "Datasets: %s",
+        {ds: len(files) for ds, files in dataset_groups.items()},
+    )
+
+    # Create or open shards with resume support
+    shard_handles: dict[str, h5py.File] = {}
+    shard_written_masks: dict[str, np.ndarray] = {}
+    # Mapping from (dataset_name, local_index_in_group) to shard slot index
+    # For simplicity, we assign slots in order within each dataset group
+    dataset_slot_maps: dict[str, dict[int, int]] = {}
+
+    for ds_name, group in dataset_groups.items():
+        shard_path = latent_dir / f"{ds_name}.h5"
+        n_ds_volumes = len(group)
+
+        if shard_path.exists():
+            # Resume mode: open existing shard
+            logger.info("Resuming shard %s (%d slots)", shard_path.name, n_ds_volumes)
+            shard_handles[ds_name] = h5py.File(str(shard_path), "a")
+            shard_written_masks[ds_name] = get_written_mask(shard_handles[ds_name])
+        else:
+            # Create new shard (192 / 4 = 48 spatial per axis)
+            latent_spatial = 48
+            latent_shape = (n_channels, latent_spatial, latent_spatial, latent_spatial)
+            shard_handles[ds_name] = create_shard(
+                shard_path, ds_name, n_ds_volumes, latent_shape=latent_shape
+            )
+            shard_written_masks[ds_name] = np.zeros(n_ds_volumes, dtype=bool)
+
+        # Map global file_list indices to shard slot indices
+        slot_map = {}
+        for slot_idx, (global_idx, _) in enumerate(group):
+            slot_map[global_idx] = slot_idx
+        dataset_slot_maps[ds_name] = slot_map
+
+    # ------------------------------------------------------------------
     # Online stats accumulator
+    # ------------------------------------------------------------------
     acc = LatentStatsAccumulator(n_channels=n_channels)
 
     # Subsampled latent values for histograms
@@ -357,23 +421,54 @@ def main() -> None:
     encoding_log: list[dict] = []
     round_trip_results: list[dict] = []
     n_round_trip_done = 0
+    n_skipped = 0
 
     t_start = time.time()
 
     for i, data_dict in enumerate(tqdm(file_list, desc="Encoding", unit="vol")):
         filepath = Path(data_dict["image"])
-        filename = filepath.name
-        dataset_name = filepath.parent.parent.parent.name
-        latent_filename = _build_latent_filename(filepath)
+        subject_id, session_id, dataset_name = _extract_metadata(filepath)
+        slot_idx = dataset_slot_maps[dataset_name][i]
+        mask = shard_written_masks[dataset_name]
 
         entry: dict = {
             "index": i,
             "dataset": dataset_name,
-            "filename": latent_filename,
+            "subject_id": subject_id,
+            "session_id": session_id,
             "source_path": str(filepath),
             "status": "pending",
             "encoding_time_s": 0.0,
         }
+
+        # Resume: if already written, read from shard for stats accumulation
+        if mask[slot_idx]:
+            t_vol = time.time()
+            try:
+                h5f = shard_handles[dataset_name]
+                z_read, _ = read_sample(h5f, slot_idx)
+                acc.update(z_read)
+
+                # Subsample for histograms
+                z_np = z_read.numpy()
+                rng = np.random.default_rng(seed=i)
+                for ch in range(n_channels):
+                    flat = z_np[ch].ravel()
+                    indices = rng.choice(
+                        len(flat), size=min(_HIST_SUBSAMPLE, len(flat)), replace=False
+                    )
+                    channel_samples[ch].append(flat[indices])
+
+                entry["status"] = "success"
+                entry["encoding_time_s"] = time.time() - t_vol
+                n_skipped += 1
+            except Exception as exc:
+                entry["status"] = "failed"
+                entry["error"] = f"Resume read failed: {exc}"
+                entry["encoding_time_s"] = time.time() - t_vol
+                logger.error("FAILED resume read [%d] %s/%s: %s", i, subject_id, session_id, exc)
+            encoding_log.append(entry)
+            continue
 
         t_vol = time.time()
         try:
@@ -386,18 +481,10 @@ def main() -> None:
             z = vae.encode(x)  # (1, 4, 48, 48, 48)
             z_squeezed = z.squeeze(0).cpu()  # (4, 48, 48, 48)
 
-            # Save .pt file
-            save_data = {
-                "z": z_squeezed,
-                "metadata": {
-                    "subject_id": filepath.parent.parent.name,
-                    "session_id": filepath.parent.name,
-                    "dataset": dataset_name,
-                    "source_path": str(filepath),
-                    "latent_filename": latent_filename,
-                },
-            }
-            torch.save(save_data, latent_dir / latent_filename)
+            # Write to HDF5 shard
+            h5f = shard_handles[dataset_name]
+            write_sample(h5f, slot_idx, z_squeezed, subject_id, session_id, str(filepath))
+            shard_written_masks[dataset_name][slot_idx] = True
 
             # Update online stats
             acc.update(z_squeezed)
@@ -418,14 +505,18 @@ def main() -> None:
                 round_trip_results.append(
                     {
                         "dataset": dataset_name,
-                        "filename": latent_filename,
+                        "filename": f"{subject_id}/{session_id}",
                         "ssim": ssim_val,
                         "psnr": psnr_val,
                     }
                 )
                 n_round_trip_done += 1
                 logger.info(
-                    "  Round-trip SSIM=%.4f PSNR=%.2f (%s)", ssim_val, psnr_val, latent_filename
+                    "  Round-trip SSIM=%.4f PSNR=%.2f (%s/%s)",
+                    ssim_val,
+                    psnr_val,
+                    subject_id,
+                    session_id,
                 )
                 del x_hat
 
@@ -436,7 +527,6 @@ def main() -> None:
                 x_hat_recon = vae.decode(z)
                 orig_np = x.squeeze().cpu().float().numpy()
                 recon_np = x_hat_recon.clamp(0.0, 1.0).squeeze().cpu().float().numpy()
-                subject_id = filepath.parent.parent.name
                 plot_reconstruction_comparison(
                     orig_np,
                     recon_np,
@@ -458,17 +548,27 @@ def main() -> None:
             entry["error"] = str(exc)
             entry["traceback"] = traceback.format_exc()
             entry["encoding_time_s"] = time.time() - t_vol
-            logger.error("FAILED [%d] %s: %s", i, latent_filename, exc)
+            logger.error("FAILED [%d] %s/%s: %s", i, subject_id, session_id, exc)
 
         encoding_log.append(entry)
+
+    # ------------------------------------------------------------------
+    # Close all HDF5 shards and update n_written attribute
+    # ------------------------------------------------------------------
+    for ds_name, h5f in shard_handles.items():
+        mask = shard_written_masks[ds_name]
+        h5f.attrs["n_written"] = int(mask.sum())
+        h5f.close()
+        logger.info("Closed shard %s.h5: %d/%d written", ds_name, mask.sum(), len(mask))
 
     elapsed = time.time() - t_start
     n_success = sum(1 for e in encoding_log if e["status"] == "success")
     n_failed = sum(1 for e in encoding_log if e["status"] == "failed")
     logger.info(
-        "Encoding complete: %d/%d success, %d failed, %.1fs (%.1fh)",
+        "Encoding complete: %d/%d success (%d resumed), %d failed, %.1fs (%.1fh)",
         n_success,
         n_volumes,
+        n_skipped,
         n_failed,
         elapsed,
         elapsed / 3600,
@@ -526,6 +626,7 @@ def main() -> None:
         "n_total": n_volumes,
         "n_success": n_success,
         "n_failed": n_failed,
+        "n_resumed": n_skipped,
         "elapsed_seconds": elapsed,
         "entries": encoding_log,
     }

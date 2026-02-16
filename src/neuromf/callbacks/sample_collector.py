@@ -2,11 +2,21 @@
 
 Replaces in-training VAE decode with a lightweight latent-only approach:
 saves raw generated latents at multiple NFE steps using fixed noise seeds,
-computes per-epoch latent statistics, and defers all VAE decoding to a
-post-training CLI (``decode_samples.py``).
+computes per-epoch latent statistics, and defers all VAE decoding and
+evolution plotting to post-training (``generate_sample_plots``).
 
-Benefits: zero VAE VRAM during training, multi-NFE comparison, crash-safe
-.pt archives per epoch, richer scientific analysis of generation quality.
+All epochs are stored in a single ``sample_archive.pt`` file that grows
+incrementally. Structure::
+
+    {
+        "metadata": {"noise_seed", "nfe_steps", "n_samples"},
+        "noise": Tensor(N, C, D, H, W),
+        "latent_mean": Tensor(C,),
+        "latent_std": Tensor(C,),
+        "epochs": [24, 49, 74, ...],
+        "epoch_0024": {"global_step", "nfe_1", ..., "stats", "nfe_consistency"},
+        ...
+    }
 """
 
 from __future__ import annotations
@@ -105,7 +115,11 @@ class SampleCollectorCallback(pl.Callback):
         epoch: int,
         global_step: int,
     ) -> None:
-        """Generate samples at multiple NFE steps and save archive.
+        """Generate samples at multiple NFE steps and append to archive.
+
+        All epochs are stored in a single ``sample_archive.pt`` that grows
+        incrementally. The file is loaded, extended, and re-saved each
+        collection epoch.
 
         Args:
             pl_module: The Lightning module with ``net``, ``ema``,
@@ -143,41 +157,49 @@ class SampleCollectorCallback(pl.Callback):
         # NFE consistency (1-NFE vs multi-step)
         nfe_consistency = compute_nfe_consistency(nfe_samples)
 
-        # Move all tensors to CPU for saving
-        archive: dict = {
-            "epoch": epoch,
+        # Load or create the archive
+        self._samples_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = self._samples_dir / "sample_archive.pt"
+
+        if archive_path.exists():
+            archive = torch.load(archive_path, map_location="cpu", weights_only=False)
+        else:
+            archive = {
+                "metadata": {
+                    "noise_seed": self._seed,
+                    "nfe_steps": self._nfe_steps,
+                    "n_samples": self._n_samples,
+                },
+                "noise": noise.cpu(),
+                "latent_mean": pl_module.latent_mean.cpu().squeeze(),
+                "latent_std": pl_module.latent_std.cpu().squeeze(),
+                "epochs": [],
+            }
+
+        # Add this epoch's data
+        epoch_key = f"epoch_{epoch:04d}"
+        epoch_data: dict = {
             "global_step": global_step,
-            "noise_seed": self._seed,
-            "noise": noise.cpu(),
-            "latent_mean": pl_module.latent_mean.cpu().squeeze(),
-            "latent_std": pl_module.latent_std.cpu().squeeze(),
             "stats": stats,
             "nfe_consistency": nfe_consistency,
         }
         for key, z in nfe_samples.items():
-            archive[key] = z.cpu()
+            epoch_data[key] = z.cpu()
 
-        # Save archive
-        out_dir = self._samples_dir / "generated_samples"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        archive_path = out_dir / f"epoch_{epoch:04d}.pt"
+        archive[epoch_key] = epoch_data
+        if epoch not in archive["epochs"]:
+            archive["epochs"].append(epoch)
+            archive["epochs"].sort()
+
         torch.save(archive, archive_path)
 
         logger.info(
-            "Saved sample archive: epoch=%d, NFEs=%s, path=%s",
+            "Updated sample archive: epoch=%d, NFEs=%s, total_epochs=%d, path=%s",
             epoch,
             list(nfe_samples.keys()),
+            len(archive["epochs"]),
             archive_path,
         )
-
-        # Save latent channel visualization PNG
-        if "nfe_1" in nfe_samples:
-            self._save_latent_channels(
-                nfe_samples["nfe_1"].cpu(),
-                epoch,
-                global_step,
-                out_dir.parent,
-            )
 
     def _generate_multi_nfe(
         self,
@@ -201,108 +223,3 @@ class SampleCollectorCallback(pl.Callback):
                 z = sample_euler(net, noise, n_steps=nfe, prediction_type=self._prediction_type)
             results[f"nfe_{nfe}"] = z
         return results
-
-    def _save_latent_channels(
-        self,
-        z_0_hat: Tensor,
-        epoch: int,
-        global_step: int,
-        parent_dir: Path,
-    ) -> None:
-        """Save 4-channel latent visualization for the first sample.
-
-        Shows each latent channel's mid-slices in a 4x3 grid with per-channel
-        statistics annotated.
-
-        Args:
-            z_0_hat: Generated latents ``(B, 4, D, H, W)`` (normalised space).
-            epoch: Current epoch number.
-            global_step: Current global step.
-            parent_dir: Parent directory (``samples_dir``).
-        """
-        try:
-            import matplotlib
-
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-        except ImportError:
-            logger.warning("matplotlib not available; skipping latent channels")
-            return
-
-        epoch_dir = parent_dir / f"epoch_{epoch:04d}"
-        epoch_dir.mkdir(parents=True, exist_ok=True)
-
-        lat = z_0_hat[0].float()  # (4, D, H, W)
-        C = lat.shape[0]
-        mid = [s // 2 for s in lat.shape[1:]]
-        view_names = ["Sagittal", "Coronal", "Axial"]
-
-        global_min = lat.min().item()
-        global_max = lat.max().item()
-        abs_lim = max(abs(global_min), abs(global_max))
-
-        fig, axes = plt.subplots(
-            C,
-            3,
-            figsize=(9, 3 * C + 0.6),
-            gridspec_kw={"hspace": 0.15, "wspace": 0.05},
-        )
-
-        im = None
-        for ch in range(C):
-            ch_vol = lat[ch]
-            slices = [
-                ch_vol[mid[0], :, :],
-                ch_vol[:, mid[1], :],
-                ch_vol[:, :, mid[2]],
-            ]
-            ch_mean = ch_vol.mean().item()
-            ch_std = ch_vol.std().item()
-            ch_min = ch_vol.min().item()
-            ch_max = ch_vol.max().item()
-
-            for j, sl in enumerate(slices):
-                im = axes[ch, j].imshow(
-                    sl.numpy().T,
-                    cmap="RdBu_r",
-                    origin="lower",
-                    vmin=-abs_lim,
-                    vmax=abs_lim,
-                )
-                axes[ch, j].set_axis_off()
-                if ch == 0:
-                    axes[ch, j].set_title(view_names[j], fontsize=11)
-
-            stats_str = (
-                f"Ch {ch}  \u03bc={ch_mean:+.3f}  \u03c3={ch_std:.3f}  [{ch_min:.2f}, {ch_max:.2f}]"
-            )
-            axes[ch, 0].text(
-                0.02,
-                0.97,
-                stats_str,
-                transform=axes[ch, 0].transAxes,
-                fontsize=7,
-                va="top",
-                ha="left",
-                family="monospace",
-                bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85},
-            )
-
-        cbar = fig.colorbar(
-            im,
-            ax=axes.ravel().tolist(),
-            orientation="horizontal",
-            fraction=0.03,
-            pad=0.04,
-            aspect=40,
-        )
-        cbar.set_label("Latent value", fontsize=10)
-
-        fig.suptitle(
-            f"Latent Channels (1-NFE, sample #0) \u2014 Epoch {epoch}, Step {global_step}",
-            fontsize=12,
-            y=0.99,
-        )
-        fig.savefig(epoch_dir / "latent_channels.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        logger.info("Saved latent channel grid to %s", epoch_dir)
