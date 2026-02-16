@@ -17,7 +17,7 @@ if [ $# -lt 1 ]; then
     echo "Usage: bash $0 <ablation_name> [--resume]"
     echo ""
     echo "Available ablations:"
-    python -c "
+    conda run -n "${CONDA_ENV_NAME}" python -c "
 import yaml
 with open('${SCRIPT_DIR}/ablations.yaml') as f:
     data = yaml.safe_load(f)
@@ -51,7 +51,7 @@ MANIFEST="${SCRIPT_DIR}/ablations.yaml"
 # ========================================================================
 # PARSE MANIFEST — extract entry for the requested ablation
 # ========================================================================
-ENTRY=$(python -c "
+ENTRY=$(conda run -n "${CONDA_ENV_NAME}" python -c "
 import yaml, sys
 with open('${MANIFEST}') as f:
     data = yaml.safe_load(f)

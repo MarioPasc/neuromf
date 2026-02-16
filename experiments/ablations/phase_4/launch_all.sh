@@ -41,7 +41,7 @@ fi
 # PARSE MANIFEST — extract ablation entries via Python
 # ========================================================================
 # Outputs lines of: name|config_path|n_gpus|description
-ABLATION_LIST=$(python -c "
+ABLATION_LIST=$(conda run -n "${CONDA_ENV_NAME}" python -c "
 import yaml, sys
 with open('${MANIFEST}') as f:
     data = yaml.safe_load(f)
