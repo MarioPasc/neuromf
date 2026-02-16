@@ -1,8 +1,8 @@
 """CLI script for training the Latent MeanFlow model.
 
-Loads config from base.yaml + train_meanflow.yaml, builds datasets and
-Lightning Trainer, and launches training. Supports resume from checkpoint
-and dry-run mode.
+Loads config from base.yaml + train_meanflow.yaml + optional overlay configs,
+builds datasets and Lightning Trainer, and launches training. Supports resume
+from checkpoint, dry-run mode, and multi-config layering for ablations.
 
 Usage:
     ~/.conda/envs/neuromf/bin/python experiments/cli/train.py \
@@ -11,6 +11,12 @@ Usage:
     # With Picasso configs:
     python experiments/cli/train.py \
         --config configs/picasso/train_meanflow.yaml \
+        --configs-dir configs/picasso
+
+    # Multi-config for ablations (layers are merged left-to-right):
+    python experiments/cli/train.py \
+        --config configs/picasso/train_meanflow.yaml \
+                 experiments/ablations/phase_4/configs/v3_aug.yaml \
         --configs-dir configs/picasso
 
     # Resume from checkpoint:
@@ -63,8 +69,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
+        nargs="+",
         required=True,
-        help="Path to the training config YAML (e.g. configs/train_meanflow.yaml).",
+        help=(
+            "One or more config YAML paths, merged left-to-right on top of "
+            "base.yaml + train_meanflow.yaml. For ablations, pass the Picasso "
+            "overlay first, then the ablation diff."
+        ),
     )
     parser.add_argument(
         "--configs-dir",
@@ -88,7 +99,7 @@ def parse_args() -> argparse.Namespace:
 
 def _save_config_snapshot(
     merged_config: OmegaConf,
-    config_path: Path,
+    config_paths: list[Path],
     base_path: Path,
     main_train_path: Path,
 ) -> None:
@@ -99,7 +110,7 @@ def _save_config_snapshot(
 
     Args:
         merged_config: Fully merged and resolved OmegaConf config.
-        config_path: Path to the overlay config (--config argument).
+        config_paths: Ordered list of overlay config paths (--config arguments).
         base_path: Path to base.yaml.
         main_train_path: Path to the main train_meanflow.yaml.
     """
@@ -113,16 +124,21 @@ def _save_config_snapshot(
     resolved_path.write_text(OmegaConf.to_yaml(merged_config, resolve=True))
 
     # Copy each input config layer
-    for src in [base_path, main_train_path, config_path]:
-        if src.exists():
-            dst_name = src.name
-            # Disambiguate if overlay has same name as main config
-            if src.resolve() != main_train_path.resolve() and src.name == main_train_path.name:
-                dst_name = f"overlay_{src.name}"
-            # Prefix with parent dir name for Picasso overlays
-            if src.parent.name not in ("configs", ""):
-                dst_name = f"{src.parent.name}_{dst_name}"
-            shutil.copy2(src, snapshot_dir / dst_name)
+    all_sources = [base_path, main_train_path] + config_paths
+    seen_names: set[str] = set()
+    for idx, src in enumerate(all_sources):
+        if not src.exists():
+            continue
+        dst_name = src.name
+        # Prefix with parent dir name for Picasso overlays / ablation configs
+        if src.parent.name not in ("configs", ""):
+            dst_name = f"{src.parent.name}_{dst_name}"
+        # Deduplicate: append index if name already seen
+        if dst_name in seen_names:
+            stem, suffix = dst_name.rsplit(".", 1)
+            dst_name = f"{stem}_{idx:02d}.{suffix}"
+        seen_names.add(dst_name)
+        shutil.copy2(src, snapshot_dir / dst_name)
 
     logger.info("Config snapshot saved to %s", snapshot_dir)
 
@@ -135,31 +151,33 @@ def main() -> None:
     torch.set_float32_matmul_precision("high")
 
     # ------------------------------------------------------------------
-    # Config loading
+    # Config loading — supports N config layers merged left-to-right
     # ------------------------------------------------------------------
-    config_path = Path(args.config)
-    configs_dir = Path(args.configs_dir) if args.configs_dir else config_path.parent
+    config_paths = [Path(p) for p in args.config]
+    configs_dir = Path(args.configs_dir) if args.configs_dir else config_paths[0].parent
 
     base_path = configs_dir / "base.yaml"
     if not base_path.exists():
         logger.error("base.yaml not found at %s", base_path)
         sys.exit(1)
 
-    # Three-layer config: base.yaml + main train config + overlay (--config)
-    # When --config IS the main config (local), the middle layer is redundant.
-    # When --config is a Picasso overlay, the middle layer provides defaults.
+    # Merge chain: base.yaml → main train config → config_1 → config_2 → ...
+    # The main train_meanflow.yaml provides defaults; additional configs
+    # (Picasso overlay, ablation diff) override only the keys they specify.
     project_root = Path(__file__).resolve().parent.parent.parent
     main_train_path = project_root / "configs" / "train_meanflow.yaml"
 
     layers = [OmegaConf.load(base_path)]
-    if main_train_path.exists() and main_train_path.resolve() != config_path.resolve():
+    # Add main config if it isn't the first --config arg (avoids double-loading)
+    if main_train_path.exists() and main_train_path.resolve() != config_paths[0].resolve():
         layers.append(OmegaConf.load(main_train_path))
-    layers.append(OmegaConf.load(config_path))
+    for cp in config_paths:
+        layers.append(OmegaConf.load(cp))
 
     config = OmegaConf.merge(*layers)
     OmegaConf.resolve(config)
 
-    loaded = " + ".join(str(p) for p in [base_path, main_train_path, config_path] if p.exists())
+    loaded = " + ".join(str(p) for p in [base_path, main_train_path, *config_paths] if p.exists())
     logger.info("Config loaded: %s", loaded)
     logger.info("Latents dir: %s", config.paths.latents_dir)
     logger.info("Checkpoints dir: %s", config.paths.checkpoints_dir)
@@ -231,7 +249,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Save config snapshot to results folder
     # ------------------------------------------------------------------
-    _save_config_snapshot(config, config_path, base_path, main_train_path)
+    _save_config_snapshot(config, config_paths, base_path, main_train_path)
 
     # ------------------------------------------------------------------
     # Datasets

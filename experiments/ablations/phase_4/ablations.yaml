@@ -1,0 +1,28 @@
+# Phase 4 ablation manifest
+# Each ablation is a thin config diff merged on top of the Picasso overlay.
+# Merge chain: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml -> ablation_config.yaml
+#
+# Usage:
+#   bash launch_all.sh         # submit all ablations
+#   bash launch_one.sh v3_aug  # submit a single ablation
+
+ablations:
+  v2_baseline:
+    description: "Baseline (phase A only — no augmentation, no masking)"
+    config: configs/v2_baseline.yaml
+    n_gpus: 2
+
+  v3_aug:
+    description: "Phase A + B (latent augmentation enabled)"
+    config: configs/v3_aug.yaml
+    n_gpus: 2
+
+  v4_mask:
+    description: "Phase A + C (spatial masking at 50%)"
+    config: configs/v4_mask.yaml
+    n_gpus: 2
+
+  v5_aug_mask:
+    description: "Phase A + B + C (augmentation + spatial masking)"
+    config: configs/v5_aug_mask.yaml
+    n_gpus: 2

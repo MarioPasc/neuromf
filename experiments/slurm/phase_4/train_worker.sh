@@ -18,6 +18,8 @@
 #
 # Expected env vars (exported by train.sh launcher):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, RESUME_CKPT, N_GPUS
+#   TRAIN_CONFIG (optional): space-separated config paths for --config.
+#     Defaults to "${CONFIGS_DIR}/train_meanflow.yaml" for backward compat.
 # =============================================================================
 
 set -euo pipefail
@@ -148,8 +150,12 @@ echo "Logs:        ${RESULTS_DST}/phase_4/logs/"
 echo "Samples:     ${RESULTS_DST}/phase_4/samples/"
 echo ""
 
+# TRAIN_CONFIG allows ablation launchers to inject extra config layers
+TRAIN_CONFIG="${TRAIN_CONFIG:-${CONFIGS_DIR}/train_meanflow.yaml}"
+echo "Config(s):   ${TRAIN_CONFIG}"
+
 TRAIN_CMD="python experiments/cli/train.py \
-    --config ${CONFIGS_DIR}/train_meanflow.yaml \
+    --config ${TRAIN_CONFIG} \
     --configs-dir ${CONFIGS_DIR}"
 
 # Add resume flag if checkpoint specified
