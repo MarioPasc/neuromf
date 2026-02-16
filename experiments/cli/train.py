@@ -84,6 +84,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _save_config_snapshot(
+    merged_config: OmegaConf,
+    config_path: Path,
+    base_path: Path,
+    main_train_path: Path,
+) -> None:
+    """Save a snapshot of all config files to the results folder.
+
+    Creates a timestamped directory under ``logs_dir/config_snapshots/``
+    containing the merged resolved config and copies of each input YAML.
+
+    Args:
+        merged_config: Fully merged and resolved OmegaConf config.
+        config_path: Path to the overlay config (--config argument).
+        base_path: Path to base.yaml.
+        main_train_path: Path to the main train_meanflow.yaml.
+    """
+    logs_dir = Path(merged_config.paths.logs_dir)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    snapshot_dir = logs_dir / "config_snapshots" / timestamp
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the fully merged + resolved config
+    resolved_path = snapshot_dir / "resolved_config.yaml"
+    resolved_path.write_text(OmegaConf.to_yaml(merged_config, resolve=True))
+
+    # Copy each input config layer
+    for src in [base_path, main_train_path, config_path]:
+        if src.exists():
+            dst_name = src.name
+            # Disambiguate if overlay has same name as main config
+            if src.resolve() != main_train_path.resolve() and src.name == main_train_path.name:
+                dst_name = f"overlay_{src.name}"
+            # Prefix with parent dir name for Picasso overlays
+            if src.parent.name not in ("configs", ""):
+                dst_name = f"{src.parent.name}_{dst_name}"
+            shutil.copy2(src, snapshot_dir / dst_name)
+
+    logger.info("Config snapshot saved to %s", snapshot_dir)
+
+
 def main() -> None:
     """Main training entry point."""
     args = parse_args()
@@ -184,6 +225,11 @@ def main() -> None:
         logger.info("Augmentation: %s", "enabled" if aug_enabled else "disabled")
         logger.info("Config OK — dry run complete.")
         return
+
+    # ------------------------------------------------------------------
+    # Save config snapshot to results folder
+    # ------------------------------------------------------------------
+    _save_config_snapshot(config, config_path, base_path, main_train_path)
 
     # ------------------------------------------------------------------
     # Datasets

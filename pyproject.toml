@@ -139,6 +139,7 @@ markers = [
     "phase7: Phase 7 tests (LoRA FCD)",
     "critical: Must pass for phase gate",
     "informational: Nice to have, not gating",
+    "slow: Slow tests (e.g. CPU VAE decode), skip with -m 'not slow'",
 ]
 
 [tool.coverage.run]
