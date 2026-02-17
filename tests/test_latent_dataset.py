@@ -15,7 +15,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from neuromf.data.latent_dataset import LatentDataset
+from neuromf.data.latent_dataset import LatentDataset, _extract_subject_key  # noqa: PLC2701
 from neuromf.data.latent_hdf5 import (
     build_global_index,
     create_shard,
@@ -37,6 +37,9 @@ def _create_mock_shard(
     n_ch: int = 4,
     spatial: int = 32,
     dataset_name: str = "MOCK_DS",
+    subject_ids: list[str] | None = None,
+    session_ids: list[str] | None = None,
+    source_paths: list[str] | None = None,
 ) -> None:
     """Create a test HDF5 shard with random latent data.
 
@@ -46,12 +49,19 @@ def _create_mock_shard(
         n_ch: Number of latent channels.
         spatial: Spatial dimension (cubic).
         dataset_name: Dataset name attribute.
+        subject_ids: Per-volume subject IDs. If None, auto-generates
+            ``sub_000``, ``sub_001``, etc.
+        session_ids: Per-volume session IDs. If None, auto-generates.
+        source_paths: Per-volume source paths. If None, auto-generates.
     """
     shape = (n_ch, spatial, spatial, spatial)
     f = create_shard(path, dataset_name, n_vols, latent_shape=shape)
     for i in range(n_vols):
         z = torch.randn(*shape)
-        write_sample(f, i, z, f"sub_{i:03d}", f"ses_{i}", f"/path/to/vol_{i}.nii.gz")
+        sid = subject_ids[i] if subject_ids else f"sub_{i:03d}"
+        ses = session_ids[i] if session_ids else f"ses_{i}"
+        src = source_paths[i] if source_paths else f"/path/to/vol_{i}.nii.gz"
+        write_sample(f, i, z, sid, ses, src)
     f.close()
 
 
@@ -356,3 +366,127 @@ def test_P1_T9_latent_file_count(latent_dir: Path) -> None:
     n = len(global_idx)
     assert n >= 500, f"Only {n} latent samples found, expected ~1100"
     print(f"INFO: {n} latent samples found across {len(shard_paths)} shards")
+
+
+# ---------------------------------------------------------------------------
+# Subject-level split tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase1
+@pytest.mark.critical
+def test_subject_level_split_no_leakage(tmp_path: Path) -> None:
+    """Subject-level split must have zero subject overlap between train and val.
+
+    Creates 2 mock shards with multi-scan subjects:
+    - Shard DS_A: 5 volumes — sub_1 (3 scans), sub_2 (2 scans)
+    - Shard DS_B: 3 volumes — sub_10, sub_11, sub_12 (1 scan each)
+    Total: 8 volumes, 5 subjects
+    """
+    n_channels = 4
+    spatial = 8  # small for speed
+
+    # Shard DS_A: multi-scan subjects
+    _create_mock_shard(
+        tmp_path / "DS_A.h5",
+        n_vols=5,
+        n_ch=n_channels,
+        spatial=spatial,
+        dataset_name="DS_A",
+        subject_ids=["sub_1", "sub_1", "sub_1", "sub_2", "sub_2"],
+        session_ids=["ses_1", "ses_1", "ses_1", "ses_1", "ses_1"],
+        source_paths=[
+            "/path/sub_1/t1.nii.gz",
+            "/path/sub_1/t1_2.nii.gz",
+            "/path/sub_1/t1_3.nii.gz",
+            "/path/sub_2/t1.nii.gz",
+            "/path/sub_2/t1_2.nii.gz",
+        ],
+    )
+
+    # Shard DS_B: single-scan subjects
+    _create_mock_shard(
+        tmp_path / "DS_B.h5",
+        n_vols=3,
+        n_ch=n_channels,
+        spatial=spatial,
+        dataset_name="DS_B",
+        subject_ids=["sub_10", "sub_11", "sub_12"],
+        session_ids=["ses_1", "ses_1", "ses_1"],
+    )
+
+    # Create mock latent_stats.json
+    stats = {
+        "n_files": 8,
+        "n_voxels_per_channel": 8 * spatial**3,
+        "per_channel": {},
+        "cross_channel_correlation": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    }
+    for c in range(n_channels):
+        stats["per_channel"][f"channel_{c}"] = {
+            "mean": 0.0,
+            "std": 1.0,
+            "skewness": 0.0,
+            "kurtosis": 0.0,
+            "min": -3.0,
+            "max": 3.0,
+        }
+    (tmp_path / "latent_stats.json").write_text(json.dumps(stats))
+
+    # Create train and val splits
+    train_ds = LatentDataset(
+        tmp_path, normalise=False, split="train", split_ratio=0.6, split_seed=42
+    )
+    val_ds = LatentDataset(tmp_path, normalise=False, split="val", split_ratio=0.6, split_seed=42)
+
+    # Extract subject keys from each split
+    train_subjects = set()
+    for i in range(len(train_ds)):
+        meta = train_ds[i]["metadata"]
+        train_subjects.add(f"{meta['dataset']}_{meta['subject_id']}")
+
+    val_subjects = set()
+    for i in range(len(val_ds)):
+        meta = val_ds[i]["metadata"]
+        val_subjects.add(f"{meta['dataset']}_{meta['subject_id']}")
+
+    # Zero overlap
+    leaked = train_subjects & val_subjects
+    assert len(leaked) == 0, f"Subject leakage detected: {leaked}"
+
+    # All samples accounted for
+    assert len(train_ds) + len(val_ds) == 8, (
+        f"Expected 8 total samples, got {len(train_ds)} + {len(val_ds)}"
+    )
+
+    # sub_1's 3 files must all be in the same split
+    sub1_key = "DS_A_sub_1"
+    if sub1_key in train_subjects:
+        # All 3 sub_1 files in train
+        sub1_count = sum(
+            1
+            for i in range(len(train_ds))
+            if train_ds[i]["metadata"]["subject_id"] == "sub_1"
+            and train_ds[i]["metadata"]["dataset"] == "DS_A"
+        )
+        assert sub1_count == 3, f"sub_1 has {sub1_count} files in train, expected 3"
+    else:
+        # All 3 sub_1 files in val
+        sub1_count = sum(
+            1
+            for i in range(len(val_ds))
+            if val_ds[i]["metadata"]["subject_id"] == "sub_1"
+            and val_ds[i]["metadata"]["dataset"] == "DS_A"
+        )
+        assert sub1_count == 3, f"sub_1 has {sub1_count} files in val, expected 3"
+
+
+def test_subject_key_extraction() -> None:
+    """Verify _extract_subject_key builds correct keys."""
+    assert _extract_subject_key("PT001_OASIS1", "sub_1") == "PT001_OASIS1_sub_1"
+    assert _extract_subject_key("PT005_IXI", "sub_3") == "PT005_IXI_sub_3"
+
+    # Different datasets with same subject_id produce different keys
+    key_a = _extract_subject_key("PT001_OASIS1", "sub_001")
+    key_b = _extract_subject_key("PT005_IXI", "sub_001")
+    assert key_a != key_b, "Same subject_id in different datasets should have different keys"

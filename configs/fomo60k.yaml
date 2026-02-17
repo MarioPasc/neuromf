@@ -14,17 +14,14 @@ fomo60k:
       groups: ["Control"]
     - name: PT008_DLBS
       groups: ["Control"]
-    # --- Tier 2: verify sequences are T1w ---
-    - name: PT013_MGH_Wild
-      groups: ["Memory complaints"]
-    # --- Tier 3: skull-strip with SynthStrip first ---
+    # --- Tier 2: skull-strip with SynthStrip first ---
     - name: PT015_NKI
       groups: [""]
     - name: PT011_MBSR
       groups: [""]
     - name: PT012_UCLA
       groups: ["CONTROL"]
-    # --- Tier 3 conditional (include after baseline established) ---
+    # --- Tier 2 conditional (include after baseline established) ---
     # - name: PT014_QTAB    # adolescent — include if FCD cohort is paediatric
     #   groups: [""]
     # - name: PT009_IDEAS   # Alzheimer's study — sensitivity analysis

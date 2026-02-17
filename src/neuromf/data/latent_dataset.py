@@ -22,6 +22,56 @@ from neuromf.utils.latent_stats import load_latent_stats
 logger = logging.getLogger(__name__)
 
 
+def _extract_subject_key(dataset: str, subject_id: str) -> str:
+    """Build subject grouping key: ``'{dataset}_{subject_id}'``.
+
+    Includes dataset name to avoid cross-dataset collisions
+    (e.g. ``sub_001`` in IXI vs OASIS).
+
+    Args:
+        dataset: Dataset identifier, e.g. ``"PT005_IXI"``.
+        subject_id: Subject identifier, e.g. ``"sub_3"``.
+
+    Returns:
+        Combined key string.
+    """
+    return f"{dataset}_{subject_id}"
+
+
+def _build_subject_index(
+    entries: list[tuple[Path, int]],
+) -> dict[str, list[int]]:
+    """Group entry indices by subject key.
+
+    Opens each shard once to read the full ``subject_id`` array and
+    ``dataset_name`` attribute, then maps each entry to its subject key.
+
+    Args:
+        entries: Global index from :func:`build_global_index` — list of
+            ``(shard_path, local_idx)`` tuples.
+
+    Returns:
+        Dict mapping subject keys to lists of entry indices in ``entries``.
+    """
+    # Collect unique shard paths and which entry indices reference them
+    shard_to_entries: dict[Path, list[tuple[int, int]]] = {}
+    for entry_idx, (shard_path, local_idx) in enumerate(entries):
+        shard_to_entries.setdefault(shard_path, []).append((entry_idx, local_idx))
+
+    subject_index: dict[str, list[int]] = {}
+    for shard_path, pairs in shard_to_entries.items():
+        with h5py.File(str(shard_path), "r") as f:
+            dataset_name = str(f.attrs["dataset_name"])
+            subject_ids = f["subject_id"][:]
+            for entry_idx, local_idx in pairs:
+                raw_sid = subject_ids[local_idx]
+                sid = raw_sid.decode() if isinstance(raw_sid, bytes) else str(raw_sid)
+                key = _extract_subject_key(dataset_name, sid)
+                subject_index.setdefault(key, []).append(entry_idx)
+
+    return subject_index
+
+
 def latent_collate_fn(batch: list[dict]) -> dict[str, torch.Tensor]:
     """Collate function that only stacks ``z`` tensors.
 
@@ -99,22 +149,25 @@ class LatentDataset(Dataset):
         if not all_entries:
             raise FileNotFoundError(f"No written samples found in shards at {self.latent_dir}")
 
-        # Apply train/val split if requested
+        # Apply train/val split if requested — split by SUBJECT to avoid
+        # data leakage (same subject's multiple scans in both train and val)
         if split is not None:
             if split not in ("train", "val"):
                 raise ValueError(f"split must be 'train', 'val', or None; got '{split}'")
-            indices = list(range(len(all_entries)))
-            random.Random(split_seed).shuffle(indices)
-            n_train = int(len(indices) * split_ratio)
+            subject_to_indices = _build_subject_index(all_entries)
+            subjects = sorted(subject_to_indices.keys())
+            random.Random(split_seed).shuffle(subjects)
+            n_train_subj = int(len(subjects) * split_ratio)
             if split == "train":
-                selected = sorted(indices[:n_train])
+                chosen = set(subjects[:n_train_subj])
             else:
-                selected = sorted(indices[n_train:])
+                chosen = set(subjects[n_train_subj:])
+            selected = sorted(idx for subj in chosen for idx in subject_to_indices[subj])
             self._entries = [all_entries[i] for i in selected]
             logger.info(
-                "LatentDataset: %d/%d samples (%s split, ratio=%.2f, seed=%d)",
+                "LatentDataset: %d files from %d subjects (%s split, ratio=%.2f, seed=%d)",
                 len(self._entries),
-                len(all_entries),
+                len(chosen),
                 split,
                 split_ratio,
                 split_seed,

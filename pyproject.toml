@@ -87,6 +87,10 @@ finetune = [
 baseline = [
     "torchcfm>=1.0",
 ]
+preprocessing = [
+    "brats==0.1.6",
+    "brats[preprocessing]",
+]
 # Development and testing
 dev = [
     "pytest>=7.0",
