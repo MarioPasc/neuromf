@@ -38,6 +38,9 @@ classifiers = [
 # NOTE: Install PyTorch via conda first for CUDA support:
 #   conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
 dependencies = [
+    # For solving dependencies: Install typer first so it is compatible between brats_preprocessing and transformers
+    "typer-slim[standard]==0.15.0",
+    "typer-cli==0.15.0",
     # Deep learning framework
     "torch>=2.2",
     "torchvision>=0.17",

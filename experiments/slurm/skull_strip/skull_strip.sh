@@ -165,6 +165,7 @@ else
         "${SCRIPT_DIR}/skull_strip_worker.sh")
 
     # ---- Dependency job: summary visualization after all workers finish ----
+    # Needs --gres=gpu:1 because --constraint=dgx routes to GPU partition
     VIZ_JOB_ID=$(sbatch --parsable \
         --job-name="neuromf_ss_viz" \
         --time=0-00:15:00 \
@@ -172,6 +173,7 @@ else
         --cpus-per-task=4 \
         --mem=16G \
         --constraint=dgx \
+        --gres=gpu:1 \
         --dependency="afterok:${ARRAY_JOB_ID}" \
         --output="${RESULTS_DST}/skull_strip/ss_viz_%j.out" \
         --error="${RESULTS_DST}/skull_strip/ss_viz_%j.err" \

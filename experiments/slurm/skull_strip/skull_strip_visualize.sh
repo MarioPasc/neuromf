@@ -5,6 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --constraint=dgx
+#SBATCH --gres=gpu:1
 
 # =============================================================================
 # SKULL-STRIP VISUALIZATION — SLURM DEPENDENCY JOB
