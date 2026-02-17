@@ -99,12 +99,12 @@ for f in "${CONFIGS_DIR}/base.yaml" "${REPO_SRC}/configs/train_meanflow.yaml" "$
     fi
 done
 
-# Verify latent dir has .pt files and stats
+# Verify latent dir has HDF5 shard files and stats
 LATENT_DIR="${RESULTS_DST}/latents"
-PT_COUNT=$(find "${LATENT_DIR}" -name "*.pt" 2>/dev/null | wc -l)
-echo "Latent .pt files: ${PT_COUNT}"
-if [ "$PT_COUNT" -eq 0 ]; then
-    echo "ERROR: No .pt files found in ${LATENT_DIR}. Run Phase 1 first."
+H5_COUNT=$(find "${LATENT_DIR}" -name "*.h5" 2>/dev/null | wc -l)
+echo "Latent HDF5 shards: ${H5_COUNT}"
+if [ "$H5_COUNT" -eq 0 ]; then
+    echo "ERROR: No .h5 shard files found in ${LATENT_DIR}. Run Phase 1 first."
     exit 1
 fi
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J neuromf_p1_encode
-#SBATCH --time=0-04:00:00
+#SBATCH --time=0-10:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
@@ -13,7 +13,7 @@
 # PHASE 1: LATENT ENCODING WORKER
 #
 # Encodes all FOMO-60K volumes through the frozen MAISI VAE on a single A100.
-# Produces .pt latent files, latent_stats.json, figures, and reports.
+# Produces per-dataset HDF5 shard files, latent_stats.json, figures, and reports.
 #
 # Expected env vars (exported by encode_dataset.sh launcher):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME

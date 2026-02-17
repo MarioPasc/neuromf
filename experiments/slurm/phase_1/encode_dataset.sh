@@ -48,7 +48,7 @@ mkdir -p "${RESULTS_DST}/phase_1/figures"
 # ========================================================================
 JOB_ID=$(sbatch --parsable \
     --job-name="neuromf_p1_encode" \
-    --time=0-04:00:00 \
+    --time=0-10:00:00 \
     --ntasks=1 \
     --cpus-per-task=16 \
     --mem=64G \
