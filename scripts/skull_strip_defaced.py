@@ -500,15 +500,17 @@ def run_phase_b(
             continue
 
         try:
-            # Backup original
+            # Backup original (keep .nii.gz.bak as archive — not used as input)
             bak_path = path.parent / f"{path.name}.bak"
             if not bak_path.exists():
                 shutil.copy2(str(path), str(bak_path))
 
-            # Skull-strip — overwrite original, save mask alongside
+            # Skull-strip — read from original, overwrite in-place.
+            # Safe because skull_strip_volume loads data into memory before
+            # writing output, and HD-BET writes to a temp file (not input).
             stats = skull_strip_volume(
-                input_path=bak_path,  # read from backup
-                output_path=path,  # overwrite original
+                input_path=path,  # read from original (still valid .nii.gz)
+                output_path=path,  # overwrite with skull-stripped result
                 mask_path=mask_companion,
                 mode="fast",
                 device=device,

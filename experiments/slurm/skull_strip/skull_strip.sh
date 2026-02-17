@@ -150,7 +150,7 @@ else
     # ---- Phase B: array job with N workers, each gets 1 GPU ----
     ARRAY_MAX=$((NUM_WORKERS - 1))
 
-    ARRAY_JOB_ID=$(sbatch --parsable \
+    ARRAY_JOB_RAW=$(sbatch --parsable \
         --job-name="neuromf_ss_batch" \
         --time=0-03:00:00 \
         --ntasks=1 \
@@ -164,7 +164,12 @@ else
         --export=ALL \
         "${SCRIPT_DIR}/skull_strip_worker.sh")
 
+    # --parsable may return "JOBID;CLUSTER" — extract just the numeric ID
+    ARRAY_JOB_ID="${ARRAY_JOB_RAW%%;*}"
+    echo "Array job submitted: ${ARRAY_JOB_ID} (raw: ${ARRAY_JOB_RAW})"
+
     # ---- Dependency job: summary visualization after all workers finish ----
+    # afterany tolerates individual task failures (afterok would cancel viz if any worker fails)
     # Needs --gres=gpu:1 because --constraint=dgx routes to GPU partition
     VIZ_JOB_ID=$(sbatch --parsable \
         --job-name="neuromf_ss_viz" \
@@ -174,7 +179,7 @@ else
         --mem=16G \
         --constraint=dgx \
         --gres=gpu:1 \
-        --dependency="afterok:${ARRAY_JOB_ID}" \
+        --dependency="afterany:${ARRAY_JOB_ID}" \
         --output="${RESULTS_DST}/skull_strip/ss_viz_%j.out" \
         --error="${RESULTS_DST}/skull_strip/ss_viz_%j.err" \
         --export=ALL \
