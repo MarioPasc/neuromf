@@ -65,21 +65,16 @@ class TestRealDataAugmentation:
     def test_P4d_T11_augmentation_preserves_channel_stats(self) -> None:
         """P4d-T11: Geometric augmentation is measure-preserving on real latents.
 
-        Flips and rot90 should not change per-channel mean or std.
+        Flip_d (depth/L-R axis) should not change per-channel mean or std.
         """
         latents = _load_n_latents(20)
 
-        # Geometric-only config (no noise, no scale)
+        # Geometric-only config (no noise, no scale) — safe transforms only
         config = {
             "enabled": True,
-            "flip_prob": 1.0,
-            "flip_axes": [0, 1, 2],
-            "rotate90_prob": 1.0,
-            "rotate90_axes": [[0, 1], [0, 2], [1, 2]],
-            "gaussian_noise_prob": 0.0,
-            "gaussian_noise_std_fraction": 0.0,
-            "intensity_scale_prob": 0.0,
-            "intensity_scale_factors": 0.0,
+            "transforms": {
+                "flip_d": {"prob": 1.0},
+            },
         }
         pipeline = build_latent_augmentation(config)
 
@@ -169,17 +164,14 @@ class TestRealDataAugmentation:
         orig_max = all_vals.amax(dim=(0, 2, 3, 4))  # (4,)
         orig_range = orig_max - orig_min
 
-        # Full augmentation (all transforms at prob=1.0)
+        # Full augmentation with all safe transforms at prob=1.0
         config = {
             "enabled": True,
-            "flip_prob": 1.0,
-            "flip_axes": [0, 1, 2],
-            "rotate90_prob": 1.0,
-            "rotate90_axes": [[1, 2]],
-            "gaussian_noise_prob": 1.0,
-            "gaussian_noise_std_fraction": 0.05,
-            "intensity_scale_prob": 1.0,
-            "intensity_scale_factors": 0.05,
+            "transforms": {
+                "flip_d": {"prob": 1.0},
+                "gaussian_noise": {"prob": 1.0, "std_fraction": 0.05},
+                "intensity_scale": {"prob": 1.0, "factors": 0.05},
+            },
         }
         pipeline = build_latent_augmentation(config, latent_stats_path=STATS_PATH)
 
@@ -207,14 +199,11 @@ class TestRealDataAugmentation:
 
         config = {
             "enabled": True,
-            "flip_prob": 0.5,
-            "flip_axes": [0, 1, 2],
-            "rotate90_prob": 0.5,
-            "rotate90_axes": [[1, 2]],
-            "gaussian_noise_prob": 1.0,
-            "gaussian_noise_std_fraction": 0.05,
-            "intensity_scale_prob": 0.3,
-            "intensity_scale_factors": 0.05,
+            "transforms": {
+                "flip_d": {"prob": 0.5},
+                "gaussian_noise": {"prob": 1.0, "std_fraction": 0.05},
+                "intensity_scale": {"prob": 0.3, "factors": 0.05},
+            },
         }
         aug_pipeline = build_latent_augmentation(config, latent_stats_path=STATS_PATH)
 

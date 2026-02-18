@@ -72,7 +72,7 @@ meanflow:
   jvp_strategy: exact
   fd_step_size: 1.0e-3
   channel_weights: null
-  norm_p: 0.5
+  norm_p: 1.0                     # match all references (PyTorch MF, pMF, JAX MF)
   spatial_mask_ratio: 0.0         # Phase C (0.0=off; e.g. 0.5=mask 50%)
 
 # Time sampling

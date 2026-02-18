@@ -36,14 +36,11 @@ class TestLatentAugmentation:
         """P4d-T2: build_latent_augmentation returns a callable pipeline."""
         config = {
             "enabled": True,
-            "flip_prob": 0.5,
-            "flip_axes": [0, 1, 2],
-            "rotate90_prob": 0.5,
-            "rotate90_axes": [[1, 2]],
-            "gaussian_noise_prob": 0.3,
-            "gaussian_noise_std_fraction": 0.05,
-            "intensity_scale_prob": 0.3,
-            "intensity_scale_factors": 0.05,
+            "transforms": {
+                "flip_d": {"prob": 0.5},
+                "gaussian_noise": {"prob": 0.3, "std_fraction": 0.05},
+                "intensity_scale": {"prob": 0.3, "factors": 0.05},
+            },
         }
         pipeline = build_latent_augmentation(config)
         assert pipeline is not None
@@ -53,14 +50,11 @@ class TestLatentAugmentation:
         """P4d-T3: Augmented output shape matches (4, 48, 48, 48)."""
         config = {
             "enabled": True,
-            "flip_prob": 1.0,
-            "flip_axes": [0],
-            "rotate90_prob": 1.0,
-            "rotate90_axes": [[1, 2]],
-            "gaussian_noise_prob": 1.0,
-            "gaussian_noise_std_fraction": 0.05,
-            "intensity_scale_prob": 1.0,
-            "intensity_scale_factors": 0.05,
+            "transforms": {
+                "flip_d": {"prob": 1.0},
+                "gaussian_noise": {"prob": 1.0, "std_fraction": 0.05},
+                "intensity_scale": {"prob": 1.0, "factors": 0.05},
+            },
         }
         pipeline = build_latent_augmentation(config)
         x = torch.randn(4, 48, 48, 48)
@@ -71,14 +65,11 @@ class TestLatentAugmentation:
         """P4d-T4: Repeated calls produce different outputs (stochastic)."""
         config = {
             "enabled": True,
-            "flip_prob": 0.5,
-            "flip_axes": [0, 1, 2],
-            "rotate90_prob": 0.5,
-            "rotate90_axes": [[1, 2]],
-            "gaussian_noise_prob": 1.0,
-            "gaussian_noise_std_fraction": 0.1,
-            "intensity_scale_prob": 1.0,
-            "intensity_scale_factors": 0.1,
+            "transforms": {
+                "flip_d": {"prob": 0.5},
+                "gaussian_noise": {"prob": 1.0, "std_fraction": 0.1},
+                "intensity_scale": {"prob": 1.0, "factors": 0.1},
+            },
         }
         pipeline = build_latent_augmentation(config)
         x = torch.randn(4, 16, 16, 16)
