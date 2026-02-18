@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J neuromf_p4_train
-#SBATCH --time=2-00:00:00
+#SBATCH --time=1-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
@@ -15,6 +15,9 @@
 # Trains the Latent MeanFlow model on pre-computed latents.
 # Supports single-GPU and multi-GPU (DDP) within one DGX node.
 # Lightning handles process spawning — no srun needed.
+#
+# Dataset: ~6,471 scans (8 datasets), 3-way split (85/10/5)
+# ~5,500 train scans -> ~43 steps/epoch -> ~12,900 total steps at 300 epochs
 #
 # Expected env vars (exported by train.sh launcher):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, RESUME_CKPT, N_GPUS

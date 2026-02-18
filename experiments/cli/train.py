@@ -143,6 +143,100 @@ def _save_config_snapshot(
     logger.info("Config snapshot saved to %s", snapshot_dir)
 
 
+def _resolve_split_ratios(config: OmegaConf) -> list[float]:
+    """Resolve split ratios from config, handling backward compatibility.
+
+    Supports both the new ``split_ratios`` list and the deprecated scalar
+    ``split_ratio``. Logs a deprecation warning if the old key is used.
+
+    Args:
+        config: Training config section.
+
+    Returns:
+        List of split ratios (e.g. ``[0.85, 0.10, 0.05]``).
+    """
+    if "split_ratios" in config.training:
+        return list(config.training.split_ratios)
+    if "split_ratio" in config.training:
+        ratio = float(config.training.split_ratio)
+        logger.warning(
+            "Deprecated 'split_ratio=%.2f' found in config. "
+            "Migrate to 'split_ratios: [%.2f, %.2f]'.",
+            ratio,
+            ratio,
+            1.0 - ratio,
+        )
+        return [ratio, 1.0 - ratio]
+    return [0.85, 0.10, 0.05]
+
+
+def _save_dataset_summary(
+    config: OmegaConf,
+    train_ds: LatentDataset,
+    val_ds: LatentDataset,
+    test_ds: LatentDataset | None,
+    split_ratios: list[float],
+    effective_batch: int,
+) -> None:
+    """Save dataset split and augmentation summary to JSON.
+
+    Args:
+        config: Resolved training config.
+        train_ds: Training dataset.
+        val_ds: Validation dataset.
+        test_ds: Test dataset (may be None for 2-way splits).
+        split_ratios: Split ratio list.
+        effective_batch: Effective batch size across all GPUs + accumulation.
+    """
+    logs_dir = Path(config.paths.logs_dir)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    split_seed = int(config.training.get("split_seed", 42))
+    n_train = len(train_ds)
+    steps_per_epoch = max(1, n_train // effective_batch)
+    max_epochs = int(config.training.max_epochs)
+
+    # Build split info from train dataset (has all split info)
+    split_info = train_ds.split_info or {}
+
+    # Augmentation summary
+    aug_cfg = OmegaConf.to_container(config.training.get("augmentation", {}), resolve=True)
+    aug_enabled = bool(aug_cfg.get("enabled", False))
+    aug_summary: dict = {"enabled": aug_enabled}
+
+    if aug_enabled:
+        transforms_cfg = aug_cfg.get("transforms", {})
+        aug_summary["transforms"] = transforms_cfg
+        # Compute expected augmented fraction: 1 - product(1 - prob_i)
+        probs = [
+            float(t_cfg.get("prob", 0.0))
+            for t_cfg in transforms_cfg.values()
+            if isinstance(t_cfg, dict)
+        ]
+        clean_fraction = math.prod(1.0 - p for p in probs) if probs else 1.0
+        aug_fraction = 1.0 - clean_fraction
+        aug_summary["expected_augmented_fraction"] = round(aug_fraction, 4)
+        aug_summary["expected_augmented_per_epoch"] = round(aug_fraction * n_train)
+
+    summary = {
+        "timestamp": datetime.now().isoformat(),
+        "split_seed": split_seed,
+        "split_ratios": split_ratios,
+        "train": split_info.get("train", {"n_scans": n_train}),
+        "val": split_info.get("val", {"n_scans": len(val_ds)}),
+        "augmentation": aug_summary,
+        "effective_batch_size": effective_batch,
+        "optimizer_steps_per_epoch": steps_per_epoch,
+        "total_optimizer_steps": steps_per_epoch * max_epochs,
+    }
+    if test_ds is not None:
+        summary["test"] = split_info.get("test", {"n_scans": len(test_ds)})
+
+    out_path = logs_dir / "dataset_summary.json"
+    out_path.write_text(json.dumps(summary, indent=2))
+    logger.info("Dataset summary saved to %s", out_path)
+
+
 def main() -> None:
     """Main training entry point."""
     args = parse_args()
@@ -205,6 +299,8 @@ def main() -> None:
     accum_steps = int(config.training.get("accumulate_grad_batches", 1))
     effective_batch = int(config.training.batch_size) * devices * accum_steps
 
+    split_ratios = _resolve_split_ratios(config)
+
     if args.dry_run:
         logger.info("=== DRY RUN ===")
         logger.info("UNet channels: %s", list(config.unet.channels))
@@ -241,8 +337,16 @@ def main() -> None:
             "Spatial mask ratio: %.2f",
             config.meanflow.get("spatial_mask_ratio", 0.0),
         )
-        aug_enabled = config.training.get("augmentation", {}).get("enabled", False)
-        logger.info("Augmentation: %s", "enabled" if aug_enabled else "disabled")
+        logger.info(
+            "Split ratios: %s (seed=%d)", split_ratios, config.training.get("split_seed", 42)
+        )
+        aug_cfg_dr = config.training.get("augmentation", {})
+        aug_enabled_dr = aug_cfg_dr.get("enabled", False)
+        logger.info("Augmentation: %s", "enabled" if aug_enabled_dr else "disabled")
+        if aug_enabled_dr:
+            transforms_dr = aug_cfg_dr.get("transforms", {})
+            for t_name, t_cfg in transforms_dr.items():
+                logger.info("  %s: prob=%.2f", t_name, t_cfg.get("prob", 0.0))
         logger.info("Config OK — dry run complete.")
         return
 
@@ -269,13 +373,12 @@ def main() -> None:
         aug_transform = build_latent_augmentation(aug_cfg, latent_stats_path=stats_path)
         logger.info("Latent augmentation enabled")
 
-    split_ratio = float(config.training.get("split_ratio", 0.9))
     split_seed = int(config.training.get("split_seed", 42))
     train_ds = LatentDataset(
         latent_dir,
         normalise=True,
         split="train",
-        split_ratio=split_ratio,
+        split_ratios=split_ratios,
         split_seed=split_seed,
         transform=aug_transform,
     )
@@ -283,10 +386,31 @@ def main() -> None:
         latent_dir,
         normalise=True,
         split="val",
-        split_ratio=split_ratio,
+        split_ratios=split_ratios,
         split_seed=split_seed,
     )
-    logger.info("Train: %d samples, Val: %d samples", len(train_ds), len(val_ds))
+
+    # Build test dataset for counting only (no DataLoader created)
+    test_ds: LatentDataset | None = None
+    if len(split_ratios) >= 3:
+        test_ds = LatentDataset(
+            latent_dir,
+            normalise=True,
+            split="test",
+            split_ratios=split_ratios,
+            split_seed=split_seed,
+        )
+        logger.info(
+            "Train: %d samples, Val: %d samples, Test: %d samples",
+            len(train_ds),
+            len(val_ds),
+            len(test_ds),
+        )
+    else:
+        logger.info("Train: %d samples, Val: %d samples", len(train_ds), len(val_ds))
+
+    # Save dataset summary JSON
+    _save_dataset_summary(config, train_ds, val_ds, test_ds, split_ratios, effective_batch)
 
     batch_size = int(config.training.batch_size)
     num_workers = int(config.training.get("num_workers", 0))

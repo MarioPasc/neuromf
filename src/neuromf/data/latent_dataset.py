@@ -40,8 +40,8 @@ def _extract_subject_key(dataset: str, subject_id: str) -> str:
 
 def _build_subject_index(
     entries: list[tuple[Path, int]],
-) -> dict[str, list[int]]:
-    """Group entry indices by subject key.
+) -> tuple[dict[str, list[int]], dict[str, str]]:
+    """Group entry indices by subject key and map subjects to datasets.
 
     Opens each shard once to read the full ``subject_id`` array and
     ``dataset_name`` attribute, then maps each entry to its subject key.
@@ -51,7 +51,9 @@ def _build_subject_index(
             ``(shard_path, local_idx)`` tuples.
 
     Returns:
-        Dict mapping subject keys to lists of entry indices in ``entries``.
+        Tuple of:
+        - Dict mapping subject keys to lists of entry indices in ``entries``.
+        - Dict mapping subject keys to dataset names.
     """
     # Collect unique shard paths and which entry indices reference them
     shard_to_entries: dict[Path, list[tuple[int, int]]] = {}
@@ -59,6 +61,7 @@ def _build_subject_index(
         shard_to_entries.setdefault(shard_path, []).append((entry_idx, local_idx))
 
     subject_index: dict[str, list[int]] = {}
+    subject_to_dataset: dict[str, str] = {}
     for shard_path, pairs in shard_to_entries.items():
         with h5py.File(str(shard_path), "r") as f:
             dataset_name = str(f.attrs["dataset_name"])
@@ -68,8 +71,62 @@ def _build_subject_index(
                 sid = raw_sid.decode() if isinstance(raw_sid, bytes) else str(raw_sid)
                 key = _extract_subject_key(dataset_name, sid)
                 subject_index.setdefault(key, []).append(entry_idx)
+                subject_to_dataset[key] = dataset_name
 
-    return subject_index
+    return subject_index, subject_to_dataset
+
+
+def _stratified_subject_split(
+    subject_to_indices: dict[str, list[int]],
+    subject_to_dataset: dict[str, str],
+    split_ratios: list[float],
+    split_seed: int = 42,
+) -> dict[str, set[str]]:
+    """Split subjects into N groups, stratified by dataset.
+
+    Each dataset's subjects are split proportionally according to
+    ``split_ratios``, ensuring balanced representation across splits.
+
+    Args:
+        subject_to_indices: Map from subject key to entry indices.
+        subject_to_dataset: Map from subject key to dataset name.
+        split_ratios: Fractions for each split (must sum to 1.0).
+            E.g. ``[0.85, 0.10, 0.05]`` for train/val/test.
+        split_seed: Random seed for deterministic shuffling.
+
+    Returns:
+        Dict mapping split names (``"train"``, ``"val"``, ``"test"``, ...)
+        to sets of subject keys.
+    """
+    split_names = ["train", "val", "test", "extra"][: len(split_ratios)]
+
+    # Group subjects by dataset
+    dataset_to_subjects: dict[str, list[str]] = {}
+    for subj_key, ds_name in subject_to_dataset.items():
+        dataset_to_subjects.setdefault(ds_name, []).append(subj_key)
+
+    result: dict[str, set[str]] = {name: set() for name in split_names}
+
+    rng = random.Random(split_seed)
+
+    for _ds_name, subjects in sorted(dataset_to_subjects.items()):
+        subjects_sorted = sorted(subjects)
+        rng.shuffle(subjects_sorted)
+
+        n_total = len(subjects_sorted)
+        boundaries = []
+        cumulative = 0.0
+        for ratio in split_ratios[:-1]:
+            cumulative += ratio
+            boundaries.append(round(n_total * cumulative))
+        boundaries.append(n_total)
+
+        start = 0
+        for split_name, end in zip(split_names, boundaries):
+            result[split_name].update(subjects_sorted[start:end])
+            start = end
+
+    return result
 
 
 def latent_collate_fn(batch: list[dict]) -> dict[str, torch.Tensor]:
@@ -103,6 +160,44 @@ def hdf5_worker_init_fn(worker_id: int) -> None:
     pass
 
 
+def _compute_split_info(
+    split_groups: dict[str, set[str]],
+    subject_to_indices: dict[str, list[int]],
+    subject_to_dataset: dict[str, str],
+) -> dict[str, dict]:
+    """Compute per-split, per-dataset subject and scan counts.
+
+    Args:
+        split_groups: Map from split name to set of subject keys.
+        subject_to_indices: Map from subject key to entry indices.
+        subject_to_dataset: Map from subject key to dataset name.
+
+    Returns:
+        Dict with per-split counts, e.g.
+        ``{"train": {"n_subjects": 100, "n_scans": 200, "per_dataset": {...}}, ...}``
+    """
+    info: dict[str, dict] = {}
+    for split_name, subjects in split_groups.items():
+        per_dataset: dict[str, dict[str, int]] = {}
+        total_subjects = 0
+        total_scans = 0
+        for subj_key in subjects:
+            ds_name = subject_to_dataset[subj_key]
+            n_scans = len(subject_to_indices[subj_key])
+            if ds_name not in per_dataset:
+                per_dataset[ds_name] = {"n_subjects": 0, "n_scans": 0}
+            per_dataset[ds_name]["n_subjects"] += 1
+            per_dataset[ds_name]["n_scans"] += n_scans
+            total_subjects += 1
+            total_scans += n_scans
+        info[split_name] = {
+            "n_subjects": total_subjects,
+            "n_scans": total_scans,
+            "per_dataset": dict(sorted(per_dataset.items())),
+        }
+    return info
+
+
 class LatentDataset(Dataset):
     """PyTorch Dataset backed by HDF5 latent shard files.
 
@@ -117,9 +212,13 @@ class LatentDataset(Dataset):
         stats_path: Path to ``latent_stats.json``. Required if
             ``normalise=True``. If None, defaults to
             ``latent_dir / "latent_stats.json"``.
-        split: If ``"train"`` or ``"val"``, return only the corresponding
-            subset. If None, return all data.
-        split_ratio: Fraction of data in the train split.
+        split: Split name: ``"train"``, ``"val"``, ``"test"``, or None
+            for all data.
+        split_ratio: Fraction of data in the train split (deprecated,
+            use ``split_ratios``). Converted to 2-way split.
+        split_ratios: Fractions for N-way split, e.g.
+            ``[0.85, 0.10, 0.05]`` for train/val/test. Overrides
+            ``split_ratio`` if provided.
         split_seed: Random seed for deterministic splitting.
         transform: Optional callable applied to the ``z`` tensor after
             normalisation. Receives ``(C, D, H, W)`` tensor, must return
@@ -132,13 +231,28 @@ class LatentDataset(Dataset):
         normalise: bool = True,
         stats_path: Path | None = None,
         split: str | None = None,
-        split_ratio: float = 0.9,
+        split_ratio: float | None = None,
+        split_ratios: list[float] | None = None,
         split_seed: int = 42,
         transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         self.latent_dir = Path(latent_dir)
         self.normalise = normalise
         self.transform = transform
+        self._split_info: dict | None = None
+
+        # Resolve split_ratios from either new or legacy parameter
+        if split_ratios is not None:
+            resolved_ratios = list(split_ratios)
+        elif split_ratio is not None:
+            logger.warning(
+                "split_ratio is deprecated; use split_ratios=[%.2f, %.2f] instead",
+                split_ratio,
+                1.0 - split_ratio,
+            )
+            resolved_ratios = [split_ratio, 1.0 - split_ratio]
+        else:
+            resolved_ratios = [0.85, 0.10, 0.05]
 
         # Discover shards and build global index
         shard_paths = discover_shards(self.latent_dir)
@@ -149,27 +263,31 @@ class LatentDataset(Dataset):
         if not all_entries:
             raise FileNotFoundError(f"No written samples found in shards at {self.latent_dir}")
 
-        # Apply train/val split if requested — split by SUBJECT to avoid
-        # data leakage (same subject's multiple scans in both train and val)
+        # Apply split if requested — split by SUBJECT to avoid
+        # data leakage (same subject's multiple scans in both splits)
         if split is not None:
-            if split not in ("train", "val"):
-                raise ValueError(f"split must be 'train', 'val', or None; got '{split}'")
-            subject_to_indices = _build_subject_index(all_entries)
-            subjects = sorted(subject_to_indices.keys())
-            random.Random(split_seed).shuffle(subjects)
-            n_train_subj = int(len(subjects) * split_ratio)
-            if split == "train":
-                chosen = set(subjects[:n_train_subj])
-            else:
-                chosen = set(subjects[n_train_subj:])
+            valid_splits = ["train", "val", "test", "extra"][: len(resolved_ratios)]
+            if split not in valid_splits:
+                raise ValueError(f"split must be one of {valid_splits} or None; got '{split}'")
+            subject_to_indices, subject_to_dataset = _build_subject_index(all_entries)
+            split_groups = _stratified_subject_split(
+                subject_to_indices, subject_to_dataset, resolved_ratios, split_seed
+            )
+            chosen = split_groups[split]
             selected = sorted(idx for subj in chosen for idx in subject_to_indices[subj])
             self._entries = [all_entries[i] for i in selected]
+
+            # Build split_info for all splits
+            self._split_info = _compute_split_info(
+                split_groups, subject_to_indices, subject_to_dataset
+            )
+
             logger.info(
-                "LatentDataset: %d files from %d subjects (%s split, ratio=%.2f, seed=%d)",
+                "LatentDataset: %d files from %d subjects (%s split, ratios=%s, seed=%d)",
                 len(self._entries),
                 len(chosen),
                 split,
-                split_ratio,
+                resolved_ratios,
                 split_seed,
             )
         else:
@@ -216,6 +334,16 @@ class LatentDataset(Dataset):
     def norm_std(self) -> torch.Tensor | None:
         """Per-channel std used for normalisation, shape ``(C, 1, 1, 1)``."""
         return self._norm_std
+
+    @property
+    def split_info(self) -> dict | None:
+        """Per-split, per-dataset subject and scan counts.
+
+        Only available when a split was requested. Returns a dict with
+        entries for each split (train, val, test), each containing
+        ``n_subjects``, ``n_scans``, and ``per_dataset`` breakdown.
+        """
+        return self._split_info
 
     def _get_h5_handle(self, shard_path: Path) -> h5py.File:
         """Get or lazily open an HDF5 file handle for a shard.

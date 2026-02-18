@@ -7,47 +7,6 @@ paths:
   samples_dir: "${paths.results_root}/ablations/v3_aug/samples"
   diagnostics_dir: "${paths.results_root}/ablations/v3_aug/diagnostics"
 
-# --- Multi-GPU DDP ---
-trainer:
-  devices: 2
-  strategy: ddp
-  accelerator: gpu
-
-# --- Training overrides for A100 ---
 training:
-  batch_size: 16                    # per-GPU; proven safe on A100 40GB
-  num_workers: 16                   # 128 cores / 8 GPUs = 16 per GPU
-  prefetch_factor: 4
-  accumulate_grad_batches: 4        # effective batch = 16 × 2 × 4 = 128
-  log_every_n_steps: 10             # ~9 steps/epoch → log ~every epoch
-  divergence_threshold: 0.0        # halt if raw_loss > 10× min raw loss
-  divergence_grace_steps: 100      # skip early unstable steps
   augmentation:
     enabled: true
-
-# --- UNet: enable flash attention (safe with FD-JVP) ---
-unet:
-  use_flash_attention: true         # FD-JVP does regular forward passes, no torch.func
-  gradient_checkpointing: true      # essential for 40 GB VRAM
-
-# --- JVP: finite difference (required with gradient checkpointing) ---
-meanflow:
-  jvp_strategy: finite_difference
-
-# --- Diagnostics: always on for Picasso runs ---
-diagnostics:
-  enabled: true
-  every_n_epochs: 25
-
-# --- Sample collection ---
-sample_collector:
-  enabled: true
-  collect_every_n_epochs: 25
-  n_samples: 8
-  nfe_steps: [1, 2, 5, 10]
-  seed: 42
-
-# --- VAE: A100 can decode without memory splits ---
-vae:
-  norm_float16: true
-  num_splits: 1

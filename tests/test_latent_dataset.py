@@ -433,7 +433,7 @@ def test_subject_level_split_no_leakage(tmp_path: Path) -> None:
         }
     (tmp_path / "latent_stats.json").write_text(json.dumps(stats))
 
-    # Create train and val splits
+    # Create train and val splits (2-way via split_ratio backward compat)
     train_ds = LatentDataset(
         tmp_path, normalise=False, split="train", split_ratio=0.6, split_seed=42
     )
@@ -490,3 +490,301 @@ def test_subject_key_extraction() -> None:
     key_a = _extract_subject_key("PT001_OASIS1", "sub_001")
     key_b = _extract_subject_key("PT005_IXI", "sub_001")
     assert key_a != key_b, "Same subject_id in different datasets should have different keys"
+
+
+# ---------------------------------------------------------------------------
+# Helper for multi-shard test setup (used by T13-T16)
+# ---------------------------------------------------------------------------
+
+
+def _create_multi_dataset_shards(
+    tmp_path: Path,
+    n_channels: int = 4,
+    spatial: int = 8,
+) -> None:
+    """Create 3 mock shards simulating 3 FOMO-60K datasets.
+
+    Layout (20 subjects, 28 scans total):
+    - DS_ALPHA: 8 subjects (sub_a0..a7), 12 scans (a0-a3 have 2 scans each, a4-a7 have 1)
+    - DS_BETA:  7 subjects (sub_b0..b6), 9 scans (b0-b1 have 2 scans each, b2-b6 have 1)
+    - DS_GAMMA: 5 subjects (sub_g0..g4), 7 scans (g0-g1 have 2 scans each, g2-g4 have 1)
+    """
+    # DS_ALPHA: 8 subjects, 12 scans
+    alpha_sids = (
+        ["sub_a0"] * 2
+        + ["sub_a1"] * 2
+        + ["sub_a2"] * 2
+        + ["sub_a3"] * 2
+        + ["sub_a4", "sub_a5", "sub_a6", "sub_a7"]
+    )
+    _create_mock_shard(
+        tmp_path / "DS_ALPHA.h5",
+        n_vols=12,
+        n_ch=n_channels,
+        spatial=spatial,
+        dataset_name="DS_ALPHA",
+        subject_ids=alpha_sids,
+    )
+
+    # DS_BETA: 7 subjects, 9 scans
+    beta_sids = ["sub_b0"] * 2 + ["sub_b1"] * 2 + ["sub_b2", "sub_b3", "sub_b4", "sub_b5", "sub_b6"]
+    _create_mock_shard(
+        tmp_path / "DS_BETA.h5",
+        n_vols=9,
+        n_ch=n_channels,
+        spatial=spatial,
+        dataset_name="DS_BETA",
+        subject_ids=beta_sids,
+    )
+
+    # DS_GAMMA: 5 subjects, 7 scans
+    gamma_sids = ["sub_g0"] * 2 + ["sub_g1"] * 2 + ["sub_g2", "sub_g3", "sub_g4"]
+    _create_mock_shard(
+        tmp_path / "DS_GAMMA.h5",
+        n_vols=7,
+        n_ch=n_channels,
+        spatial=spatial,
+        dataset_name="DS_GAMMA",
+        subject_ids=gamma_sids,
+    )
+
+    # Create mock latent_stats.json
+    stats = {
+        "n_files": 28,
+        "n_voxels_per_channel": 28 * spatial**3,
+        "per_channel": {},
+        "cross_channel_correlation": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    }
+    for c in range(n_channels):
+        stats["per_channel"][f"channel_{c}"] = {
+            "mean": 0.0,
+            "std": 1.0,
+            "skewness": 0.0,
+            "kurtosis": 0.0,
+            "min": -3.0,
+            "max": 3.0,
+        }
+    (tmp_path / "latent_stats.json").write_text(json.dumps(stats))
+
+
+def _collect_subjects(ds: LatentDataset) -> set[str]:
+    """Extract subject keys from a dataset."""
+    subjects = set()
+    for i in range(len(ds)):
+        meta = ds[i]["metadata"]
+        subjects.add(f"{meta['dataset']}_{meta['subject_id']}")
+    return subjects
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 tests: 3-way stratified split (P4-T13 through P4-T19)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4_T13_three_way_split_no_leakage(tmp_path: Path) -> None:
+    """Zero subject overlap between train/val/test; all samples accounted for."""
+    _create_multi_dataset_shards(tmp_path)
+
+    ratios = [0.6, 0.2, 0.2]
+    seed = 42
+    train_ds = LatentDataset(
+        tmp_path, normalise=False, split="train", split_ratios=ratios, split_seed=seed
+    )
+    val_ds = LatentDataset(
+        tmp_path, normalise=False, split="val", split_ratios=ratios, split_seed=seed
+    )
+    test_ds = LatentDataset(
+        tmp_path, normalise=False, split="test", split_ratios=ratios, split_seed=seed
+    )
+
+    train_subj = _collect_subjects(train_ds)
+    val_subj = _collect_subjects(val_ds)
+    test_subj = _collect_subjects(test_ds)
+
+    # Zero pairwise overlap
+    assert len(train_subj & val_subj) == 0, f"Train/val leakage: {train_subj & val_subj}"
+    assert len(train_subj & test_subj) == 0, f"Train/test leakage: {train_subj & test_subj}"
+    assert len(val_subj & test_subj) == 0, f"Val/test leakage: {val_subj & test_subj}"
+
+    # All samples accounted for
+    total = len(train_ds) + len(val_ds) + len(test_ds)
+    assert total == 28, f"Expected 28 total samples, got {total}"
+
+    # All subjects accounted for
+    all_subjects = train_subj | val_subj | test_subj
+    assert len(all_subjects) == 20, f"Expected 20 subjects, got {len(all_subjects)}"
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4_T14_stratified_split_proportional(tmp_path: Path) -> None:
+    """Each dataset proportionally represented in each split."""
+    _create_multi_dataset_shards(tmp_path)
+
+    ratios = [0.6, 0.2, 0.2]
+    seed = 42
+
+    # Collect subjects per split
+    splits = {}
+    for split_name in ("train", "val", "test"):
+        ds = LatentDataset(
+            tmp_path,
+            normalise=False,
+            split=split_name,
+            split_ratios=ratios,
+            split_seed=seed,
+        )
+        subj = _collect_subjects(ds)
+        splits[split_name] = subj
+
+    # Check each dataset has subjects in every split
+    for ds_prefix in ("DS_ALPHA", "DS_BETA", "DS_GAMMA"):
+        for split_name in ("train", "val", "test"):
+            ds_subjects = {s for s in splits[split_name] if s.startswith(ds_prefix)}
+            assert len(ds_subjects) > 0, f"{ds_prefix} has no subjects in {split_name} split"
+
+    # Check train split has most subjects from each dataset
+    for ds_prefix in ("DS_ALPHA", "DS_BETA", "DS_GAMMA"):
+        train_count = len({s for s in splits["train"] if s.startswith(ds_prefix)})
+        val_count = len({s for s in splits["val"] if s.startswith(ds_prefix)})
+        test_count = len({s for s in splits["test"] if s.startswith(ds_prefix)})
+        assert train_count >= val_count, f"{ds_prefix}: train ({train_count}) < val ({val_count})"
+        assert train_count >= test_count, (
+            f"{ds_prefix}: train ({train_count}) < test ({test_count})"
+        )
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4_T15_split_deterministic(tmp_path: Path) -> None:
+    """Same seed -> identical splits."""
+    _create_multi_dataset_shards(tmp_path)
+
+    ratios = [0.6, 0.2, 0.2]
+    for split_name in ("train", "val", "test"):
+        ds1 = LatentDataset(
+            tmp_path,
+            normalise=False,
+            split=split_name,
+            split_ratios=ratios,
+            split_seed=123,
+        )
+        ds2 = LatentDataset(
+            tmp_path,
+            normalise=False,
+            split=split_name,
+            split_ratios=ratios,
+            split_seed=123,
+        )
+        subj1 = _collect_subjects(ds1)
+        subj2 = _collect_subjects(ds2)
+        assert subj1 == subj2, f"{split_name} split not deterministic: {subj1 ^ subj2}"
+        assert len(ds1) == len(ds2)
+
+    # Different seed -> different splits
+    ds_a = LatentDataset(
+        tmp_path,
+        normalise=False,
+        split="train",
+        split_ratios=ratios,
+        split_seed=42,
+    )
+    ds_b = LatentDataset(
+        tmp_path,
+        normalise=False,
+        split="train",
+        split_ratios=ratios,
+        split_seed=999,
+    )
+    subj_a = _collect_subjects(ds_a)
+    subj_b = _collect_subjects(ds_b)
+    assert subj_a != subj_b, "Different seeds should produce different splits"
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
+def test_P4_T16_backward_compat_split_ratio(tmp_path: Path) -> None:
+    """Old scalar split_ratio still works (backward compatibility)."""
+    _create_multi_dataset_shards(tmp_path)
+
+    # Old API: split_ratio=0.7 should produce 2-way train/val
+    train_ds = LatentDataset(
+        tmp_path, normalise=False, split="train", split_ratio=0.7, split_seed=42
+    )
+    val_ds = LatentDataset(tmp_path, normalise=False, split="val", split_ratio=0.7, split_seed=42)
+
+    train_subj = _collect_subjects(train_ds)
+    val_subj = _collect_subjects(val_ds)
+
+    assert len(train_subj & val_subj) == 0, "Leakage in backward-compat split"
+    assert len(train_ds) + len(val_ds) == 28
+    # Train should have more subjects than val
+    assert len(train_subj) > len(val_subj)
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4_T17_safe_augmentation_pipeline(tmp_path: Path) -> None:
+    """Pipeline creates correct transforms from nested config."""
+    from neuromf.data.latent_augmentation import build_latent_augmentation
+
+    config = {
+        "enabled": True,
+        "transforms": {
+            "flip_d": {"prob": 0.5},
+            "gaussian_noise": {"prob": 0.2, "std_fraction": 0.05},
+            "intensity_scale": {"prob": 0.2, "factors": 0.05},
+        },
+    }
+
+    pipeline = build_latent_augmentation(config)
+    assert pipeline is not None
+
+    # Verify it applies to a tensor without error
+    z = torch.randn(4, 8, 8, 8)
+    z_aug = pipeline(z)
+    assert z_aug.shape == z.shape
+    assert z_aug.dtype == z.dtype
+
+    # Verify disabled transforms are not included
+    config_minimal = {
+        "enabled": True,
+        "transforms": {
+            "flip_d": {"prob": 0.5},
+        },
+    }
+    pipeline_min = build_latent_augmentation(config_minimal)
+    assert pipeline_min is not None
+    # Only 1 transform (flip_d)
+    assert len(pipeline_min.transforms) == 1
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4_T18_deprecated_aug_config_raises() -> None:
+    """Old flat config raises ValueError with migration instructions."""
+    from neuromf.data.latent_augmentation import build_latent_augmentation
+
+    old_config = {
+        "enabled": True,
+        "flip_prob": 0.5,
+        "flip_axes": [0, 1, 2],
+    }
+    with pytest.raises(ValueError, match="Deprecated flat augmentation"):
+        build_latent_augmentation(old_config)
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
+def test_P4_T19_aug_disabled_returns_none() -> None:
+    """enabled: false -> None."""
+    from neuromf.data.latent_augmentation import build_latent_augmentation
+
+    config = {"enabled": False, "transforms": {"flip_d": {"prob": 0.5}}}
+    assert build_latent_augmentation(config) is None
+
+    # Also None when enabled but no transforms
+    config_empty = {"enabled": True, "transforms": {}}
+    assert build_latent_augmentation(config_empty) is None

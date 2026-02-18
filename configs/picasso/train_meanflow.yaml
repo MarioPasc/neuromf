@@ -1,5 +1,5 @@
 # Picasso A100 40GB overrides for Phase 4 training
-# Merged on top of: picasso/base.yaml → configs/train_meanflow.yaml → this file
+# Merged on top of: picasso/base.yaml -> configs/train_meanflow.yaml -> this file
 #
 # Only contains values that DIFFER from configs/train_meanflow.yaml.
 # Everything else (betas, lr_schedule, data_proportion, norm_eps, etc.)
@@ -14,10 +14,9 @@
 #   Activations: ~15-20 GB with gradient checkpointing + bf16
 #   Headroom: ~17-20 GB for peaks and fragmentation
 #
-# Effective batch = batch_size × devices × accumulate = 16 × 2 × 4 = 128
+# Effective batch = batch_size x devices x accumulate = 16 x 2 x 4 = 128
 # With data_proportion=0.75: ~96 FM samples + 32 MF samples per update
-# Optimizer steps per epoch ≈ ceil(1117/2/16) / 4 ≈ 8-9
-# Total optimizer steps ≈ 500 × 9 = 4500
+# ~5,500 train scans -> ~43 steps/epoch -> ~12,900 total steps at 300 epochs
 
 # --- Picasso paths ---
 paths:
@@ -39,10 +38,10 @@ training:
   batch_size: 16                    # per-GPU; proven safe on A100 40GB
   num_workers: 16                   # 128 cores / 8 GPUs = 16 per GPU
   prefetch_factor: 4
-  accumulate_grad_batches: 4        # effective batch = 16 × 2 × 4 = 128
-  log_every_n_steps: 10             # ~9 steps/epoch → log ~every epoch
-  divergence_threshold: 100.0        # halt if raw_loss > 10× min raw loss
-  divergence_grace_steps: 100      # skip early unstable steps
+  accumulate_grad_batches: 4        # effective batch = 16 x 2 x 4 = 128
+  log_every_n_steps: 10             # ~43 steps/epoch -> log ~every 4 epochs
+  divergence_threshold: 100.0       # halt if raw_loss > 100x min raw loss
+  divergence_grace_steps: 100       # skip early unstable steps
   augmentation:
     enabled: false                   # Phase B OFF for v2
 
@@ -63,7 +62,7 @@ diagnostics:
 # --- Sample collection ---
 sample_collector:
   enabled: true
-  collect_every_n_epochs: 25
+  collect_every_n_epochs: 15
   n_samples: 8
   nfe_steps: [1, 2, 5, 10]
   seed: 42
