@@ -305,6 +305,7 @@ class MeanFlowPipeline(nn.Module):
                     z_t=z_t,
                 )
             )
+            result.update(self._decompose_jvp(u_fn, z_t, t, r, u, v_tilde))
 
         return result
 
@@ -386,6 +387,9 @@ class MeanFlowPipeline(nn.Module):
             result["diag_cosine_sim_v_vc"] = cos_sim_v_vc.mean()
             result["diag_raw_loss_u_per_sample"] = raw_loss_u.detach().mean()
             result["diag_raw_loss_v_per_sample"] = raw_loss_v.detach().mean()
+            # JVP decomposition (uses u-only wrapper around dual_fn)
+            u_only_fn = lambda z, t_, r_: dual_fn(z, t_, r_)[0]
+            result.update(self._decompose_jvp(u_only_fn, z_t, t, r, u, v_tangent))
 
         return result
 
@@ -504,3 +508,69 @@ class MeanFlowPipeline(nn.Module):
             diag["diag_u_pred_max"] = u.detach().max()
 
         return diag
+
+    @torch.no_grad()
+    def _decompose_jvp(
+        self,
+        u_fn,
+        z_t: Tensor,
+        t: Tensor,
+        r: Tensor,
+        u: Tensor,
+        v_tilde: Tensor,
+    ) -> dict[str, Tensor]:
+        """Decompose JVP into spatial and temporal components via finite differences.
+
+        For MF samples only (r < t). Computes:
+        - Temporal: ``(u(z, t+h, r) - u(z, t, r)) / h`` (pure ``∂u/∂t``)
+        - Spatial: ``(u(z + h*v, t, r) - u(z, t, r)) / h`` (pure ``∂u/∂z · v``)
+        - Full: ``(u(z + h*v, t+h, r) - u(z, t, r)) / h`` (= temporal + spatial)
+
+        Requires 2 extra forward passes (only called when diagnostics enabled).
+
+        Args:
+            u_fn: Callable ``(z, t, r) -> u``.
+            z_t: Noisy data ``(B, C, ...)``.
+            t: Upper time ``(B,)``.
+            r: Lower time ``(B,)``.
+            u: Pre-computed ``u(z_t, t, r)`` (avoids recomputation).
+            v_tilde: Tangent vector used for the JVP.
+
+        Returns:
+            Dict with ``diag_jvp_temporal_norm``, ``diag_jvp_spatial_norm``,
+            ``diag_jvp_temporal_frac`` keys.
+        """
+        h_fd = 1e-3  # FD step size for decomposition
+        mf_mask = (t - r) > 1e-6
+        if not mf_mask.any():
+            _zero = torch.tensor(0.0, device=z_t.device)
+            return {
+                "diag_jvp_temporal_norm": _zero,
+                "diag_jvp_spatial_norm": _zero,
+                "diag_jvp_temporal_frac": _zero,
+            }
+
+        z_mf = z_t[mf_mask].detach()
+        t_mf = t[mf_mask].detach()
+        r_mf = r[mf_mask].detach()
+        u_mf = u[mf_mask].detach().float()
+        v_mf = v_tilde[mf_mask].detach()
+
+        # Temporal: perturb t only
+        u_t_perturbed = u_fn(z_mf, t_mf + h_fd, r_mf).float()
+        temporal = (u_t_perturbed - u_mf) / h_fd
+
+        # Spatial: perturb z only
+        u_z_perturbed = u_fn(z_mf + h_fd * v_mf, t_mf, r_mf).float()
+        spatial = (u_z_perturbed - u_mf) / h_fd
+
+        temporal_norm = temporal.flatten(1).norm(dim=1).mean()
+        spatial_norm = spatial.flatten(1).norm(dim=1).mean()
+        total = temporal_norm + spatial_norm + 1e-8
+        temporal_frac = temporal_norm / total
+
+        return {
+            "diag_jvp_temporal_norm": temporal_norm,
+            "diag_jvp_spatial_norm": spatial_norm,
+            "diag_jvp_temporal_frac": temporal_frac,
+        }

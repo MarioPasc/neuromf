@@ -169,6 +169,9 @@ class TestDiagnostics:
 
         expected_diag_keys = {
             "diag_jvp_norm",
+            "diag_jvp_temporal_norm",
+            "diag_jvp_spatial_norm",
+            "diag_jvp_temporal_frac",
             "diag_u_norm",
             "diag_compound_v_norm",
             "diag_target_v_norm",

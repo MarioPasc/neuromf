@@ -8,17 +8,17 @@ NeuroMF trains a **MeanFlow** model in the latent space of a **frozen MAISI 3D V
 
 **Layer 2 — MeanFlow (the 1-step trick)**: Instead of instantaneous velocity v at time t, learn the average velocity u(z_t, r, t) over interval [r, t]. If you know the average velocity from t=0 to t=1, you can generate in 1 step: z_0 = noise - u(noise, 0, 1). But u must be self-consistent: the average over [r, t] must relate properly to averages over sub-intervals. This self-consistency is enforced via the compound velocity: V = u + (t-r) * stop_grad(du/dt), where du/dt comes from a JVP (Jacobian-vector product). Training: ||V - (eps - z_0)||^2.
 
-**Layer 3 — Improved MeanFlow / iMF**: Original MF computes the JVP using ground-truth velocity (eps - z_0) as the tangent direction. Problem: this makes V depend on data you don't have at inference. iMF says: use the model's own prediction v_tilde = u(z_t, t, t) as the tangent instead. Now V depends only on z_t — matching what happens at inference. This gives lower-variance gradients and stable loss curves (exactly what we just fixed in Phase 4d).
+**Layer 3 — Improved MeanFlow / iMF**: Original MF computes the JVP using ground-truth velocity (eps - z_0) as the tangent direction. Problem: this makes V depend on data you don't have at inference. iMF says: use the model's own prediction v_tilde = u(z_t, t, t) as the tangent instead. Now V depends only on z_t — matching what happens at inference. This gives lower-variance gradients and stable loss curves.
 
-**Layer 4 — x-prediction (pMF's trick, what we use):** Instead of predicting u directly, predict z_0 and convert: u = (z_t - z_0_hat) / t. More stable numerically.
+**Layer 4 — iMF Dual-Head (what we use):** The UNet has a shared backbone with two output heads: the u-head predicts the average velocity u, and a v-head (supervised with its own loss `||v - v_c||^p`) predicts the instantaneous velocity used as the JVP tangent. The v-head receives direct supervision toward the correct tangent, providing high-quality JVP tangents from early training — solving the MF loss divergence problem. The v-head is disabled at inference (zero cost). We use u-prediction (model directly outputs u) with FD-JVP and h-conditioning (condition on h=t-r, not separate r and t). Dual loss: `loss = loss_u_weighted + loss_v_weighted`, each independently adaptive-weighted.
 
 In summary, one training step does:
 1. Sample z_0 (data), eps (noise), t, r
 2. Interpolate: z_t = (1-t)z_0 + teps
-3. Forward pass 1: v_tilde = model(z_t, t, t) [no grad — tangent direction]
-4. Forward pass 2+3: JVP gives u and du/dt using v_tilde as tangent
+3. Forward pass 1: v_tangent = v_head(z_t, t, t) [no grad — tangent direction from v-head]
+4. Forward pass 2+3: JVP gives u and du/dt using v_tangent as tangent
 5. Compound velocity: V = u + (t-r)*stop_grad(du/dt)
-6. Loss: ||V - (eps - z_0)||^2 with adaptive weighting
+6. Loss: ||V - v_c||^p + ||v - v_c||^p with independent adaptive weighting
 
 ### Core Pipeline
 
@@ -40,7 +40,7 @@ Synthetic MRI (1×192³) ◄── Frozen MAISI VAE Decoder ◄─┘
 
 ### MeanFlow in One Paragraph
 
-MeanFlow learns the **average velocity** `u(z_t, t, r)` instead of the instantaneous velocity `v(z_t, t)`. The MeanFlow Identity enforces self-consistency via a JVP (Jacobian-vector product). At inference, a single forward pass produces a sample: `z_0 = eps - u_θ(eps, 0, 1)`. Training uses the iMF combined loss with adaptive weighting. The pMF extension adds x-prediction reparameterization and perceptual auxiliary losses.
+MeanFlow learns the **average velocity** `u(z_t, t, r)` instead of the instantaneous velocity `v(z_t, t)`. The MeanFlow Identity enforces self-consistency via a JVP (Jacobian-vector product). At inference, a single forward pass produces a sample: `z_0 = eps - u_θ(eps, 0, 1)`. Training uses the iMF dual-head architecture: a u-head for the compound velocity loss and a v-head that provides the JVP tangent (disabled at inference). Both losses are independently adaptive-weighted.
 
 ---
 

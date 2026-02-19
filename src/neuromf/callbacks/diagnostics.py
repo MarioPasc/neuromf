@@ -124,6 +124,11 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_v_head_norms: list[float] = []
         self._epoch_cosine_v_vc: list[float] = []
 
+        # JVP decomposition accumulators
+        self._epoch_jvp_temporal_norms: list[float] = []
+        self._epoch_jvp_spatial_norms: list[float] = []
+        self._epoch_jvp_temporal_fracs: list[float] = []
+
         # Parameter snapshot for relative update norm
         self._param_snapshot: dict[str, torch.Tensor] = {}
 
@@ -251,6 +256,18 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 pl_module.log(f"train/meanflow/{short}", val)
                 acc.append(val)
 
+        # JVP decomposition diagnostics — log and accumulate
+        for key, acc in (
+            ("diag_jvp_temporal_norm", self._epoch_jvp_temporal_norms),
+            ("diag_jvp_spatial_norm", self._epoch_jvp_spatial_norms),
+            ("diag_jvp_temporal_frac", self._epoch_jvp_temporal_fracs),
+        ):
+            if key in diag:
+                val = float(diag[key])
+                short = key.replace("diag_", "")
+                pl_module.log(f"train/meanflow/{short}", val)
+                acc.append(val)
+
         # v-head diagnostics — log and accumulate
         if "raw_loss_u" in diag:
             val_u = float(diag["raw_loss_u"])
@@ -356,6 +373,9 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_raw_loss_v.clear()
         self._epoch_v_head_norms.clear()
         self._epoch_cosine_v_vc.clear()
+        self._epoch_jvp_temporal_norms.clear()
+        self._epoch_jvp_spatial_norms.clear()
+        self._epoch_jvp_temporal_fracs.clear()
 
     def on_train_epoch_end(
         self,
@@ -488,6 +508,17 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 "std": sum(self._epoch_u_pred_stds) / len(self._epoch_u_pred_stds),
                 "min": min(self._epoch_u_pred_mins),
                 "max": max(self._epoch_u_pred_maxs),
+            }
+
+        # --- JVP decomposition (spatial vs temporal) ---
+        if self._epoch_jvp_temporal_norms:
+            summary["jvp_decomposition"] = {
+                "temporal_norm": sum(self._epoch_jvp_temporal_norms)
+                / len(self._epoch_jvp_temporal_norms),
+                "spatial_norm": sum(self._epoch_jvp_spatial_norms)
+                / len(self._epoch_jvp_spatial_norms),
+                "temporal_frac": sum(self._epoch_jvp_temporal_fracs)
+                / len(self._epoch_jvp_temporal_fracs),
             }
 
         # --- v-head metrics (dual-head mode) ---

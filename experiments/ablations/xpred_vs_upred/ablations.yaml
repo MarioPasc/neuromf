@@ -37,3 +37,7 @@ ablations:
     jvp_strategy: finite_difference
     gradient_checkpointing: true
     effective_batch: 128  # 16 x 2 x 4
+
+# Shared settings inherited from Picasso overlay (NOT overridden per arm):
+#   use_v_head: true, v_head_num_res_blocks: 1, conditioning_mode: h
+# Both arms use the iMF dual-head architecture for JVP tangent quality.

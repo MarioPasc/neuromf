@@ -1,8 +1,8 @@
 # Ablation: x-Prediction vs. u-Prediction (with JVP/Checkpointing Tradeoff)
 
 **Phase:** Pre-Phase 6 — Critical Design Decision
-**Hardware:** Picasso A100 40GB, single GPU per arm
-**Max wall time:** 7 days per arm (Picasso limit)
+**Hardware:** Picasso A100 40GB, multi-GPU DDP per arm
+**Max wall time:** 5 days (x-pred) / 3 days (u-pred)
 
 ---
 
@@ -27,25 +27,34 @@ In PyTorch, `torch.func.jvp` (exact forward-mode AD) is incompatible with
 `torch.utils.checkpoint.checkpoint` (activation checkpointing). This forces a
 practical tradeoff:
 
-| Arm | Prediction | JVP method | Grad checkpoint | Flash attention | Batch/GPU | GPUs | Accum | Eff. batch |
-|-----|-----------|------------|----------------|----------------|-----------|------|-------|------------|
-| **A** | x-pred | Exact (`torch.func.jvp`) | OFF | OFF | 2 | 4 | 16 | 128 |
-| **B** | u-pred | FD ($h=10^{-3}$, fp32 sub) | ON | ON | 16 | 2 | 4 | 128 |
+| Arm | Prediction | JVP method | Grad checkpoint | Flash attention | v-head | h-cond | Batch/GPU | GPUs | Accum | Eff. batch |
+|-----|-----------|------------|----------------|----------------|--------|--------|-----------|------|-------|------------|
+| **A** | x-pred | Exact (`torch.func.jvp`) | OFF | OFF | ON | ON | 2 | 4 | 16 | 128 |
+| **B** | u-pred | FD ($h=10^{-3}$, fp32 sub) | ON | ON | ON | ON | 16 | 2 | 4 | 128 |
+
+Both arms use the iMF dual-head architecture (`use_v_head=true`, `conditioning_mode=h`,
+`v_head_num_res_blocks=1`) inherited from the Picasso overlay. The v-head provides the
+JVP tangent in both arms — this isolates the prediction type + JVP method as the primary
+variable while keeping tangent quality consistent.
 
 Both arms use `accumulate_grad_batches` to match the same effective batch size
-of 128. Arm A requires 4 GPUs because `batch_size=4` OOMs on A100 40GB without
-gradient checkpointing (exact JVP doubles activation memory); `batch_size=2`
-with 4 GPUs fits within budget.
+of 128. Arm A requires 4 GPUs because `batch_size=2` is needed on A100 40GB without
+gradient checkpointing (exact JVP doubles activation memory).
 
 ## Confounds and Interpretation
 
-This ablation conflates prediction type with memory strategy. If Arm A wins,
-we know x-prediction provides sufficient quality gain to justify the memory
-cost. If Arm B wins, we adopt u-pred + FD-JVP as the production configuration,
-consistent with our current Phase 4 setup.
+This ablation conflates prediction type with JVP method and memory strategy:
+- Arm A: x-pred + exact JVP + no grad checkpointing + no flash attention
+- Arm B: u-pred + FD-JVP + grad checkpointing + flash attention
 
-A clean disentanglement (x-pred + FD-JVP or u-pred + exact JVP) is possible
-but would require additional runs and is deferred to Phase 6.
+The v-head and h-conditioning are held constant across both arms. If Arm A
+wins, we know x-prediction provides sufficient quality gain to justify the
+memory cost. If Arm B wins, we adopt u-pred + FD-JVP as the production
+configuration.
+
+Note: x-pred + FD-JVP is known to be numerically unstable (1/t amplification
+in finite differences, see Phase 4f). A clean disentanglement is deferred to
+Phase 6.
 
 ## Expected Outcome
 

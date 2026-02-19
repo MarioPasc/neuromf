@@ -26,6 +26,7 @@ unet:
   t_min: 0.05
   gradient_checkpointing: true
   use_v_head: false
+  v_head_num_res_blocks: 0         # 0=projection only (~7K), 1=+ResBlock (~228K)
   conditioning_mode: dual
 
 # Training

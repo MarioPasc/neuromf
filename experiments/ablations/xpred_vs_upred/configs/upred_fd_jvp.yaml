@@ -2,6 +2,10 @@
 #
 # Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
 #
+# Inherits from Picasso overlay (intentionally not overridden):
+#   use_v_head: true, v_head_num_res_blocks: 1, conditioning_mode: h
+#   The v-head provides JVP tangent quality; held constant across ablation arms.
+#
 # This arm uses the current default config (u-prediction was chosen because
 # x-pred + FD-JVP is unstable). FD-JVP allows gradient checkpointing and
 # flash attention, enabling larger batch sizes per GPU.

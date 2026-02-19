@@ -50,6 +50,7 @@ unet:
   use_flash_attention: true         # FD-JVP does regular forward passes, no torch.func
   gradient_checkpointing: true      # essential for 40 GB VRAM
   use_v_head: true                  # iMF dual-head: v-head provides JVP tangent
+  v_head_num_res_blocks: 1          # 1 ResBlock for non-trivial v-head capacity
   conditioning_mode: h              # iMF convention: condition on h=t-r only
 
 # --- JVP: finite difference (required with gradient checkpointing), v-head loss ---

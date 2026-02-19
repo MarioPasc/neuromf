@@ -84,6 +84,7 @@ class MAISIUNetConfig:
     prediction_type: str = "x"
     t_min: float = 0.05
     use_v_head: bool = False
+    v_head_num_res_blocks: int = 0  # 0=projection only (~7K), 1+=ResBlocks (~221K each)
     conditioning_mode: str = "dual"  # "dual" for (r, t), "h" for h=t-r
 
     @classmethod
@@ -124,6 +125,7 @@ class MAISIUNetConfig:
             prediction_type=str(u.get("prediction_type", "x")),
             t_min=float(u.get("t_min", 0.05)),
             use_v_head=bool(u.get("use_v_head", False)),
+            v_head_num_res_blocks=int(u.get("v_head_num_res_blocks", 0)),
             conditioning_mode=str(u.get("conditioning_mode", "dual")),
         )
 
@@ -200,6 +202,39 @@ def _ckpt_up_block_forward(
     )
 
 
+class _VHeadResBlock(nn.Module):
+    """Residual block for the v-head auxiliary output path.
+
+    Provides a non-trivial nonlinear transformation of the shared backbone
+    features before the final velocity projection. Each block adds ~221K
+    params for ``channels=64, norm_num_groups=32``.
+
+    Args:
+        channels: Number of input/output channels.
+        norm_num_groups: Groups for GroupNorm.
+    """
+
+    def __init__(self, channels: int, norm_num_groups: int) -> None:
+        super().__init__()
+        self.norm1 = nn.GroupNorm(norm_num_groups, channels)
+        self.act1 = nn.SiLU()
+        self.conv1 = nn.Conv3d(channels, channels, 3, padding=1)
+        self.norm2 = nn.GroupNorm(norm_num_groups, channels)
+        self.act2 = nn.SiLU()
+        self.conv2 = nn.Conv3d(channels, channels, 3, padding=1)
+        # Zero-init second conv (pre-activation residual convention)
+        nn.init.zeros_(self.conv2.weight)
+        nn.init.zeros_(self.conv2.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Residual forward: x + conv2(act(norm2(conv1(act(norm1(x))))))."""
+        h = self.act1(self.norm1(x))
+        h = self.conv1(h)
+        h = self.act2(self.norm2(h))
+        h = self.conv2(h)
+        return x + h
+
+
 class MAISIUNetWrapper(nn.Module):
     """MAISI 3D UNet adapted for MeanFlow dual time conditioning.
 
@@ -248,14 +283,19 @@ class MAISIUNetWrapper(nn.Module):
 
         # v-head: parallel output block for instantaneous velocity prediction.
         # Shares the full UNet backbone; only the final projection differs.
-        # Zero-init so v-head starts at zero, leaving u-head unaffected.
+        # Zero-init final conv so v-head starts at zero, leaving u-head unaffected.
+        # Optional ResBlocks before the projection provide non-trivial capacity
+        # (iMF uses 8 Transformer layers; our ResBlock approximation is cheaper).
         if config.use_v_head:
             ch0 = config.channels[0]
-            self.v_out = nn.Sequential(
-                nn.GroupNorm(config.norm_num_groups, ch0),
-                nn.SiLU(),
-                nn.Conv3d(ch0, config.out_channels, 3, padding=1),
-            )
+            layers: list[nn.Module] = []
+            for _ in range(config.v_head_num_res_blocks):
+                layers.append(_VHeadResBlock(ch0, config.norm_num_groups))
+            layers.append(nn.GroupNorm(config.norm_num_groups, ch0))
+            layers.append(nn.SiLU())
+            layers.append(nn.Conv3d(ch0, config.out_channels, 3, padding=1))
+            self.v_out = nn.Sequential(*layers)
+            # Zero-init final projection conv
             nn.init.zeros_(self.v_out[-1].weight)
             nn.init.zeros_(self.v_out[-1].bias)
 

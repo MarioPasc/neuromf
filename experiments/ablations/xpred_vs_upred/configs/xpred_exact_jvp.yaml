@@ -2,6 +2,10 @@
 #
 # Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
 #
+# Inherits from Picasso overlay (intentionally not overridden):
+#   use_v_head: true, v_head_num_res_blocks: 1, conditioning_mode: h
+#   The v-head provides JVP tangent quality; held constant across ablation arms.
+#
 # Rationale: x-prediction may produce better samples when the data lives on a
 # structured low-dimensional manifold (MAISI VAE latent space). But x-pred
 # requires exact JVP (FD-JVP + x-pred is unstable due to 1/t amplification).
