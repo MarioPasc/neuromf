@@ -628,6 +628,47 @@ def test_P4g_T5_fd_jvp_v_head_tangent_bounded() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+def test_P4g_T5b_exact_jvp_v_head_dual_output() -> None:
+    """P4g-T5b: Exact JVP with v-head (compute_dual) produces finite loss.
+
+    Regression test: torch.func.jvp with has_aux=True returns 3 values
+    (primals_out, tangents_out, aux), not 2. This test ensures the
+    unpacking is correct for ExactJVP.compute_dual.
+    """
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="x", use_v_head=True)
+    model = MAISIUNetWrapper(config)
+    model.train()
+
+    pipeline = MeanFlowPipeline(
+        MeanFlowPipelineConfig(
+            p=2.0,
+            adaptive=True,
+            norm_eps=1.0,
+            prediction_type="x",
+            jvp_strategy="exact",
+            use_v_head=True,
+        )
+    )
+
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_0 = torch.randn(B, C, D, H, W)
+    eps = torch.randn(B, C, D, H, W)
+    t = torch.tensor([0.3, 0.8])
+    r = torch.tensor([0.1, 0.2])
+
+    result = pipeline(model, z_0, eps, t, r)
+
+    assert torch.isfinite(result["loss"]), f"Loss not finite: {result['loss'].item()}"
+    assert result["loss"].item() > 0
+    assert "raw_loss_u" in result
+    assert "raw_loss_v" in result
+    assert torch.isfinite(result["raw_loss_u"])
+    assert torch.isfinite(result["raw_loss_v"])
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
 def test_P4g_T6_h_conditioning() -> None:
     """P4g-T6: h-conditioning produces finite output."""
     torch.manual_seed(42)

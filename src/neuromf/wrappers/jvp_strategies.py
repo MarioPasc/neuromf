@@ -113,9 +113,8 @@ class ExactJVP:
             u, v = dual_fn(z, t_, r_)
             return u, v
 
-        (u, v), du_dt = torch.func.jvp(
-            _u_with_v_aux, (z_t, t, r), (v_tangent, dt, dr), has_aux=True
-        )
+        # has_aux=True returns (primals_out, tangents_out, aux) — 3 values
+        u, du_dt, v = torch.func.jvp(_u_with_v_aux, (z_t, t, r), (v_tangent, dt, dr), has_aux=True)
         V = _compound_velocity(u, du_dt, t, r, z_t)
         return u, V, v
 
