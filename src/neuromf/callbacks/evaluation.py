@@ -107,11 +107,14 @@ class EvaluationCallback(pl.Callback):
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
     ) -> None:
-        """Cache real validation latents and generate fixed noise (rank 0)."""
+        """Generate fixed noise tensors (rank 0 only).
+
+        Real latent caching is deferred to the first ``on_validation_epoch_end``
+        because ``trainer.val_dataloaders`` is not yet available during
+        ``on_fit_start`` in DDP.
+        """
         if not trainer.is_global_zero:
             return
-
-        self._cache_real_latents(trainer, pl_module)
 
         S = int(getattr(pl_module, "_latent_spatial", 48))
         C = int(getattr(pl_module, "_in_channels", 4))
@@ -121,8 +124,7 @@ class EvaluationCallback(pl.Callback):
         self._fid_noise = torch.randn(self._n_fid_samples, C, S, S, S, generator=gen)
 
         logger.info(
-            "EvaluationCallback: cached %d real latents, SWD noise=%d, FID noise=%d",
-            self._real_latents.shape[0] if self._real_latents is not None else 0,
+            "EvaluationCallback: SWD noise=%d, FID noise=%d (real latents cached on first val)",
             self._n_swd_samples,
             self._n_fid_samples,
         )
@@ -135,11 +137,18 @@ class EvaluationCallback(pl.Callback):
         """Run Tier 1 (SWD) every val epoch; Tier 2 (FID) periodically.
 
         Both tiers always run on the first validation epoch (baseline).
+        Real latent caching happens lazily on the first call (deferred from
+        ``on_fit_start`` for DDP compatibility).
         """
         if not trainer.is_global_zero:
             return
+
+        # Lazy-init: cache real latents on first val epoch
         if self._real_latents is None:
-            return
+            self._cache_real_latents(trainer, pl_module)
+            if self._real_latents is None:
+                logger.warning("Still no real latents after caching attempt; skipping eval")
+                return
 
         self._val_epoch_count += 1
         is_first = self._val_epoch_count == 1

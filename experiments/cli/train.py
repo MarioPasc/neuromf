@@ -548,17 +548,6 @@ def main() -> None:
             )
         )
 
-        # ModelCheckpoint for best FID
-        callbacks.append(
-            ModelCheckpoint(
-                dirpath=str(ckpt_dir),
-                monitor="val/fid_avg",
-                mode="min",
-                save_top_k=1,
-                filename="best_fid_{epoch:03d}_{val/fid_avg:.2f}",
-                save_last=False,
-            )
-        )
         logger.info(
             "Evaluation enabled (SWD every val, FID every %d val epochs, patience=%d)",
             eval_cfg.get("fid_every_n_val_epochs", 2),
