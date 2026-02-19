@@ -267,13 +267,17 @@ class MAISIUNetWrapper(nn.Module):
             with_conditioning=config.with_conditioning,
         )
 
-        # Parallel r-embedding MLP (same architecture as unet.time_embed)
-        time_embed_dim = config.channels[0] * 4
-        self.r_embed = nn.Sequential(
-            nn.Linear(config.channels[0], time_embed_dim),
-            nn.SiLU(),
-            nn.Linear(time_embed_dim, time_embed_dim),
-        )
+        # Parallel r-embedding MLP (same architecture as unet.time_embed).
+        # Only needed for dual (r, t) conditioning; h-conditioning uses a
+        # single embedding through unet.time_embed.  Skipping creation when
+        # conditioning_mode="h" avoids DDP unused-parameter errors.
+        if config.conditioning_mode != "h":
+            time_embed_dim = config.channels[0] * 4
+            self.r_embed = nn.Sequential(
+                nn.Linear(config.channels[0], time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, time_embed_dim),
+            )
 
         self.prediction_type = config.prediction_type
         self.t_min = config.t_min
