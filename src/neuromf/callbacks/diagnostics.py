@@ -545,6 +545,18 @@ class TrainingDiagnosticsCallback(pl.Callback):
         if val_raw is not None:
             summary["val_raw_loss"] = float(val_raw)
 
+        # --- Evaluation metrics (SWD + FID from EvaluationCallback) ---
+        val_swd = trainer.callback_metrics.get("val/swd")
+        if val_swd is not None:
+            summary["val_swd"] = float(val_swd)
+        val_fid_avg = trainer.callback_metrics.get("val/fid_avg")
+        if val_fid_avg is not None:
+            summary["val_fid_avg"] = float(val_fid_avg)
+            for plane in ("xy", "yz", "zx"):
+                fid_plane = trainer.callback_metrics.get(f"val/fid_{plane}")
+                if fid_plane is not None:
+                    summary[f"val_fid_{plane}"] = float(fid_plane)
+
         # --- Sampling stats ---
         if self._epoch_t_values:
             t_tensor = torch.tensor(self._epoch_t_values)

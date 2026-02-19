@@ -125,6 +125,20 @@ vae:
   scale_factor: 0.96240234375
   downsample_factor: 4
 
+# Evaluation (two-tier: SWD + 2.5D FID)
+evaluation:
+  enabled: false
+  n_swd_samples: 64
+  n_swd_projections: 128
+  n_real_cache: 200
+  n_fid_samples: 100
+  n_fid_real_samples: 200
+  fid_every_n_val_epochs: 2
+  center_slices_ratio: 0.6
+  fid_weights_path: ""
+  early_stop_patience: 5
+  seed: 42
+
 # Diagnostics
 diagnostics:
   enabled: false

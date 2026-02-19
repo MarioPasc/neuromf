@@ -107,6 +107,25 @@ class SampleCollectorCallback(pl.Callback):
             return
 
         self._collect_samples(pl_module, epoch, trainer.global_step)
+        self._last_collected_epoch = epoch
+
+    def on_fit_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+    ) -> None:
+        """Force a final sample collection if the last epoch was not collected.
+
+        Ensures the archive includes the final model state even when
+        training ends via early stopping at a non-collection epoch.
+        """
+        if not trainer.is_global_zero:
+            return
+        epoch = trainer.current_epoch
+        last = getattr(self, "_last_collected_epoch", -1)
+        if epoch != last:
+            logger.info("Final sample collection at epoch %d (early stop or end)", epoch)
+            self._collect_samples(pl_module, epoch, trainer.global_step)
 
     @torch.no_grad()
     def _collect_samples(

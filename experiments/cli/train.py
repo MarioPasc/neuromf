@@ -521,6 +521,50 @@ def main() -> None:
                 list(sample_cfg.get("nfe_steps", [1, 2, 5, 10])),
             )
 
+    # Evaluation callback (Tier 1: SWD, Tier 2: 2.5D FID)
+    eval_cfg = config.get("evaluation", {})
+    if eval_cfg.get("enabled", False):
+        from neuromf.callbacks.evaluation import EvaluationCallback
+
+        vae_cfg_dict = OmegaConf.to_container(config.vae, resolve=True)
+        vae_cfg_dict["weights_path"] = str(config.paths.get("maisi_vae_weights", ""))
+        eval_cache_dir = str(Path(config.paths.get("diagnostics_dir", "")) / "eval_cache")
+
+        callbacks.append(
+            EvaluationCallback(
+                n_swd_samples=int(eval_cfg.get("n_swd_samples", 64)),
+                n_swd_projections=int(eval_cfg.get("n_swd_projections", 128)),
+                n_real_cache=int(eval_cfg.get("n_real_cache", 200)),
+                n_fid_samples=int(eval_cfg.get("n_fid_samples", 100)),
+                n_fid_real_samples=int(eval_cfg.get("n_fid_real_samples", 200)),
+                fid_every_n_val_epochs=int(eval_cfg.get("fid_every_n_val_epochs", 2)),
+                center_slices_ratio=float(eval_cfg.get("center_slices_ratio", 0.6)),
+                fid_weights_path=str(eval_cfg.get("fid_weights_path", "")),
+                vae_config=vae_cfg_dict,
+                prediction_type=str(config.unet.prediction_type),
+                cache_dir=eval_cache_dir,
+                early_stop_patience=int(eval_cfg.get("early_stop_patience", 5)),
+                seed=int(eval_cfg.get("seed", 42)),
+            )
+        )
+
+        # ModelCheckpoint for best FID
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=str(ckpt_dir),
+                monitor="val/fid_avg",
+                mode="min",
+                save_top_k=1,
+                filename="best_fid_{epoch:03d}_{val/fid_avg:.2f}",
+                save_last=False,
+            )
+        )
+        logger.info(
+            "Evaluation enabled (SWD every val, FID every %d val epochs, patience=%d)",
+            eval_cfg.get("fid_every_n_val_epochs", 2),
+            eval_cfg.get("early_stop_patience", 5),
+        )
+
     # ------------------------------------------------------------------
     # Logger
     # ------------------------------------------------------------------
