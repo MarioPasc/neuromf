@@ -756,9 +756,10 @@ def generate_summary_report(
         ("JVP strategy", "Exact (`torch.func.jvp`)", "Finite Difference ($h=10^{-3}$)"),
         ("Gradient checkpointing", "OFF", "ON"),
         ("Flash attention", "OFF", "ON"),
-        ("Batch/GPU", "4", "16"),
+        ("Batch/GPU", "2", "16"),
+        ("GPUs", "4", "2"),
         ("Accumulate grad batches", "16", "4"),
-        ("Effective batch", "128", "128"),
+        ("Effective batch", "2x4x16=128", "16x2x4=128"),
     ]
 
     for label, val_x, val_u in settings:

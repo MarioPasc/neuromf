@@ -23,11 +23,11 @@ ablations:
   xpred_exact_jvp:
     description: "x-prediction + exact JVP (no gradient checkpointing, no flash attention)"
     config: configs/xpred_exact_jvp.yaml
-    n_gpus: 2
+    n_gpus: 4
     prediction_type: x
     jvp_strategy: exact
     gradient_checkpointing: false
-    effective_batch: 128  # 4 x 2 x 16
+    effective_batch: 128  # 2 x 4 x 16
 
   upred_fd_jvp:
     description: "u-prediction + FD-JVP (gradient checkpointing + flash attention)"

@@ -27,13 +27,15 @@ In PyTorch, `torch.func.jvp` (exact forward-mode AD) is incompatible with
 `torch.utils.checkpoint.checkpoint` (activation checkpointing). This forces a
 practical tradeoff:
 
-| Arm | Prediction | JVP method | Grad checkpoint | Flash attention | Batch/GPU |
-|-----|-----------|------------|----------------|----------------|-----------|
-| **A** | x-pred | Exact (`torch.func.jvp`) | OFF | OFF | 4 |
-| **B** | u-pred | FD ($h=10^{-3}$, fp32 sub) | ON | ON | 16 |
+| Arm | Prediction | JVP method | Grad checkpoint | Flash attention | Batch/GPU | GPUs | Accum | Eff. batch |
+|-----|-----------|------------|----------------|----------------|-----------|------|-------|------------|
+| **A** | x-pred | Exact (`torch.func.jvp`) | OFF | OFF | 2 | 4 | 16 | 128 |
+| **B** | u-pred | FD ($h=10^{-3}$, fp32 sub) | ON | ON | 16 | 2 | 4 | 128 |
 
 Both arms use `accumulate_grad_batches` to match the same effective batch size
-of 64. Both arms train on a single A100 GPU.
+of 128. Arm A requires 4 GPUs because `batch_size=4` OOMs on A100 40GB without
+gradient checkpointing (exact JVP doubles activation memory); `batch_size=2`
+with 4 GPUs fits within budget.
 
 ## Confounds and Interpretation
 
