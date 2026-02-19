@@ -433,14 +433,14 @@ def test_P4h_T12_on_fit_end_writes_summary() -> None:
 
 @pytest.mark.informational
 def test_P4h_T10_load_radimagenet_from_state_dict() -> None:
-    """load_radimagenet_resnet50 produces 2048-d output from local state dict."""
-    from torchvision.models import resnet50
+    """load_radimagenet_resnet50 produces (B, 2048, H', W') from local state dict."""
+    from radimagenet_models.models.resnet import ResNet50
 
-    from neuromf.metrics.fid import load_radimagenet_resnet50
+    from neuromf.metrics.fid import _spatial_average, load_radimagenet_resnet50
 
     with tempfile.NamedTemporaryFile(suffix=".pt") as f:
-        # Save a random ResNet-50 state dict
-        model = resnet50(weights=None)
+        # Save a random Keras-style ResNet-50 state dict
+        model = ResNet50()
         torch.save(model.state_dict(), f.name)
 
         # Load via our function
@@ -450,5 +450,38 @@ def test_P4h_T10_load_radimagenet_from_state_dict() -> None:
         dummy = torch.randn(2, 3, 64, 64)
         with torch.no_grad():
             out = feat_net(dummy)
+            pooled = _spatial_average(out)
 
-        assert out.shape == (2, 2048), f"Expected (2, 2048), got {out.shape}"
+        assert out.shape[1] == 2048, f"Expected 2048 channels, got {out.shape[1]}"
+        assert pooled.shape == (2, 2048), f"Expected (2, 2048), got {pooled.shape}"
+
+
+@pytest.mark.informational
+def test_P4h_T13_load_radimagenet_offline() -> None:
+    """load_radimagenet_resnet50 works without internet access (Picasso offline)."""
+    import socket
+
+    from radimagenet_models.models.resnet import ResNet50
+
+    from neuromf.metrics.fid import _spatial_average, load_radimagenet_resnet50
+
+    with tempfile.NamedTemporaryFile(suffix=".pt") as f:
+        model = ResNet50()
+        torch.save(model.state_dict(), f.name)
+
+        # Block all network access
+        orig_socket = socket.socket
+
+        class _BlockedSocket(socket.socket):
+            def connect(self, *args: object, **kwargs: object) -> None:
+                raise ConnectionRefusedError("Simulated offline")
+
+        socket.socket = _BlockedSocket  # type: ignore[misc]
+        try:
+            feat_net = load_radimagenet_resnet50(f.name)
+            dummy = torch.randn(1, 3, 64, 64)
+            with torch.no_grad():
+                pooled = _spatial_average(feat_net(dummy))
+            assert pooled.shape == (1, 2048)
+        finally:
+            socket.socket = orig_socket  # type: ignore[misc]

@@ -81,6 +81,8 @@ medical = [
 # Evaluation metrics (FID/KID computation)
 eval = [
     "torch-fidelity>=0.3",
+    "radimagenet-models @ git+https://github.com/Warvito/radimagenet-models.git",
+    "gdown>=5.0",
 ]
 # LoRA fine-tuning (epilepsy/FCD stage)
 finetune = [

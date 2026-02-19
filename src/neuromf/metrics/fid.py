@@ -15,8 +15,8 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from radimagenet_models.models.resnet import ResNet50
 from torch import Tensor
-from torchvision.models import resnet50
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,12 @@ _IMAGENET_BGR_MEAN = [0.406, 0.456, 0.485]
 
 
 def load_radimagenet_resnet50(weights_path: str | Path) -> nn.Module:
-    """Load RadImageNet ResNet-50 as a 2048-d feature extractor.
+    """Load RadImageNet ResNet-50 as a feature extractor.
 
-    Creates a ``torchvision.models.resnet50``, loads the state dict from
-    disk, and replaces the final FC layer with ``nn.Identity()`` so the
-    output is a 2048-d feature vector after global average pooling.
+    Uses the Keras-style ResNet-50 from ``radimagenet-models``
+    (biased convolutions, no FC layer). Output is
+    ``(B, 2048, H/32, W/32)`` — apply ``_spatial_average`` to get
+    ``(B, 2048)``.
 
     Args:
         weights_path: Path to the saved ``.pt`` state dict file.
@@ -41,12 +42,9 @@ def load_radimagenet_resnet50(weights_path: str | Path) -> nn.Module:
     if not weights_path.exists():
         raise FileNotFoundError(f"RadImageNet weights not found: {weights_path}")
 
-    model = resnet50(weights=None)
+    model = ResNet50()
     state_dict = torch.load(str(weights_path), map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict)
-
-    # Replace FC with identity to get 2048-d features
-    model.fc = nn.Identity()
     model.eval()
 
     logger.info("Loaded RadImageNet ResNet-50 from %s (2048-d features)", weights_path)
