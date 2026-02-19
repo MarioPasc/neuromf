@@ -422,7 +422,7 @@ class TestLatentMeanFlowExtended:
         assert torch.isfinite(result["loss"])
 
     def test_P4_T12_divergence_guard(self) -> None:
-        """P4-T12: Min-tracking divergence guard raises RuntimeError when threshold exceeded."""
+        """P4-T12: EMA-smoothed divergence guard raises RuntimeError when threshold exceeded."""
         cfg = _tiny_config(
             **{
                 "training": {
@@ -434,15 +434,16 @@ class TestLatentMeanFlowExtended:
         model = LatentMeanFlow(cfg)
         model.train()
 
-        # First step: initialises min_raw_loss
+        # First step: initialises EMA
         batch = _fake_batch()
         loss = model.training_step(batch, batch_idx=0)
-        assert model._min_raw_loss is not None
+        assert model._ema_raw_loss is not None
+        assert model._min_ema_raw_loss is not None
 
-        # Manually set min to a tiny value so next step trivially exceeds 1.5x
-        model._min_raw_loss = model._min_raw_loss / 100.0
+        # Manually set EMA min to a tiny value so next step trivially exceeds 1.5x
+        model._min_ema_raw_loss = model._ema_raw_loss / 100.0
 
-        # Next step should trigger divergence guard (loss >> 1.5 × tiny_min)
+        # Next step should trigger divergence guard (EMA >> 1.5 × tiny_min)
         batch2 = _fake_batch()
         with pytest.raises(RuntimeError, match="Divergence detected"):
             model.training_step(batch2, batch_idx=1)
@@ -464,8 +465,8 @@ class TestLatentMeanFlowExtended:
         batch = _fake_batch()
         loss = model.training_step(batch, batch_idx=0)
 
-        # Set min to tiny value — would fire without grace period
-        model._min_raw_loss = 1e-10
+        # Set EMA min to tiny value — would fire without grace period
+        model._min_ema_raw_loss = 1e-10
 
         # But global_step < grace_steps, so it should NOT raise
         batch2 = _fake_batch()

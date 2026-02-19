@@ -448,3 +448,291 @@ def test_P4f_T5_xpred_exact_jvp_gradients_flow(x_pred_exact_model_and_pipeline) 
 
     has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
     assert has_grad, "No gradients flowed through x-pred + exact JVP pipeline"
+
+
+# ======================================================================
+# v-head / dual-head tests (Phase 4g — iMF dual-head architecture)
+# ======================================================================
+
+
+@pytest.fixture(scope="module")
+def v_head_model():
+    """Create model with v-head enabled."""
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="u", use_v_head=True)
+    model = MAISIUNetWrapper(config)
+    model.train()
+    return model
+
+
+@pytest.fixture(scope="module")
+def v_head_fd_pipeline():
+    """Create FD pipeline with v-head enabled."""
+    return MeanFlowPipeline(
+        MeanFlowPipelineConfig(
+            p=2.0,
+            adaptive=True,
+            norm_eps=1.0,
+            prediction_type="u",
+            jvp_strategy="finite_difference",
+            fd_step_size=1e-3,
+            use_v_head=True,
+        )
+    )
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T1_v_head_dual_output_shapes(v_head_model) -> None:
+    """P4g-T1: use_v_head=True model returns (u, v) tuple with correct shapes."""
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_t = torch.randn(B, C, D, H, W)
+    r = torch.tensor([0.2, 0.3])
+    t = torch.tensor([0.5, 0.8])
+
+    with torch.no_grad():
+        output = v_head_model(z_t, r, t)
+
+    assert isinstance(output, tuple), f"Expected tuple, got {type(output)}"
+    assert len(output) == 2
+    u_out, v_out = output
+    assert u_out.shape == (B, C, D, H, W), f"u shape: {u_out.shape}"
+    assert v_out.shape == (B, C, D, H, W), f"v shape: {v_out.shape}"
+    assert torch.isfinite(u_out).all()
+    assert torch.isfinite(v_out).all()
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T2_v_head_zero_init(v_head_model) -> None:
+    """P4g-T2: Fresh v-head output is all zeros (zero-init conv)."""
+    B, C, D, H, W = 1, 4, 16, 16, 16
+    z_t = torch.randn(B, C, D, H, W)
+    r = torch.tensor([0.3])
+    t = torch.tensor([0.7])
+
+    with torch.no_grad():
+        _, v_out = v_head_model(z_t, r, t)
+
+    assert v_out.abs().max().item() < 1e-6, (
+        f"v-head should be near-zero at init, got max={v_out.abs().max().item():.6f}"
+    )
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T3_dual_loss_pipeline(v_head_model, v_head_fd_pipeline) -> None:
+    """P4g-T3: Dual loss pipeline produces finite loss with both raw_loss_u and raw_loss_v."""
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_0 = torch.randn(B, C, D, H, W)
+    eps = torch.randn(B, C, D, H, W)
+    t = torch.tensor([0.5, 0.8])
+    r = torch.tensor([0.2, 0.3])
+
+    result = v_head_fd_pipeline(v_head_model, z_0, eps, t, r)
+
+    assert torch.isfinite(result["loss"]), f"Loss not finite: {result['loss'].item()}"
+    assert result["loss"].item() > 0
+    assert "raw_loss_u" in result
+    assert "raw_loss_v" in result
+    assert torch.isfinite(result["raw_loss_u"])
+    assert torch.isfinite(result["raw_loss_v"])
+    assert result["raw_loss_u"].item() > 0
+    assert result["raw_loss_v"].item() > 0
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T4_v_head_gradients_flow() -> None:
+    """P4g-T4: Gradients flow to v-head parameters through loss_v."""
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="u", use_v_head=True)
+    model = MAISIUNetWrapper(config)
+    model.train()
+
+    # Re-init zero convs for gradient connectivity test
+    for name, module in model.named_modules():
+        if isinstance(module, torch.nn.Conv3d) and module.weight.abs().sum() == 0:
+            torch.nn.init.kaiming_normal_(module.weight, nonlinearity="linear")
+
+    pipeline = MeanFlowPipeline(
+        MeanFlowPipelineConfig(
+            p=2.0,
+            adaptive=True,
+            norm_eps=1.0,
+            prediction_type="u",
+            jvp_strategy="finite_difference",
+            fd_step_size=1e-3,
+            use_v_head=True,
+        )
+    )
+
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_0 = torch.randn(B, C, D, H, W)
+    eps = torch.randn(B, C, D, H, W)
+    t = torch.tensor([0.5, 0.8])
+    r = torch.tensor([0.2, 0.3])
+
+    result = pipeline(model, z_0, eps, t, r)
+    result["loss"].backward()
+
+    # Check v_out specifically has gradients
+    v_out_has_grad = False
+    for name, p in model.named_parameters():
+        if "v_out" in name and p.grad is not None and p.grad.abs().sum() > 0:
+            v_out_has_grad = True
+            break
+    assert v_out_has_grad, "No gradients flowed to v_out parameters"
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T5_fd_jvp_v_head_tangent_bounded() -> None:
+    """P4g-T5: FD-JVP with v-head tangent has bounded JVP norms."""
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="u", use_v_head=True)
+    model = MAISIUNetWrapper(config)
+    model.train()
+
+    pipeline = MeanFlowPipeline(
+        MeanFlowPipelineConfig(
+            p=2.0,
+            adaptive=True,
+            norm_eps=1.0,
+            prediction_type="u",
+            jvp_strategy="finite_difference",
+            fd_step_size=1e-3,
+            use_v_head=True,
+        )
+    )
+
+    B, C, D, H, W = 4, 4, 16, 16, 16
+    z_0 = torch.randn(B, C, D, H, W)
+    eps = torch.randn(B, C, D, H, W)
+    t = torch.tensor([0.1, 0.3, 0.7, 0.95])
+    r = torch.tensor([0.05, 0.1, 0.2, 0.3])
+
+    result = pipeline(model, z_0, eps, t, r, return_diagnostics=True)
+
+    jvp_norm = result["diag_jvp_norm"]
+    u_norm = result["diag_u_norm"]
+
+    assert torch.isfinite(jvp_norm), f"JVP norm not finite: {jvp_norm.item()}"
+
+    ratio = jvp_norm.item() / max(u_norm.item(), 1e-8)
+    assert ratio < 100, (
+        f"JVP norm ({jvp_norm.item():.1f}) is {ratio:.0f}x u_norm "
+        f"({u_norm.item():.1f}) — possible instability"
+    )
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T6_h_conditioning() -> None:
+    """P4g-T6: h-conditioning produces finite output."""
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="u", use_v_head=True, conditioning_mode="h")
+    model = MAISIUNetWrapper(config)
+    model.eval()
+
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_t = torch.randn(B, C, D, H, W)
+    r = torch.tensor([0.2, 0.3])
+    t = torch.tensor([0.5, 0.8])
+
+    with torch.no_grad():
+        output = model(z_t, r, t)
+
+    assert isinstance(output, tuple)
+    u_out, v_out = output
+    assert torch.isfinite(u_out).all(), "u_out has NaN/Inf with h-conditioning"
+    assert torch.isfinite(v_out).all(), "v_out has NaN/Inf with h-conditioning"
+
+
+@pytest.mark.phase4
+@pytest.mark.critical
+def test_P4g_T7_backward_compat_no_v_head() -> None:
+    """P4g-T7: use_v_head=False produces single tensor output (backward compat)."""
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="u", use_v_head=False)
+    model = MAISIUNetWrapper(config)
+    model.eval()
+
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_t = torch.randn(B, C, D, H, W)
+    r = torch.tensor([0.2, 0.3])
+    t = torch.tensor([0.5, 0.8])
+
+    with torch.no_grad():
+        output = model(z_t, r, t)
+
+    assert isinstance(output, torch.Tensor), f"Expected Tensor, got {type(output)}"
+    assert output.shape == (B, C, D, H, W)
+
+    # Also verify pipeline without v-head still works
+    pipeline = MeanFlowPipeline(
+        MeanFlowPipelineConfig(
+            p=2.0,
+            adaptive=True,
+            norm_eps=1.0,
+            prediction_type="u",
+            jvp_strategy="finite_difference",
+            fd_step_size=1e-3,
+            use_v_head=False,
+        )
+    )
+    z_0 = torch.randn(B, C, D, H, W)
+    eps = torch.randn(B, C, D, H, W)
+    result = pipeline(model, z_0, eps, t, r)
+    assert torch.isfinite(result["loss"])
+    assert "raw_loss_u" not in result  # single-head has no split
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
+def test_P4g_T8_dual_loss_diagnostics(v_head_model, v_head_fd_pipeline) -> None:
+    """P4g-T8: Dual loss diagnostics include all v-head keys."""
+    B, C, D, H, W = 2, 4, 16, 16, 16
+    z_0 = torch.randn(B, C, D, H, W)
+    eps = torch.randn(B, C, D, H, W)
+    t = torch.tensor([0.5, 0.8])
+    r = torch.tensor([0.2, 0.3])
+
+    result = v_head_fd_pipeline(v_head_model, z_0, eps, t, r, return_diagnostics=True)
+
+    # Standard diagnostics should still be present
+    assert "diag_u_norm" in result
+    assert "diag_compound_v_norm" in result
+    assert "diag_cosine_sim_V_vc" in result
+
+    # v-head specific diagnostics
+    assert "diag_v_head_norm" in result
+    assert "diag_cosine_sim_v_vc" in result
+    assert "diag_raw_loss_u_per_sample" in result
+    assert "diag_raw_loss_v_per_sample" in result
+    assert "raw_loss_u" in result
+    assert "raw_loss_v" in result
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
+def test_P4g_T9_sampling_with_v_head() -> None:
+    """P4g-T9: sample_one_step and sample_euler work with v-head model."""
+    from neuromf.sampling.multi_step import sample_euler
+    from neuromf.sampling.one_step import sample_one_step
+
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="u", use_v_head=True)
+    model = MAISIUNetWrapper(config)
+    model.eval()
+
+    B, C, D, H, W = 1, 4, 16, 16, 16
+    noise = torch.randn(B, C, D, H, W)
+
+    z_one = sample_one_step(model, noise, prediction_type="u")
+    assert z_one.shape == (B, C, D, H, W)
+    assert torch.isfinite(z_one).all()
+
+    z_euler = sample_euler(model, noise, n_steps=2, prediction_type="u")
+    assert z_euler.shape == (B, C, D, H, W)
+    assert torch.isfinite(z_euler).all()

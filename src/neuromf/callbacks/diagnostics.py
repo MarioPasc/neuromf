@@ -32,8 +32,8 @@ def _get_block_name(param_name: str) -> str:
         Short block label (e.g. ``"down_block_2"``, ``"r_embed"``).
     """
     parts = param_name.split(".")
-    # r_embed / time_embed at the wrapper level
-    if parts[0] in ("r_embed", "time_embed"):
+    # r_embed / time_embed / v_out at the wrapper level
+    if parts[0] in ("r_embed", "time_embed", "v_out"):
         return parts[0]
     # UNet sub-blocks
     if "unet" in parts:
@@ -117,6 +117,12 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_u_pred_stds: list[float] = []
         self._epoch_u_pred_mins: list[float] = []
         self._epoch_u_pred_maxs: list[float] = []
+
+        # v-head accumulators (dual-head mode)
+        self._epoch_raw_loss_u: list[float] = []
+        self._epoch_raw_loss_v: list[float] = []
+        self._epoch_v_head_norms: list[float] = []
+        self._epoch_cosine_v_vc: list[float] = []
 
         # Parameter snapshot for relative update norm
         self._param_snapshot: dict[str, torch.Tensor] = {}
@@ -245,6 +251,23 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 pl_module.log(f"train/meanflow/{short}", val)
                 acc.append(val)
 
+        # v-head diagnostics — log and accumulate
+        if "raw_loss_u" in diag:
+            val_u = float(diag["raw_loss_u"])
+            val_v = float(diag["raw_loss_v"])
+            pl_module.log("train/meanflow/raw_loss_u", val_u)
+            pl_module.log("train/meanflow/raw_loss_v", val_v)
+            self._epoch_raw_loss_u.append(val_u)
+            self._epoch_raw_loss_v.append(val_v)
+        if "diag_v_head_norm" in diag:
+            val = float(diag["diag_v_head_norm"])
+            pl_module.log("train/meanflow/v_head_norm", val)
+            self._epoch_v_head_norms.append(val)
+        if "diag_cosine_sim_v_vc" in diag:
+            val = float(diag["diag_cosine_sim_v_vc"])
+            pl_module.log("train/meanflow/cosine_sim_v_vc", val)
+            self._epoch_cosine_v_vc.append(val)
+
         # Accumulate t/r values for epoch sampling stats
         if "t" in diag:
             self._epoch_t_values.extend(diag["t"].detach().cpu().tolist())
@@ -329,6 +352,10 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_u_pred_stds.clear()
         self._epoch_u_pred_mins.clear()
         self._epoch_u_pred_maxs.clear()
+        self._epoch_raw_loss_u.clear()
+        self._epoch_raw_loss_v.clear()
+        self._epoch_v_head_norms.clear()
+        self._epoch_cosine_v_vc.clear()
 
     def on_train_epoch_end(
         self,
@@ -462,6 +489,16 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 "min": min(self._epoch_u_pred_mins),
                 "max": max(self._epoch_u_pred_maxs),
             }
+
+        # --- v-head metrics (dual-head mode) ---
+        if self._epoch_raw_loss_u:
+            summary["raw_loss_u_mean"] = sum(self._epoch_raw_loss_u) / len(self._epoch_raw_loss_u)
+        if self._epoch_raw_loss_v:
+            summary["raw_loss_v_mean"] = sum(self._epoch_raw_loss_v) / len(self._epoch_raw_loss_v)
+        if self._epoch_v_head_norms:
+            summary["v_head_norm"] = sum(self._epoch_v_head_norms) / len(self._epoch_v_head_norms)
+        if self._epoch_cosine_v_vc:
+            summary["cosine_sim_v_vc"] = sum(self._epoch_cosine_v_vc) / len(self._epoch_cosine_v_vc)
 
         # --- Learning rate ---
         lr_sched = trainer.lr_scheduler_configs

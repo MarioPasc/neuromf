@@ -32,7 +32,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import math
 import shutil
 import sys
 from datetime import datetime
@@ -45,8 +47,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from rich.logging import RichHandler
 from torch.utils.data import DataLoader
-import json 
-import math
+
 from neuromf.data.latent_dataset import LatentDataset, latent_collate_fn
 from neuromf.models.latent_meanflow import LatentMeanFlow
 
@@ -330,9 +331,9 @@ def main() -> None:
         logger.info("EMA decay: %.4f", config.ema.decay)
         logger.info("Weight decay: %.1e", config.training.weight_decay)
         logger.info(
-            "Divergence guard: threshold=%.1f, grace_steps=%d",
+            "Divergence guard: threshold=%.1f, grace_steps=%d (EMA-smoothed)",
             config.training.get("divergence_threshold", 0.0),
-            config.training.get("divergence_grace_steps", 100),
+            config.training.get("divergence_grace_steps", 500),
         )
         logger.info(
             "Spatial mask ratio: %.2f",

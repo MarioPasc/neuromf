@@ -36,6 +36,10 @@ def sample_one_step(
 
     output = model(noise, r, t)
 
+    # Dual-head models return (u_or_x, v) — use u-head only at inference
+    if isinstance(output, tuple):
+        output = output[0]
+
     if prediction_type == "x":
         return output  # model directly predicts x_0
     else:

@@ -83,6 +83,8 @@ class MAISIUNetConfig:
     use_checkpointing: bool = False
     prediction_type: str = "x"
     t_min: float = 0.05
+    use_v_head: bool = False
+    conditioning_mode: str = "dual"  # "dual" for (r, t), "h" for h=t-r
 
     @classmethod
     def from_omegaconf(cls, cfg: DictConfig) -> MAISIUNetConfig:
@@ -121,6 +123,8 @@ class MAISIUNetConfig:
             use_checkpointing=use_ckpt,
             prediction_type=str(u.get("prediction_type", "x")),
             t_min=float(u.get("t_min", 0.05)),
+            use_v_head=bool(u.get("use_v_head", False)),
+            conditioning_mode=str(u.get("conditioning_mode", "dual")),
         )
 
 
@@ -239,6 +243,21 @@ class MAISIUNetWrapper(nn.Module):
         self.prediction_type = config.prediction_type
         self.t_min = config.t_min
         self._sinusoidal_dim = config.channels[0]
+        self.use_v_head = config.use_v_head
+        self.conditioning_mode = config.conditioning_mode
+
+        # v-head: parallel output block for instantaneous velocity prediction.
+        # Shares the full UNet backbone; only the final projection differs.
+        # Zero-init so v-head starts at zero, leaving u-head unaffected.
+        if config.use_v_head:
+            ch0 = config.channels[0]
+            self.v_out = nn.Sequential(
+                nn.GroupNorm(config.norm_num_groups, ch0),
+                nn.SiLU(),
+                nn.Conv3d(ch0, config.out_channels, 3, padding=1),
+            )
+            nn.init.zeros_(self.v_out[-1].weight)
+            nn.init.zeros_(self.v_out[-1].bias)
 
         # Enable gradient checkpointing if requested
         if config.use_checkpointing:
@@ -255,10 +274,12 @@ class MAISIUNetWrapper(nn.Module):
 
         n_params = sum(p.numel() for p in self.parameters())
         logger.info(
-            "MAISIUNetWrapper: %d params, prediction=%s, t_min=%.3f",
+            "MAISIUNetWrapper: %d params, prediction=%s, t_min=%.3f, v_head=%s, conditioning=%s",
             n_params,
             config.prediction_type,
             config.t_min,
+            config.use_v_head,
+            config.conditioning_mode,
         )
 
     def _count_checkpointed_blocks(self) -> int:
@@ -269,7 +290,9 @@ class MAISIUNetWrapper(nn.Module):
         """
         return len(self.unet.down_blocks) + 1 + len(self.unet.up_blocks)
 
-    def _forward_with_dual_emb(self, z_t: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
+    def _forward_with_dual_emb(
+        self, z_t: torch.Tensor, emb: torch.Tensor
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Forward through UNet blocks with pre-computed dual embedding.
 
         Replicates ``DiffusionModelUNet.forward()`` logic but skips the
@@ -282,7 +305,8 @@ class MAISIUNetWrapper(nn.Module):
             emb: Combined time embedding ``(B, time_embed_dim)``.
 
         Returns:
-            Output tensor ``(B, C, D, H, W)``.
+            If ``use_v_head=False``: output tensor ``(B, C, D, H, W)``.
+            If ``use_v_head=True``: tuple ``(u_out, v_out)`` each ``(B, C, D, H, W)``.
         """
         use_ckpt = self._use_checkpointing and self.training
         h = self.unet.conv_in(z_t)
@@ -337,10 +361,20 @@ class MAISIUNetWrapper(nn.Module):
                     context=None,
                 )
 
-        return self.unet.out(h)
+        u_out = self.unet.out(h)
+        if self.use_v_head:
+            v_out = self.v_out(h)
+            return u_out, v_out
+        return u_out
 
-    def forward(self, z_t: torch.Tensor, r: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Forward pass with dual ``(r, t)`` time conditioning.
+    def forward(
+        self, z_t: torch.Tensor, r: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass with configurable time conditioning.
+
+        Supports two conditioning modes:
+        - ``"dual"``: separate sinusoidal embeddings for r and t, summed.
+        - ``"h"``: single embedding for h = t - r (iMF convention).
 
         Args:
             z_t: Noisy latent ``(B, C, D, H, W)``.
@@ -348,27 +382,30 @@ class MAISIUNetWrapper(nn.Module):
             t: Interval end time ``(B,)``, values in ``[0, 1]``.
 
         Returns:
-            If ``prediction_type="x"``: x_hat of same shape as ``z_t``.
-            If ``prediction_type="u"``: u (average velocity) of same shape.
+            If ``use_v_head=False``: output tensor of same shape as ``z_t``.
+            If ``use_v_head=True``: tuple ``(u_out, v_out)``.
         """
-        # Scale to improve sinusoidal embedding resolution
-        t_scaled = t * _TIME_SCALE
-        r_scaled = r * _TIME_SCALE
+        if self.conditioning_mode == "h":
+            # iMF convention: condition on h = t - r only
+            h_val = t - r
+            h_scaled = h_val * _TIME_SCALE
+            h_sin = get_timestep_embedding(h_scaled, self._sinusoidal_dim)
+            h_sin = h_sin.to(dtype=z_t.dtype)
+            emb = self.unet.time_embed(h_sin)
+        else:
+            # Dual (r, t) conditioning (pMF convention)
+            t_scaled = t * _TIME_SCALE
+            r_scaled = r * _TIME_SCALE
 
-        # Sinusoidal embeddings
-        t_sin = get_timestep_embedding(t_scaled, self._sinusoidal_dim)
-        r_sin = get_timestep_embedding(r_scaled, self._sinusoidal_dim)
+            t_sin = get_timestep_embedding(t_scaled, self._sinusoidal_dim)
+            r_sin = get_timestep_embedding(r_scaled, self._sinusoidal_dim)
 
-        # Cast to input dtype
-        t_sin = t_sin.to(dtype=z_t.dtype)
-        r_sin = r_sin.to(dtype=z_t.dtype)
+            t_sin = t_sin.to(dtype=z_t.dtype)
+            r_sin = r_sin.to(dtype=z_t.dtype)
 
-        # MLP projections: t uses UNet's time_embed, r uses our parallel MLP
-        t_emb = self.unet.time_embed(t_sin)
-        r_emb = self.r_embed(r_sin)
-
-        # Sum embeddings (following pMF convention)
-        emb = t_emb + r_emb
+            t_emb = self.unet.time_embed(t_sin)
+            r_emb = self.r_embed(r_sin)
+            emb = t_emb + r_emb
 
         return self._forward_with_dual_emb(z_t, emb)
 

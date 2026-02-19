@@ -40,19 +40,22 @@ training:
   prefetch_factor: 4
   accumulate_grad_batches: 4        # effective batch = 16 x 2 x 4 = 128
   log_every_n_steps: 10             # ~43 steps/epoch -> log ~every 4 epochs
-  divergence_threshold: 100.0       # halt if raw_loss > 100x min raw loss
-  divergence_grace_steps: 100       # skip early unstable steps
+  divergence_threshold: 100.0       # halt if EMA(raw_loss) > 100x min EMA(raw_loss)
+  divergence_grace_steps: 500       # skip first 500 steps (EMA warmup + MeanFlow t/r variance)
   augmentation:
     enabled: false                   # Phase B OFF for v2
 
-# --- UNet: enable flash attention (safe with FD-JVP) ---
+# --- UNet: enable flash attention (safe with FD-JVP), v-head + h-conditioning ---
 unet:
   use_flash_attention: true         # FD-JVP does regular forward passes, no torch.func
   gradient_checkpointing: true      # essential for 40 GB VRAM
+  use_v_head: true                  # iMF dual-head: v-head provides JVP tangent
+  conditioning_mode: h              # iMF convention: condition on h=t-r only
 
-# --- JVP: finite difference (required with gradient checkpointing) ---
+# --- JVP: finite difference (required with gradient checkpointing), v-head loss ---
 meanflow:
   jvp_strategy: finite_difference
+  use_v_head: true                  # enable dual loss (loss_u + loss_v)
 
 # --- Diagnostics: always on for Picasso runs ---
 diagnostics:

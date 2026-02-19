@@ -49,6 +49,10 @@ def sample_euler(
 
         output = model(z, r_batch, t_batch)
 
+        # Dual-head models return (u_or_x, v) — use u-head only at inference
+        if isinstance(output, tuple):
+            output = output[0]
+
         if prediction_type == "x":
             # Convert x-prediction to velocity: u = (z_t - x_hat) / max(t, eps)
             t_safe = max(t_curr.item(), 0.05)

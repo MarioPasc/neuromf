@@ -43,9 +43,10 @@ class LatentMeanFlow(pl.LightningModule):
         self.save_hyperparameters({"config": OmegaConf.to_container(config, resolve=True)})
         self.cfg = config
 
-        # Build model
+        # Build model (use_v_head and conditioning_mode read by from_omegaconf)
         unet_config = MAISIUNetConfig.from_omegaconf(config)
         self.net = MAISIUNetWrapper(unet_config)
+        self._use_v_head = unet_config.use_v_head
 
         # Build loss pipeline
         mf = config.meanflow
@@ -61,6 +62,7 @@ class LatentMeanFlow(pl.LightningModule):
             channel_weights=(list(mf.channel_weights) if mf.channel_weights else None),
             norm_p=float(mf.get("norm_p", 1.0)),
             spatial_mask_ratio=float(mf.get("spatial_mask_ratio", 0.0)),
+            use_v_head=bool(mf.get("use_v_head", False)),
         )
         self.loss_pipeline = MeanFlowPipeline(pipeline_config)
 
@@ -89,10 +91,17 @@ class LatentMeanFlow(pl.LightningModule):
         self._diag_enabled: bool = False
         self._step_diagnostics: dict | None = None
 
-        # Min-tracking divergence guard
+        # EMA-smoothed divergence guard
+        # Tracks an EMA of the raw loss to smooth per-step variance (which is
+        # huge in MeanFlow due to t/r sampling). Compares EMA to its running
+        # minimum. This catches sustained divergence (like v2_baseline's 4808x
+        # growth over 225 epochs) but ignores single-step spikes from unlucky
+        # time samples.
         self._divergence_threshold = float(config.training.get("divergence_threshold", 0.0))
-        self._divergence_grace_steps = int(config.training.get("divergence_grace_steps", 100))
-        self._min_raw_loss: float | None = None
+        self._divergence_grace_steps = int(config.training.get("divergence_grace_steps", 500))
+        self._ema_raw_loss: float | None = None
+        self._min_ema_raw_loss: float | None = None
+        self._ema_decay: float = 0.99  # half-life ≈ 69 steps
         self._divergence_warned_3x: bool = False
         self._divergence_warned_5x: bool = False
 
@@ -191,39 +200,58 @@ class LatentMeanFlow(pl.LightningModule):
         raw_loss = result["raw_loss"]
         self.log("train/raw_loss", raw_loss, prog_bar=True)
 
-        # Min-tracking divergence guard: compares step loss to running minimum
+        # Dual-head loss components (v-head)
+        if "raw_loss_u" in result:
+            self.log("train/raw_loss_u", result["raw_loss_u"])
+            self.log("train/raw_loss_v", result["raw_loss_v"])
+
+        # EMA-smoothed divergence guard: compares EMA of loss to its running minimum.
+        # MeanFlow has huge per-step variance from t/r sampling (100x between easy
+        # and hard batches is normal), so raw step-level min-tracking false-triggers.
+        # EMA smoothing filters spikes while catching sustained divergence.
         if self._divergence_threshold > 0:
             raw_val = raw_loss.item()
-            if self._min_raw_loss is None:
-                self._min_raw_loss = raw_val
+
+            # Update EMA (decay=0.99, half-life ≈ 69 steps)
+            if self._ema_raw_loss is None:
+                self._ema_raw_loss = raw_val
             else:
-                self._min_raw_loss = min(self._min_raw_loss, raw_val)
+                self._ema_raw_loss = (
+                    self._ema_decay * self._ema_raw_loss + (1.0 - self._ema_decay) * raw_val
+                )
+
+            # Track minimum of the EMA (not of individual steps)
+            if self._min_ema_raw_loss is None or self._ema_raw_loss < self._min_ema_raw_loss:
+                self._min_ema_raw_loss = self._ema_raw_loss
+
             # Check after grace period
-            if self.global_step >= self._divergence_grace_steps and self._min_raw_loss > 0:
-                ratio = raw_val / self._min_raw_loss
+            if self.global_step >= self._divergence_grace_steps and self._min_ema_raw_loss > 0:
+                ratio = self._ema_raw_loss / self._min_ema_raw_loss
                 if ratio > 3.0 and not self._divergence_warned_3x:
                     logger.warning(
-                        "Step %d: raw_loss=%.1f is 3x min (%.1f)",
+                        "Step %d: EMA raw_loss=%.1f is 3x EMA min (%.1f)",
                         self.global_step,
-                        raw_val,
-                        self._min_raw_loss,
+                        self._ema_raw_loss,
+                        self._min_ema_raw_loss,
                     )
                     self._divergence_warned_3x = True
                 if ratio > 5.0 and not self._divergence_warned_5x:
                     logger.warning(
-                        "Step %d: raw_loss=%.1f is 5x min (%.1f)",
+                        "Step %d: EMA raw_loss=%.1f is 5x EMA min (%.1f)",
                         self.global_step,
-                        raw_val,
-                        self._min_raw_loss,
+                        self._ema_raw_loss,
+                        self._min_ema_raw_loss,
                     )
                     self._divergence_warned_5x = True
                 if ratio > self._divergence_threshold:
                     raise RuntimeError(
                         f"Divergence detected at step {self.global_step}: "
-                        f"raw_loss={raw_val:.1f} > "
-                        f"{self._divergence_threshold}x min ({self._min_raw_loss:.1f})"
+                        f"EMA raw_loss={self._ema_raw_loss:.1f} > "
+                        f"{self._divergence_threshold}x EMA min "
+                        f"({self._min_ema_raw_loss:.1f})"
                     )
-            self.log("train/min_raw_loss", self._min_raw_loss)
+            self.log("train/ema_raw_loss", self._ema_raw_loss)
+            self.log("train/min_ema_raw_loss", self._min_ema_raw_loss)
 
         if self._diag_enabled:
             self._step_diagnostics = result
@@ -376,7 +404,8 @@ class LatentMeanFlow(pl.LightningModule):
             "val": self._val_loss_history,
         }
         checkpoint["divergence_state"] = {
-            "min_raw_loss": self._min_raw_loss,
+            "ema_raw_loss": self._ema_raw_loss,
+            "min_ema_raw_loss": self._min_ema_raw_loss,
             "warned_3x": self._divergence_warned_3x,
             "warned_5x": self._divergence_warned_5x,
         }
@@ -394,6 +423,7 @@ class LatentMeanFlow(pl.LightningModule):
             self._val_loss_history = checkpoint["loss_history"].get("val", [])
         if "divergence_state" in checkpoint:
             ds = checkpoint["divergence_state"]
-            self._min_raw_loss = ds.get("min_raw_loss")
+            self._ema_raw_loss = ds.get("ema_raw_loss")
+            self._min_ema_raw_loss = ds.get("min_ema_raw_loss")
             self._divergence_warned_3x = ds.get("warned_3x", False)
             self._divergence_warned_5x = ds.get("warned_5x", False)

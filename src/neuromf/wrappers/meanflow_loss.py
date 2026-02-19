@@ -38,6 +38,7 @@ class MeanFlowPipelineConfig:
     channel_weights: list[float] | None = None
     norm_p: float = 1.0
     spatial_mask_ratio: float = 0.0  # 0.0=disabled, 0.5=mask 50% spatial voxels
+    use_v_head: bool = False
 
 
 class MeanFlowPipeline(nn.Module):
@@ -82,11 +83,12 @@ class MeanFlowPipeline(nn.Module):
             self._channel_weights: Tensor | None = None
 
         logger.info(
-            "MeanFlowPipeline: p=%.1f, adaptive=%s, jvp=%s, prediction=%s",
+            "MeanFlowPipeline: p=%.1f, adaptive=%s, jvp=%s, prediction=%s, v_head=%s",
             config.p,
             config.adaptive,
             config.jvp_strategy,
             config.prediction_type,
+            config.use_v_head,
         )
 
     def _make_u_fn(self, model: nn.Module):
@@ -120,6 +122,40 @@ class MeanFlowPipeline(nn.Module):
             raise ValueError(f"Unknown prediction_type: {prediction_type}")
 
         return u_fn
+
+    def _make_dual_fn(self, model: nn.Module):
+        """Create dual-output closure for v-head models.
+
+        Args:
+            model: Network with ``forward(z_t, r, t) -> (u_or_x, v)``.
+
+        Returns:
+            Callable ``(z_t, t, r) -> (u, v)`` where u is average velocity.
+        """
+        prediction_type = self.config.prediction_type
+        t_min = self.config.t_min
+
+        if prediction_type == "u":
+
+            def dual_fn(z: Tensor, t_: Tensor, r_: Tensor) -> tuple[Tensor, Tensor]:
+                u, v = model(z, r_, t_)
+                return u, v
+
+        elif prediction_type == "x":
+
+            def dual_fn(z: Tensor, t_: Tensor, r_: Tensor) -> tuple[Tensor, Tensor]:
+                x_hat, v = model(z, r_, t_)
+                if z.ndim > 1:
+                    t_safe = t_.view(-1, *([1] * (z.ndim - 1))).clamp(min=t_min)
+                else:
+                    t_safe = t_.clamp(min=t_min)
+                u = (z - x_hat) / t_safe
+                return u, v
+
+        else:
+            raise ValueError(f"Unknown prediction_type: {prediction_type}")
+
+        return dual_fn
 
     def forward(
         self,
@@ -167,24 +203,64 @@ class MeanFlowPipeline(nn.Module):
         # Ground-truth conditional velocity (target, not tangent)
         v_c = eps - z_0
 
-        # Build u_fn closure
+        cw = self._channel_weights
+
+        if self.config.use_v_head:
+            return self._forward_dual_head(
+                model,
+                z_t,
+                v_c,
+                t,
+                r,
+                p,
+                adaptive,
+                norm_eps,
+                norm_p,
+                cw,
+                return_diagnostics,
+            )
+        else:
+            return self._forward_single_head(
+                model,
+                z_t,
+                v_c,
+                t,
+                r,
+                p,
+                adaptive,
+                norm_eps,
+                norm_p,
+                cw,
+                return_diagnostics,
+            )
+
+    def _forward_single_head(
+        self,
+        model: nn.Module,
+        z_t: Tensor,
+        v_c: Tensor,
+        t: Tensor,
+        r: Tensor,
+        p: float,
+        adaptive: bool,
+        norm_eps: float,
+        norm_p: float,
+        cw: Tensor | None,
+        return_diagnostics: bool,
+    ) -> dict[str, Tensor]:
+        """Single-head forward pass (original path, unchanged)."""
         u_fn = self._make_u_fn(model)
 
-        # iMF Algorithm 1: model's predicted instantaneous velocity as tangent.
-        # v_tilde doesn't need gradients — it's only a direction for JVP,
-        # and du/dt is stop-gradiented in the compound velocity.
         with torch.no_grad():
             v_tilde = u_fn(z_t, t, t)
 
-        # Compound velocity via JVP with v_tilde as tangent (iMF formulation)
         u, V = self.jvp.compute(u_fn, z_t, t, r, v_tilde)
 
-        # Spatial loss masking (Phase C, toggleable via config)
+        # Spatial loss masking
         mask_ratio = self.config.spatial_mask_ratio
         if mask_ratio > 0.0:
             keep_prob = 1.0 - mask_ratio
-            spatial_shape = V.shape[2:]  # (D, H, W)
-            # (B, 1, D, H, W) — broadcast across C, same mask per sample
+            spatial_shape = V.shape[2:]
             mask = (torch.rand(V.shape[0], 1, *spatial_shape, device=V.device) < keep_prob).float()
             V_for_loss = V * mask
             v_c_for_loss = v_c * mask
@@ -193,17 +269,13 @@ class MeanFlowPipeline(nn.Module):
             v_c_for_loss = v_c
             keep_prob = 1.0
 
-        # Single unified loss: ||V - v_c||^p
-        cw = self._channel_weights
         raw_loss_per_sample = lp_loss(
             V_for_loss, v_c_for_loss, p=p, channel_weights=cw, reduction="none"
         )
 
-        # Normalize by keep fraction so loss magnitude is scale-invariant
         if mask_ratio > 0.0:
             raw_loss_per_sample = raw_loss_per_sample / keep_prob
 
-        # Adaptive weighting (single term)
         if adaptive:
             adp_weight = (raw_loss_per_sample.detach() + norm_eps) ** norm_p
             loss_per_sample = raw_loss_per_sample / adp_weight
@@ -211,8 +283,6 @@ class MeanFlowPipeline(nn.Module):
             loss_per_sample = raw_loss_per_sample
 
         loss = loss_per_sample.mean()
-
-        # Raw (pre-adaptive) loss — always returned for observability
         raw_loss = raw_loss_per_sample.detach().mean()
 
         result: dict[str, Tensor] = {
@@ -235,6 +305,87 @@ class MeanFlowPipeline(nn.Module):
                     z_t=z_t,
                 )
             )
+
+        return result
+
+    def _forward_dual_head(
+        self,
+        model: nn.Module,
+        z_t: Tensor,
+        v_c: Tensor,
+        t: Tensor,
+        r: Tensor,
+        p: float,
+        adaptive: bool,
+        norm_eps: float,
+        norm_p: float,
+        cw: Tensor | None,
+        return_diagnostics: bool,
+    ) -> dict[str, Tensor]:
+        """Dual-head forward pass (iMF v-head architecture).
+
+        Uses the v-head output as the JVP tangent instead of the u-head's
+        instantaneous velocity. The v-head is directly supervised to predict
+        ``v_c``, providing a high-quality tangent from early training.
+        """
+        dual_fn = self._make_dual_fn(model)
+
+        # v-head tangent: directly supervised to match v_c
+        with torch.no_grad():
+            _, v_tangent = dual_fn(z_t, t, t)  # r=t for instantaneous
+
+        # JVP with dual output
+        u, V, v = self.jvp.compute_dual(dual_fn, z_t, t, r, v_tangent)
+
+        # loss_u: ||V - v_c||^p with adaptive weighting
+        raw_loss_u = lp_loss(V, v_c, p=p, channel_weights=cw, reduction="none")
+
+        # loss_v: ||v - v_c||^p with independent adaptive weighting
+        raw_loss_v = lp_loss(v, v_c, p=p, channel_weights=cw, reduction="none")
+
+        if adaptive:
+            adp_weight_u = (raw_loss_u.detach() + norm_eps) ** norm_p
+            loss_u = raw_loss_u / adp_weight_u
+            adp_weight_v = (raw_loss_v.detach() + norm_eps) ** norm_p
+            loss_v = raw_loss_v / adp_weight_v
+        else:
+            loss_u = raw_loss_u
+            loss_v = raw_loss_v
+
+        loss = (loss_u + loss_v).mean()
+        raw_loss = (raw_loss_u.detach() + raw_loss_v.detach()).mean()
+
+        result: dict[str, Tensor] = {
+            "loss": loss,
+            "raw_loss": raw_loss,
+            "raw_loss_u": raw_loss_u.detach().mean(),
+            "raw_loss_v": raw_loss_v.detach().mean(),
+        }
+
+        if return_diagnostics:
+            result.update(
+                self._compute_diagnostics(
+                    u,
+                    V,
+                    v_c,
+                    v_tangent,
+                    t,
+                    r,
+                    p,
+                    raw_loss_u,
+                    adp_weight_u if adaptive else None,
+                    z_t=z_t,
+                )
+            )
+            # v-head specific diagnostics
+            v_norms = v.detach().flatten(1).norm(dim=1)
+            result["diag_v_head_norm"] = v_norms.mean()
+            vc_flat = v_c.detach().flatten(1)
+            v_flat = v.detach().flatten(1)
+            cos_sim_v_vc = torch.nn.functional.cosine_similarity(v_flat, vc_flat, dim=1)
+            result["diag_cosine_sim_v_vc"] = cos_sim_v_vc.mean()
+            result["diag_raw_loss_u_per_sample"] = raw_loss_u.detach().mean()
+            result["diag_raw_loss_v_per_sample"] = raw_loss_v.detach().mean()
 
         return result
 

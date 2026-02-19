@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # Type alias for the u_fn closure: (z_t, t, r) -> u
 UFn = Callable[[Tensor, Tensor, Tensor], Tensor]
 
+# Type alias for dual-output model: (z_t, t, r) -> (u, v)
+DualFn = Callable[[Tensor, Tensor, Tensor], tuple[Tensor, Tensor]]
+
 
 class JVPStrategy(Protocol):
     """Protocol for JVP computation strategies."""
@@ -80,6 +83,42 @@ class ExactJVP:
         V = _compound_velocity(u, du_dt, t, r, z_t)
         return u, V
 
+    def compute_dual(
+        self,
+        dual_fn: DualFn,
+        z_t: Tensor,
+        t: Tensor,
+        r: Tensor,
+        v_tangent: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Compute exact JVP for dual-output model returning ``(u, v)``.
+
+        The JVP is computed through a wrapper that extracts just ``u`` from
+        the dual output. The ``v`` output is captured via ``has_aux``.
+
+        Args:
+            dual_fn: Callable ``(z_t, t, r) -> (u, v)``.
+            z_t: Noisy data ``(B, C, ...)``.
+            t: Upper time ``(B,)``.
+            r: Lower time ``(B,)``.
+            v_tangent: Tangent vector for z_t.
+
+        Returns:
+            Tuple ``(u, V, v)`` where V is the compound velocity.
+        """
+        dt = torch.ones_like(t)
+        dr = torch.zeros_like(r)
+
+        def _u_with_v_aux(z: Tensor, t_: Tensor, r_: Tensor) -> tuple[Tensor, Tensor]:
+            u, v = dual_fn(z, t_, r_)
+            return u, v
+
+        (u, v), du_dt = torch.func.jvp(
+            _u_with_v_aux, (z_t, t, r), (v_tangent, dt, dr), has_aux=True
+        )
+        V = _compound_velocity(u, du_dt, t, r, z_t)
+        return u, V, v
+
 
 class FiniteDifferenceJVP:
     """Finite-difference JVP approximation.
@@ -129,3 +168,37 @@ class FiniteDifferenceJVP:
 
         V = _compound_velocity(u, du_dt, t, r, z_t)
         return u, V
+
+    def compute_dual(
+        self,
+        dual_fn: DualFn,
+        z_t: Tensor,
+        t: Tensor,
+        r: Tensor,
+        v_tangent: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Compute finite-difference JVP for dual-output model.
+
+        Args:
+            dual_fn: Callable ``(z_t, t, r) -> (u, v)``.
+            z_t: Noisy data ``(B, C, ...)``.
+            t: Upper time ``(B,)``.
+            r: Lower time ``(B,)``.
+            v_tangent: Tangent vector for z_t.
+
+        Returns:
+            Tuple ``(u, V, v)`` where V is the compound velocity.
+        """
+        h = self.h
+
+        u, v = dual_fn(z_t, t, r)
+        with torch.no_grad():
+            u_perturbed, _ = dual_fn(
+                z_t.detach() + h * v_tangent.detach(),
+                t.detach() + h,
+                r.detach(),
+            )
+        du_dt = (u_perturbed.float() - u.detach().float()) / h
+
+        V = _compound_velocity(u, du_dt, t, r, z_t)
+        return u, V, v
