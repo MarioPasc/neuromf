@@ -338,7 +338,7 @@ class MeanFlowPipeline(nn.Module):
         cos_sim_tangent = torch.nn.functional.cosine_similarity(vtilde_flat, vc_flat, dim=1)
         diag["diag_cosine_sim_vtilde_vc"] = cos_sim_tangent.mean()
 
-        # --- x-hat statistics (x-prediction mode) ---
+        # --- Prediction-specific statistics ---
         if self.config.prediction_type == "x" and z_t is not None:
             t_safe = t.detach().view(-1, *([1] * (z_t.ndim - 1))).clamp(min=self.config.t_min)
             x_hat = z_t.detach() - t_safe * u.detach()
@@ -346,5 +346,10 @@ class MeanFlowPipeline(nn.Module):
             diag["diag_x_hat_std"] = x_hat.std()
             diag["diag_x_hat_min"] = x_hat.min()
             diag["diag_x_hat_max"] = x_hat.max()
+        elif self.config.prediction_type == "u":
+            diag["diag_u_pred_mean"] = u.detach().mean()
+            diag["diag_u_pred_std"] = u.detach().std()
+            diag["diag_u_pred_min"] = u.detach().min()
+            diag["diag_u_pred_max"] = u.detach().max()
 
         return diag

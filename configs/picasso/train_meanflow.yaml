@@ -15,7 +15,7 @@
 #   Headroom: ~17-20 GB for peaks and fragmentation
 #
 # Effective batch = batch_size x devices x accumulate = 16 x 2 x 4 = 128
-# With data_proportion=0.75: ~96 FM samples + 32 MF samples per update
+# With data_proportion=0.5: ~64 FM samples + 64 MF samples per update
 # ~5,500 train scans -> ~43 steps/epoch -> ~12,900 total steps at 300 epochs
 
 # --- Picasso paths ---
@@ -40,7 +40,7 @@ training:
   prefetch_factor: 4
   accumulate_grad_batches: 4        # effective batch = 16 x 2 x 4 = 128
   log_every_n_steps: 10             # ~43 steps/epoch -> log ~every 4 epochs
-  divergence_threshold: 0       # halt if raw_loss > 100x min raw loss
+  divergence_threshold: 100.0       # halt if raw_loss > 100x min raw loss
   divergence_grace_steps: 100       # skip early unstable steps
   augmentation:
     enabled: false                   # Phase B OFF for v2

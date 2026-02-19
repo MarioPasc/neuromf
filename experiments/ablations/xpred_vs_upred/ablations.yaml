@@ -1,0 +1,39 @@
+# x-prediction vs u-prediction ablation
+#
+# Scientific question: Does x-prediction (predicting clean data x_0 directly)
+# produce better generation quality than u-prediction (predicting average velocity)
+# when training on MAISI VAE-GAN latents?
+#
+# x-prediction is motivated by the hypothesis that MAISI VAE latents live on a
+# structured manifold, making direct data prediction easier than velocity prediction.
+# However, x-pred requires exact JVP (torch.func.jvp), which is incompatible with
+# gradient checkpointing and flash attention.
+#
+# Merge chain: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml -> ablation.yaml
+#
+# Both arms use the same effective batch size (128) and training hyperparameters.
+# The only differences are prediction type, JVP strategy, and memory optimization.
+#
+# Usage:
+#   bash experiments/ablations/xpred_vs_upred/launch.sh            # both arms
+#   bash experiments/ablations/xpred_vs_upred/launch.sh xpred      # x-pred only
+#   bash experiments/ablations/xpred_vs_upred/launch.sh upred      # u-pred only
+
+ablations:
+  xpred_exact_jvp:
+    description: "x-prediction + exact JVP (no gradient checkpointing, no flash attention)"
+    config: configs/xpred_exact_jvp.yaml
+    n_gpus: 2
+    prediction_type: x
+    jvp_strategy: exact
+    gradient_checkpointing: false
+    effective_batch: 128  # 4 x 2 x 16
+
+  upred_fd_jvp:
+    description: "u-prediction + FD-JVP (gradient checkpointing + flash attention)"
+    config: configs/upred_fd_jvp.yaml
+    n_gpus: 2
+    prediction_type: u
+    jvp_strategy: finite_difference
+    gradient_checkpointing: true
+    effective_batch: 128  # 16 x 2 x 4

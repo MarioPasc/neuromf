@@ -1,0 +1,18 @@
+# u-prediction + FD-JVP (with gradient checkpointing)
+#
+# Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
+#
+# This arm uses the current default config (u-prediction was chosen because
+# x-pred + FD-JVP is unstable). FD-JVP allows gradient checkpointing and
+# flash attention, enabling larger batch sizes per GPU.
+#
+# Effective batch = batch_size x devices x accumulate = 16 x 2 x 4 = 128
+#
+# Note: The Picasso overlay already sets the correct values for this arm.
+# This config only overrides the output paths for result isolation.
+
+paths:
+  checkpoints_dir: "${paths.results_root}/ablations/upred_fd_jvp/checkpoints"
+  logs_dir: "${paths.results_root}/ablations/upred_fd_jvp/logs"
+  samples_dir: "${paths.results_root}/ablations/upred_fd_jvp/samples"
+  diagnostics_dir: "${paths.results_root}/ablations/upred_fd_jvp/diagnostics"

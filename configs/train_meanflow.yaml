@@ -22,7 +22,7 @@ unet:
   transformer_num_layers: 1
   use_flash_attention: false
   with_conditioning: false
-  prediction_type: x
+  prediction_type: u
   t_min: 0.05
   gradient_checkpointing: true
 
@@ -30,7 +30,7 @@ unet:
 training:
   batch_size: 24
   lr: 1.0e-4
-  weight_decay: 1.0e-4
+  weight_decay: 0
   optimizer: adamw
   betas: [0.9, 0.95]            # reference: adam_beta2=0.95
   max_epochs: 300
@@ -67,7 +67,7 @@ meanflow:
   adaptive: true
   norm_eps: 1.0                   # match reference CLI default (Phase 4c fix)
   lambda_mf: 1.0
-  prediction_type: x
+  prediction_type: u
   t_min: 0.05
   jvp_strategy: exact
   fd_step_size: 1.0e-3
@@ -81,7 +81,7 @@ time_sampling:
   mu: -0.4
   sigma: 1.0
   t_min: 0.001
-  data_proportion: 0.75          # reference: 75% pure FM samples
+  data_proportion: 0.5           # match iMF reference: 50% FM, 50% MF
 
 # EMA
 ema:

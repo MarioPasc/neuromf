@@ -4,7 +4,7 @@ Three-tier logging:
 - Tier 1 (step): loss ratio, velocity norms, adaptive weights, grad norm
 - Tier 2 (epoch): loss std, grad clip fraction, per-block grad norms,
   relative update norm, EMA divergence, sampling stats, velocity norms,
-  raw loss, FM/MF split, cosine similarities, x-hat stats, JSON summary
+  raw loss, FM/MF split, cosine similarities, prediction stats, JSON summary
 - Tier 3 (periodic): per-channel loss, latent histograms
 """
 
@@ -106,11 +106,17 @@ class TrainingDiagnosticsCallback(pl.Callback):
         # Relative error accumulator
         self._epoch_relative_error: list[float] = []
 
-        # x-hat stats accumulators
+        # x-hat stats accumulators (x-prediction mode)
         self._epoch_x_hat_means: list[float] = []
         self._epoch_x_hat_stds: list[float] = []
         self._epoch_x_hat_mins: list[float] = []
         self._epoch_x_hat_maxs: list[float] = []
+
+        # u-pred stats accumulators (u-prediction mode)
+        self._epoch_u_pred_means: list[float] = []
+        self._epoch_u_pred_stds: list[float] = []
+        self._epoch_u_pred_mins: list[float] = []
+        self._epoch_u_pred_maxs: list[float] = []
 
         # Parameter snapshot for relative update norm
         self._param_snapshot: dict[str, torch.Tensor] = {}
@@ -222,12 +228,16 @@ class TrainingDiagnosticsCallback(pl.Callback):
             pl_module.log("train/meanflow/relative_error", val)
             self._epoch_relative_error.append(val)
 
-        # x-hat stats — log and accumulate
+        # x-hat / u-pred stats — log and accumulate (mutually exclusive)
         for key, acc in (
             ("diag_x_hat_mean", self._epoch_x_hat_means),
             ("diag_x_hat_std", self._epoch_x_hat_stds),
             ("diag_x_hat_min", self._epoch_x_hat_mins),
             ("diag_x_hat_max", self._epoch_x_hat_maxs),
+            ("diag_u_pred_mean", self._epoch_u_pred_means),
+            ("diag_u_pred_std", self._epoch_u_pred_stds),
+            ("diag_u_pred_min", self._epoch_u_pred_mins),
+            ("diag_u_pred_max", self._epoch_u_pred_maxs),
         ):
             if key in diag:
                 val = float(diag[key])
@@ -315,6 +325,10 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_x_hat_stds.clear()
         self._epoch_x_hat_mins.clear()
         self._epoch_x_hat_maxs.clear()
+        self._epoch_u_pred_means.clear()
+        self._epoch_u_pred_stds.clear()
+        self._epoch_u_pred_mins.clear()
+        self._epoch_u_pred_maxs.clear()
 
     def on_train_epoch_end(
         self,
@@ -433,13 +447,20 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 self._epoch_relative_error
             )
 
-        # --- x-hat statistics ---
+        # --- Prediction-specific statistics ---
         if self._epoch_x_hat_means:
             summary["x_hat_stats"] = {
                 "mean": sum(self._epoch_x_hat_means) / len(self._epoch_x_hat_means),
                 "std": sum(self._epoch_x_hat_stds) / len(self._epoch_x_hat_stds),
                 "min": min(self._epoch_x_hat_mins),
                 "max": max(self._epoch_x_hat_maxs),
+            }
+        if self._epoch_u_pred_means:
+            summary["u_pred_stats"] = {
+                "mean": sum(self._epoch_u_pred_means) / len(self._epoch_u_pred_means),
+                "std": sum(self._epoch_u_pred_stds) / len(self._epoch_u_pred_stds),
+                "min": min(self._epoch_u_pred_mins),
+                "max": max(self._epoch_u_pred_maxs),
             }
 
         # --- Learning rate ---

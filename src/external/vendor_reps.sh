@@ -76,6 +76,9 @@ vendor_repo "https://github.com/milad1378yz/MOTFM.git" "MOTFM" "MOTFM (Baseline)
 # --- 5. pMF (Pixel Mean Flow - Original Reference) ---
 vendor_repo "https://github.com/Lyy-iiis/pMF.git" "pmf" "pMF (Pixel Mean Flow)"
 
+# --- 6. iMeanFlow (Improved Mean Flow) ---
+vendor_repo "https://github.com/Lyy-iiis/imeanflow" "imeanflow" "iMeanFlow (improved mean flow)"
+
 # --- Finalize ---
 
 # Create the top-level __init__.py for src/external
@@ -91,4 +94,5 @@ echo "   - MeanFlow-PyTorch/   (PyTorch implementation)"
 echo "   - NV-Generate-CTMR/   (NVIDIA medical image generation)"
 echo "   - MOTFM/              (Baseline)"
 echo "   - pmf/ (Pixel Mean Flow - Original reference)"
+echo "   - imeanflow/ (Improved Mean Flow)"
 echo "   - README_EXTERNAL.md updated."
