@@ -143,7 +143,7 @@ class _MockDataLoader:
 
     def __iter__(self):
         for i in range(0, self._data.shape[0], self._bs):
-            yield {"latent": self._data[i : i + self._bs]}
+            yield {"z": self._data[i : i + self._bs]}
 
 
 def _make_mock_trainer(val_data: Tensor) -> MagicMock:

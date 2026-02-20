@@ -143,6 +143,10 @@ class EvaluationCallback(pl.Callback):
         if not trainer.is_global_zero:
             return
 
+        # Skip during sanity check — no meaningful eval before any training
+        if trainer.sanity_checking:
+            return
+
         # Lazy-init: cache real latents on first val epoch
         if self._real_latents is None:
             self._cache_real_latents(trainer, pl_module)
@@ -296,7 +300,7 @@ class EvaluationCallback(pl.Callback):
 
         for batch in val_dl:
             if isinstance(batch, dict):
-                z = batch["latent"]
+                z = batch["z"]
             elif isinstance(batch, (list, tuple)):
                 z = batch[0]
             else:
