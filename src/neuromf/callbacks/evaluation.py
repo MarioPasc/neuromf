@@ -129,15 +129,40 @@ class EvaluationCallback(pl.Callback):
             self._n_fid_samples,
         )
 
+    def on_train_epoch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+    ) -> None:
+        """Tier 1 (SWD): computed every training epoch (~2s).
+
+        Skipped until real latents are cached (first val epoch).
+        """
+        if not trainer.is_global_zero:
+            return
+        if self._real_latents is None:
+            return
+
+        swd_val = self._compute_swd(pl_module)
+        pl_module.log("train/swd", swd_val, rank_zero_only=True, prog_bar=False)
+
+        epoch_record: dict[str, Any] = {
+            "train_epoch": trainer.current_epoch,
+            "global_step": trainer.global_step,
+            "swd": swd_val,
+        }
+        self._eval_history.append(epoch_record)
+        logger.info("Tier 1 SWD: %.6f (epoch %d)", swd_val, trainer.current_epoch)
+
     def on_validation_epoch_end(
         self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
     ) -> None:
-        """Run Tier 1 (SWD) every val epoch; Tier 2 (FID) periodically.
+        """Tier 2 (FID): computed periodically on validation epochs.
 
-        Both tiers always run on the first validation epoch (baseline).
-        Real latent caching happens lazily on the first call (deferred from
+        Always runs on the first validation epoch (baseline). Real latent
+        caching happens lazily on the first call (deferred from
         ``on_fit_start`` for DDP compatibility).
         """
         if not trainer.is_global_zero:
@@ -156,72 +181,75 @@ class EvaluationCallback(pl.Callback):
 
         self._val_epoch_count += 1
         is_first = self._val_epoch_count == 1
-        epoch_record: dict[str, Any] = {
-            "train_epoch": trainer.current_epoch,
-            "global_step": trainer.global_step,
-            "val_epoch": self._val_epoch_count,
-        }
-
-        # Tier 1: SWD (every val epoch)
-        swd_val = self._compute_swd(pl_module)
-        pl_module.log("val/swd", swd_val, rank_zero_only=True, prog_bar=False)
-        epoch_record["swd"] = swd_val
-        logger.info("Tier 1 SWD: %.6f (val_epoch %d)", swd_val, self._val_epoch_count)
 
         # Tier 2: FID (every N-th val epoch, OR first epoch for baseline)
         is_fid_epoch = (self._val_epoch_count % self._fid_every_n_val == 0) or is_first
-        if is_fid_epoch:
-            fid_results = self._compute_fid(pl_module)
-            if fid_results is not None:
-                for key, val in fid_results.items():
-                    pl_module.log(
-                        f"val/{key}", val, rank_zero_only=True, prog_bar=(key == "fid_avg")
-                    )
-                epoch_record.update(
-                    {
-                        f"fid_{k}" if not k.startswith("fid_") else k: v
-                        for k, v in fid_results.items()
-                    }
-                )
+        if not is_fid_epoch:
+            return
+
+        fid_results = self._compute_fid(pl_module)
+        if fid_results is None:
+            return
+
+        for key, val in fid_results.items():
+            pl_module.log(f"val/{key}", val, rank_zero_only=True, prog_bar=(key == "fid_avg"))
+
+        # Attach FID to the most recent eval_history record (from on_train_epoch_end)
+        fid_record = {
+            f"fid_{k}" if not k.startswith("fid_") else k: v for k, v in fid_results.items()
+        }
+        if self._eval_history:
+            self._eval_history[-1].update(fid_record)
+            self._eval_history[-1]["val_epoch"] = self._val_epoch_count
+        else:
+            # Edge case: val fires before train_epoch_end
+            fid_record.update(
+                {
+                    "train_epoch": trainer.current_epoch,
+                    "global_step": trainer.global_step,
+                    "val_epoch": self._val_epoch_count,
+                }
+            )
+            self._eval_history.append(fid_record)
+
+        logger.info(
+            "Tier 2 FID: xy=%.2f yz=%.2f zx=%.2f avg=%.2f%s",
+            fid_results["fid_xy"],
+            fid_results["fid_yz"],
+            fid_results["fid_zx"],
+            fid_results["fid_avg"],
+            " [BASELINE]" if is_first else "",
+        )
+
+        # Early stopping check (skip first epoch — it's baseline)
+        if not is_first:
+            fid_avg = fid_results["fid_avg"]
+            if fid_avg < self._best_fid:
+                self._best_fid = fid_avg
+                self._patience_counter = 0
+            else:
+                self._patience_counter += 1
                 logger.info(
-                    "Tier 2 FID: xy=%.2f yz=%.2f zx=%.2f avg=%.2f%s",
-                    fid_results["fid_xy"],
-                    fid_results["fid_yz"],
-                    fid_results["fid_zx"],
-                    fid_results["fid_avg"],
-                    " [BASELINE]" if is_first else "",
+                    "FID not improved: %.2f >= best %.2f (patience %d/%d)",
+                    fid_avg,
+                    self._best_fid,
+                    self._patience_counter,
+                    self._early_stop_patience,
                 )
+                if self._patience_counter >= self._early_stop_patience:
+                    logger.warning(
+                        "Early stopping: FID patience %d exceeded (best=%.2f)",
+                        self._early_stop_patience,
+                        self._best_fid,
+                    )
+                    trainer.should_stop = True
+        else:
+            # First FID sets the initial best
+            self._best_fid = fid_results["fid_avg"]
 
-                # Early stopping check (skip first epoch — it's baseline)
-                if not is_first:
-                    fid_avg = fid_results["fid_avg"]
-                    if fid_avg < self._best_fid:
-                        self._best_fid = fid_avg
-                        self._patience_counter = 0
-                    else:
-                        self._patience_counter += 1
-                        logger.info(
-                            "FID not improved: %.2f >= best %.2f (patience %d/%d)",
-                            fid_avg,
-                            self._best_fid,
-                            self._patience_counter,
-                            self._early_stop_patience,
-                        )
-                        if self._patience_counter >= self._early_stop_patience:
-                            logger.warning(
-                                "Early stopping: FID patience %d exceeded (best=%.2f)",
-                                self._early_stop_patience,
-                                self._best_fid,
-                            )
-                            trainer.should_stop = True
-                else:
-                    # First FID sets the initial best
-                    self._best_fid = fid_results["fid_avg"]
-
-                epoch_record["best_fid"] = self._best_fid
-                epoch_record["patience"] = self._patience_counter
-
-        self._eval_history.append(epoch_record)
+        if self._eval_history:
+            self._eval_history[-1]["best_fid"] = self._best_fid
+            self._eval_history[-1]["patience"] = self._patience_counter
 
     def on_fit_end(
         self,

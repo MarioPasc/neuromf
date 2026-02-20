@@ -537,25 +537,35 @@ class TrainingDiagnosticsCallback(pl.Callback):
             current_lr = lr_sched[0].scheduler.get_last_lr()[0]
             summary["learning_rate"] = current_lr
 
-        # --- Validation loss (from callback_metrics if available) ---
-        val_loss = trainer.callback_metrics.get("val/loss")
-        val_raw = trainer.callback_metrics.get("val/raw_loss")
-        if val_loss is not None:
-            summary["val_loss"] = float(val_loss)
-        if val_raw is not None:
-            summary["val_raw_loss"] = float(val_raw)
+        # --- SWD (logged every training epoch as train/swd) ---
+        train_swd = trainer.callback_metrics.get("train/swd")
+        if train_swd is not None:
+            summary["train_swd"] = float(train_swd)
 
-        # --- Evaluation metrics (SWD + FID from EvaluationCallback) ---
-        val_swd = trainer.callback_metrics.get("val/swd")
-        if val_swd is not None:
-            summary["val_swd"] = float(val_swd)
-        val_fid_avg = trainer.callback_metrics.get("val/fid_avg")
-        if val_fid_avg is not None:
-            summary["val_fid_avg"] = float(val_fid_avg)
-            for plane in ("xy", "yz", "zx"):
-                fid_plane = trainer.callback_metrics.get(f"val/fid_{plane}")
-                if fid_plane is not None:
-                    summary[f"val_fid_{plane}"] = float(fid_plane)
+        # --- Validation metrics (only on val epochs to avoid stale data) ---
+        # trainer.callback_metrics persists across epochs; recording them on
+        # non-val epochs would duplicate the last val epoch's values.
+        is_val_epoch = (
+            epoch % trainer.check_val_every_n_epoch == 0
+            if hasattr(trainer, "check_val_every_n_epoch") and trainer.check_val_every_n_epoch
+            else True
+        )
+        if is_val_epoch:
+            val_loss = trainer.callback_metrics.get("val/loss")
+            val_raw = trainer.callback_metrics.get("val/raw_loss")
+            if val_loss is not None:
+                summary["val_loss"] = float(val_loss)
+            if val_raw is not None:
+                summary["val_raw_loss"] = float(val_raw)
+
+            # FID (from EvaluationCallback, val epochs only)
+            val_fid_avg = trainer.callback_metrics.get("val/fid_avg")
+            if val_fid_avg is not None:
+                summary["val_fid_avg"] = float(val_fid_avg)
+                for plane in ("xy", "yz", "zx"):
+                    fid_plane = trainer.callback_metrics.get(f"val/fid_{plane}")
+                    if fid_plane is not None:
+                        summary[f"val_fid_{plane}"] = float(fid_plane)
 
         # --- Sampling stats ---
         if self._epoch_t_values:

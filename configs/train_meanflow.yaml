@@ -50,8 +50,7 @@ training:
   split_ratios: [0.85, 0.10, 0.05]  # train/val/test (stratified by dataset)
   split_seed: 42
   accumulate_grad_batches: 1      # gradient accumulation steps
-  divergence_threshold: 100.0      # 0=disabled; halts if EMA(raw_loss) > Nx min EMA(raw_loss)
-  divergence_grace_steps: 500     # skip first N steps (EMA needs warmup; MeanFlow has high per-step variance)
+  divergence_grace_steps: 500     # skip first N steps for EMA warnings (EMA needs warmup)
   augmentation:                   # Phase B (disabled by default)
     enabled: false
     transforms:
@@ -93,14 +92,14 @@ ema:
 
 # Sampling / logging (legacy keys, kept for backward compat)
 sample_every_n_epochs: 15
-n_samples_per_log: 8
+n_samples_per_log: 4
 latent_spatial_size: 48
 
 # Sample collection (replaces inline sample generation)
 sample_collector:
   enabled: true
   collect_every_n_epochs: 15    # matches sample_every_n_epochs
-  n_samples: 8                  # matches n_samples_per_log
+  n_samples: 4                  # matches n_samples_per_log
   nfe_steps: [1, 2, 5, 10]     # multi-NFE for comparison
   seed: 42                      # fixed noise for evolution tracking
 

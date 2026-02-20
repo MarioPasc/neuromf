@@ -160,7 +160,7 @@ def _make_mock_trainer(val_data: Tensor) -> MagicMock:
 
 @pytest.mark.critical
 def test_P4h_T5_callback_logs_swd() -> None:
-    """EvaluationCallback logs val/swd after validation epoch."""
+    """EvaluationCallback logs train/swd every training epoch."""
     from neuromf.callbacks.evaluation import EvaluationCallback
 
     cb = EvaluationCallback(
@@ -177,11 +177,13 @@ def test_P4h_T5_callback_logs_swd() -> None:
     trainer = _make_mock_trainer(real_data)
 
     cb.on_fit_start(trainer, pl_module)
+    # Cache real latents via val epoch first
     cb.on_validation_epoch_end(trainer, pl_module)
+    # SWD fires on train epoch end
+    cb.on_train_epoch_end(trainer, pl_module)
 
-    # Check that val/swd was logged
     logged_keys = [call.args[0] for call in pl_module.log.call_args_list]
-    assert "val/swd" in logged_keys, f"Expected val/swd in logged keys: {logged_keys}"
+    assert "train/swd" in logged_keys, f"Expected train/swd in logged keys: {logged_keys}"
 
 
 @pytest.mark.critical
@@ -215,11 +217,13 @@ def test_P4h_T6_callback_logs_fid_at_interval() -> None:
             "fid_zx": 11.0,
             "fid_avg": 11.0,
         }
+        # SWD on train epoch, FID on val epoch
         with patch.object(cb, "_compute_fid", return_value=mock_fid_results):
             cb.on_validation_epoch_end(trainer, pl_module)
+        cb.on_train_epoch_end(trainer, pl_module)
 
         logged_keys = [call.args[0] for call in pl_module.log.call_args_list]
-        assert "val/swd" in logged_keys
+        assert "train/swd" in logged_keys
         assert "val/fid_avg" in logged_keys
         assert "val/fid_xy" in logged_keys
 
@@ -269,6 +273,7 @@ def test_P4h_T7_early_stopping_triggers() -> None:
         }
         with patch.object(cb, "_compute_fid", return_value=mock_fid):
             cb.on_validation_epoch_end(trainer, pl_module)
+        cb.on_train_epoch_end(trainer, pl_module)
 
     # After 1 good + 4 bad = patience 4 > 3, should have triggered stop
     assert stop_tracker.should_stop is True, "Early stopping should have triggered"
@@ -299,11 +304,12 @@ def test_P4h_T8_callback_handles_vhead_model() -> None:
     trainer = _make_mock_trainer(real_data)
 
     cb.on_fit_start(trainer, pl_module)
-    # Should not raise
+    # Cache real latents, then SWD — should not raise with dual-head model
     cb.on_validation_epoch_end(trainer, pl_module)
+    cb.on_train_epoch_end(trainer, pl_module)
 
     logged_keys = [call.args[0] for call in pl_module.log.call_args_list]
-    assert "val/swd" in logged_keys
+    assert "train/swd" in logged_keys
 
 
 @pytest.mark.informational
@@ -366,16 +372,18 @@ def test_P4h_T11_first_epoch_baseline_fid() -> None:
 
     mock_fid = {"fid_xy": 50.0, "fid_yz": 55.0, "fid_zx": 52.0, "fid_avg": 52.33}
     with patch.object(cb, "_compute_fid", return_value=mock_fid):
-        cb.on_validation_epoch_end(trainer, pl_module)  # val_epoch 1 → baseline
+        cb.on_validation_epoch_end(trainer, pl_module)  # val_epoch 1 → baseline FID
+    cb.on_train_epoch_end(trainer, pl_module)  # SWD
 
     logged_keys = [call.args[0] for call in pl_module.log.call_args_list]
-    assert "val/swd" in logged_keys, "SWD should be logged on first epoch"
+    assert "train/swd" in logged_keys, "SWD should be logged on first epoch"
     assert "val/fid_avg" in logged_keys, "FID should be logged on first epoch (baseline)"
 
-    # Verify it's recorded in history
-    assert len(cb._eval_history) == 1
-    assert "fid_avg" in cb._eval_history[0]
-    assert cb._eval_history[0]["fid_avg"] == 52.33
+    # Verify both SWD and FID in history
+    assert len(cb._eval_history) == 2  # 1 from val (FID), 1 from train (SWD)
+    fid_record = [r for r in cb._eval_history if "fid_avg" in r]
+    assert len(fid_record) == 1
+    assert fid_record[0]["fid_avg"] == 52.33
 
 
 @pytest.mark.critical
@@ -402,7 +410,7 @@ def test_P4h_T12_on_fit_end_writes_summary() -> None:
 
         cb.on_fit_start(trainer, pl_module)
 
-        # Simulate 3 val epochs with decreasing FID
+        # Simulate 3 val epochs with decreasing FID, each followed by SWD
         for fid_val in [100.0, 80.0, 60.0]:
             mock_fid = {
                 "fid_xy": fid_val,
@@ -412,6 +420,7 @@ def test_P4h_T12_on_fit_end_writes_summary() -> None:
             }
             with patch.object(cb, "_compute_fid", return_value=mock_fid):
                 cb.on_validation_epoch_end(trainer, pl_module)
+            cb.on_train_epoch_end(trainer, pl_module)
 
         # Trigger on_fit_end
         cb.on_fit_end(trainer, pl_module)
@@ -429,7 +438,11 @@ def test_P4h_T12_on_fit_end_writes_summary() -> None:
         assert summary["fid_last"] == 60.0
         assert "swd_first" in summary
         assert "swd_best" in summary
-        assert len(summary["per_epoch"]) == 3
+        # 3 val records (FID attached) + 3 train records (SWD) = 6
+        swd_records = [r for r in summary["per_epoch"] if "swd" in r]
+        fid_records = [r for r in summary["per_epoch"] if "fid_avg" in r]
+        assert len(swd_records) == 3
+        assert len(fid_records) == 3
 
 
 @pytest.mark.informational

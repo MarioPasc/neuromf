@@ -91,13 +91,7 @@ class LatentMeanFlow(pl.LightningModule):
         self._diag_enabled: bool = False
         self._step_diagnostics: dict | None = None
 
-        # EMA-smoothed divergence guard
-        # Tracks an EMA of the raw loss to smooth per-step variance (which is
-        # huge in MeanFlow due to t/r sampling). Compares EMA to its running
-        # minimum. This catches sustained divergence (like v2_baseline's 4808x
-        # growth over 225 epochs) but ignores single-step spikes from unlucky
-        # time samples.
-        self._divergence_threshold = float(config.training.get("divergence_threshold", 0.0))
+        # EMA-smoothed divergence monitor (warning-only; early stopping is FID-based)
         self._divergence_grace_steps = int(config.training.get("divergence_grace_steps", 500))
         self._ema_raw_loss: float | None = None
         self._min_ema_raw_loss: float | None = None
@@ -205,53 +199,41 @@ class LatentMeanFlow(pl.LightningModule):
             self.log("train/raw_loss_u", result["raw_loss_u"])
             self.log("train/raw_loss_v", result["raw_loss_v"])
 
-        # EMA-smoothed divergence guard: compares EMA of loss to its running minimum.
-        # MeanFlow has huge per-step variance from t/r sampling (100x between easy
-        # and hard batches is normal), so raw step-level min-tracking false-triggers.
-        # EMA smoothing filters spikes while catching sustained divergence.
-        if self._divergence_threshold > 0:
-            raw_val = raw_loss.item()
+        # EMA-smoothed divergence monitor (warning-only, no crash).
+        # Early stopping is handled by EvaluationCallback (FID-based).
+        # This keeps EMA tracking for diagnostic logging.
+        raw_val = raw_loss.item()
 
-            # Update EMA (decay=0.99, half-life ≈ 69 steps)
-            if self._ema_raw_loss is None:
-                self._ema_raw_loss = raw_val
-            else:
-                self._ema_raw_loss = (
-                    self._ema_decay * self._ema_raw_loss + (1.0 - self._ema_decay) * raw_val
+        if self._ema_raw_loss is None:
+            self._ema_raw_loss = raw_val
+        else:
+            self._ema_raw_loss = (
+                self._ema_decay * self._ema_raw_loss + (1.0 - self._ema_decay) * raw_val
+            )
+
+        if self._min_ema_raw_loss is None or self._ema_raw_loss < self._min_ema_raw_loss:
+            self._min_ema_raw_loss = self._ema_raw_loss
+
+        if self.global_step >= self._divergence_grace_steps and self._min_ema_raw_loss > 0:
+            ratio = self._ema_raw_loss / self._min_ema_raw_loss
+            if ratio > 3.0 and not self._divergence_warned_3x:
+                logger.warning(
+                    "Step %d: EMA raw_loss=%.1f is 3x EMA min (%.1f)",
+                    self.global_step,
+                    self._ema_raw_loss,
+                    self._min_ema_raw_loss,
                 )
-
-            # Track minimum of the EMA (not of individual steps)
-            if self._min_ema_raw_loss is None or self._ema_raw_loss < self._min_ema_raw_loss:
-                self._min_ema_raw_loss = self._ema_raw_loss
-
-            # Check after grace period
-            if self.global_step >= self._divergence_grace_steps and self._min_ema_raw_loss > 0:
-                ratio = self._ema_raw_loss / self._min_ema_raw_loss
-                if ratio > 3.0 and not self._divergence_warned_3x:
-                    logger.warning(
-                        "Step %d: EMA raw_loss=%.1f is 3x EMA min (%.1f)",
-                        self.global_step,
-                        self._ema_raw_loss,
-                        self._min_ema_raw_loss,
-                    )
-                    self._divergence_warned_3x = True
-                if ratio > 5.0 and not self._divergence_warned_5x:
-                    logger.warning(
-                        "Step %d: EMA raw_loss=%.1f is 5x EMA min (%.1f)",
-                        self.global_step,
-                        self._ema_raw_loss,
-                        self._min_ema_raw_loss,
-                    )
-                    self._divergence_warned_5x = True
-                if ratio > self._divergence_threshold:
-                    raise RuntimeError(
-                        f"Divergence detected at step {self.global_step}: "
-                        f"EMA raw_loss={self._ema_raw_loss:.1f} > "
-                        f"{self._divergence_threshold}x EMA min "
-                        f"({self._min_ema_raw_loss:.1f})"
-                    )
-            self.log("train/ema_raw_loss", self._ema_raw_loss)
-            self.log("train/min_ema_raw_loss", self._min_ema_raw_loss)
+                self._divergence_warned_3x = True
+            if ratio > 5.0 and not self._divergence_warned_5x:
+                logger.warning(
+                    "Step %d: EMA raw_loss=%.1f is 5x EMA min (%.1f)",
+                    self.global_step,
+                    self._ema_raw_loss,
+                    self._min_ema_raw_loss,
+                )
+                self._divergence_warned_5x = True
+        self.log("train/ema_raw_loss", self._ema_raw_loss)
+        self.log("train/min_ema_raw_loss", self._min_ema_raw_loss)
 
         if self._diag_enabled:
             self._step_diagnostics = result

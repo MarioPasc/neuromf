@@ -40,8 +40,7 @@ training:
   prefetch_factor: 4
   accumulate_grad_batches: 4        # effective batch = 16 x 2 x 4 = 128
   log_every_n_steps: 10             # ~43 steps/epoch -> log ~every 4 epochs
-  divergence_threshold: 100.0       # halt if EMA(raw_loss) > 100x min EMA(raw_loss)
-  divergence_grace_steps: 500       # skip first 500 steps (EMA warmup + MeanFlow t/r variance)
+  divergence_grace_steps: 500       # skip first 500 steps for EMA warnings
   augmentation:
     enabled: false                   # Phase B OFF for v2
 
@@ -67,7 +66,7 @@ diagnostics:
 sample_collector:
   enabled: true
   collect_every_n_epochs: 15
-  n_samples: 8
+  n_samples: 4
   nfe_steps: [1, 2, 5, 10]
   seed: 42
 
