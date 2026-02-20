@@ -316,26 +316,37 @@ class EvaluationCallback(pl.Callback):
 
     @torch.no_grad()
     def _generate_latents(self, pl_module: pl.LightningModule, noise: Tensor) -> Tensor:
-        """Generate latents via 1-NFE with EMA weights.
+        """Generate latents via 1-NFE with EMA weights, one sample at a time.
+
+        Processes samples individually to avoid OOM — a single 178M-param
+        UNet forward on ``(1, 4, 48, 48, 48)`` uses ~8 GB, so batching
+        all N samples would exceed GPU memory.
 
         Args:
             pl_module: Lightning module with ``net`` and ``ema``.
-            noise: Noise tensor to generate from.
+            noise: Noise tensor ``(N, C, D, H, W)`` to generate from.
 
         Returns:
-            Generated latent tensor.
+            Generated latent tensor ``(N, C, D, H, W)`` on CPU.
         """
-        noise = noise.to(pl_module.device)
+        device = pl_module.device
         net = pl_module.net
         ema = pl_module.ema
 
         ema.apply_shadow(net)
         try:
-            z = sample_one_step(net, noise, prediction_type=self._prediction_type)
+            chunks: list[Tensor] = []
+            for i in range(noise.shape[0]):
+                z_i = sample_one_step(
+                    net,
+                    noise[i : i + 1].to(device),
+                    prediction_type=self._prediction_type,
+                )
+                chunks.append(z_i.cpu())
         finally:
             ema.restore(net)
 
-        return z
+        return torch.cat(chunks, dim=0)
 
     def _compute_swd(self, pl_module: pl.LightningModule) -> float:
         """Generate latents and compute SWD vs cached real."""
