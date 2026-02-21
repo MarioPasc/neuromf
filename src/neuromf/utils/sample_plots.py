@@ -388,3 +388,359 @@ def plot_spectral_evolution(
     fig.tight_layout(rect=[0, 0, 0.92, 0.96])
     save_figure(fig, output_dir / "spectral_evolution")
     logger.info("Saved spectral evolution (%d epochs, 4 channels)", len(epochs))
+
+
+def plot_nfe_comparison_grid(
+    archive: dict,
+    output_dir: Path,
+    decoded_volumes: dict[int, NDArray] | None = None,
+) -> None:
+    """NFE comparison grid: rows=NFE levels, columns=training epochs.
+
+    Each cell shows the axial mid-slice of sample #0, channel 0.
+    Visualises convergence of 1-NFE toward multi-step generation.
+
+    Args:
+        archive: Loaded ``sample_archive.pt`` dict.
+        output_dir: Directory to save the figure.
+        decoded_volumes: Optional mapping from epoch number to decoded
+            pixel-space volume ``(D, H, W)`` from 1-NFE sample #0.
+            When provided, adds a "Decoded" row at the bottom with
+            grayscale MRI axial mid-slices.
+    """
+    import torch
+
+    _apply_style()
+
+    nfe_levels = [1, 2, 5, 10]
+    nfe_keys = [f"nfe_{n}" for n in nfe_levels]
+    epochs = _subsample_epochs(archive["epochs"], _MAX_GRID_COLS)
+    if not epochs:
+        logger.warning("No epochs in archive; skipping NFE comparison grid.")
+        return
+
+    # Check which NFE keys actually exist in the first epoch
+    first_key = f"epoch_{epochs[0]:04d}"
+    available_nfe = [k for k in nfe_keys if k in archive[first_key]]
+    available_levels = [int(k.split("_")[1]) for k in available_nfe]
+    if not available_nfe:
+        logger.warning("No NFE data found; skipping NFE comparison grid.")
+        return
+
+    has_decoded = decoded_volumes is not None and len(decoded_volumes) > 0
+    n_latent_rows = len(available_nfe)
+    n_rows = n_latent_rows + (1 if has_decoded else 0)
+    n_cols = len(epochs)
+
+    # Collect all slices for shared colormap
+    all_slices: list[NDArray] = []
+    slice_grid: list[list[NDArray]] = []  # [row][col]
+
+    for nfe_key in available_nfe:
+        row_slices: list[NDArray] = []
+        for ep in epochs:
+            epoch_key = f"epoch_{ep:04d}"
+            z = archive[epoch_key][nfe_key]
+            if isinstance(z, torch.Tensor):
+                z = z.numpy()
+            sl = z[0, 0, z.shape[2] // 2, :, :]  # sample #0, ch 0, axial mid
+            row_slices.append(sl)
+            all_slices.append(sl)
+        slice_grid.append(row_slices)
+
+    # Shared symmetric colormap for latent rows
+    absmax = float(np.percentile(np.abs(np.stack(all_slices)), 99.5))
+    vmin, vmax = -absmax, absmax
+
+    fig_width = max(1.3 * n_cols + 1.2, 4.0)
+    fig_height = 1.3 * n_rows + 0.6
+
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    gs = gridspec.GridSpec(
+        n_rows + 1,
+        n_cols,
+        figure=fig,
+        height_ratios=[1] * n_rows + [0.05],
+        hspace=0.15,
+        wspace=0.05,
+    )
+
+    im = None
+    for row_idx, (nfe_level, nfe_key) in enumerate(zip(available_levels, available_nfe)):
+        for col_idx, ep in enumerate(epochs):
+            ax = fig.add_subplot(gs[row_idx, col_idx])
+            im = ax.imshow(
+                slice_grid[row_idx][col_idx].T,
+                cmap="RdBu_r",
+                origin="lower",
+                vmin=vmin,
+                vmax=vmax,
+                aspect="equal",
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if row_idx == 0:
+                ax.set_title(f"Ep {ep}", fontsize=7, pad=2)
+            if col_idx == 0:
+                ax.set_ylabel(f"NFE={nfe_level}", fontsize=8)
+
+    # Decoded row (grayscale MRI mid-slices)
+    if has_decoded:
+        assert decoded_volumes is not None
+        decoded_row = n_latent_rows
+        for col_idx, ep in enumerate(epochs):
+            ax = fig.add_subplot(gs[decoded_row, col_idx])
+            if ep in decoded_volumes:
+                vol = decoded_volumes[ep]
+                mid_slice = vol[vol.shape[0] // 2, :, :]  # axial mid
+                ax.imshow(mid_slice.T, cmap="gray", origin="lower", aspect="equal")
+            else:
+                ax.set_facecolor("white")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if col_idx == 0:
+                ax.set_ylabel("Decoded", fontsize=8)
+
+    if im is not None:
+        cbar_ax = fig.add_subplot(gs[n_rows, :])
+        fig.colorbar(im, cax=cbar_ax, orientation="horizontal", label="Latent value (ch 0)")
+
+    save_figure(fig, output_dir / "nfe_comparison_grid")
+    logger.info("Saved NFE comparison grid (%d rows x %d epochs)", n_rows, n_cols)
+
+
+def plot_decoded_nfe_grid(
+    decoded_samples: dict[int, NDArray],
+    output_dir: Path,
+) -> None:
+    """Decoded MRI comparison across NFE levels (last epoch).
+
+    Layout: N rows (one per NFE level) x 3 columns (Axial, Coronal, Sagittal).
+    Each cell shows a grayscale MRI mid-slice from sample #0.
+
+    Args:
+        decoded_samples: Mapping from NFE level (e.g. 1, 2, 5, 10) to
+            decoded pixel-space volume ``(D, H, W)``.
+        output_dir: Directory to save the figure.
+    """
+    _apply_style()
+
+    if not decoded_samples:
+        logger.warning("No decoded samples; skipping decoded NFE grid.")
+        return
+
+    nfe_levels = sorted(decoded_samples.keys())
+    n_rows = len(nfe_levels)
+    view_names = ["Axial", "Coronal", "Sagittal"]
+
+    fig, axes = plt.subplots(
+        n_rows,
+        3,
+        figsize=(9, 3 * n_rows),
+        squeeze=False,
+    )
+
+    for row_idx, nfe in enumerate(nfe_levels):
+        vol = decoded_samples[nfe]  # (D, H, W)
+        mid = [s // 2 for s in vol.shape]
+        slices = [
+            vol[mid[0], :, :],  # Axial
+            vol[:, mid[1], :],  # Coronal
+            vol[:, :, mid[2]],  # Sagittal
+        ]
+
+        # Shared intensity range per row
+        vmin_row = float(vol.min())
+        vmax_row = float(vol.max())
+
+        for col_idx, (sl, name) in enumerate(zip(slices, view_names)):
+            ax = axes[row_idx, col_idx]
+            ax.imshow(
+                sl.T,
+                cmap="gray",
+                origin="lower",
+                vmin=vmin_row,
+                vmax=vmax_row,
+                aspect="equal",
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if row_idx == 0:
+                ax.set_title(name, fontsize=10)
+            if col_idx == 0:
+                ax.set_ylabel(f"NFE={nfe}", fontsize=9)
+
+    fig.suptitle("Decoded MRI Samples by NFE Level", fontsize=12, y=1.01)
+    fig.tight_layout()
+    save_figure(fig, output_dir / "decoded_nfe_grid")
+    logger.info("Saved decoded NFE grid (%d NFE levels)", n_rows)
+
+
+def plot_nfe_consistency_evolution(
+    archive: dict,
+    output_dir: Path,
+) -> None:
+    """1x2 panel of NFE consistency metrics over training epochs.
+
+    (a) MSE between 1-NFE and multi-step (log scale).
+    (b) Cosine similarity between 1-NFE and multi-step.
+
+    Args:
+        archive: Loaded ``sample_archive.pt`` dict.
+        output_dir: Directory to save the figure.
+    """
+    _apply_style()
+
+    epochs = sorted(archive["epochs"])
+    if not epochs:
+        logger.warning("No epochs in archive; skipping NFE consistency evolution.")
+        return
+
+    # Collect consistency data per epoch
+    epoch_list: list[int] = []
+    mse_data: dict[str, list[float]] = {}
+    cosine_data: dict[str, list[float]] = {}
+
+    for ep in epochs:
+        epoch_key = f"epoch_{ep:04d}"
+        nfe_con = archive[epoch_key].get("nfe_consistency", {})
+        if not nfe_con:
+            continue
+        epoch_list.append(ep)
+        for key, val in nfe_con.items():
+            if key.startswith("mse_"):
+                mse_data.setdefault(key, []).append(float(val))
+            elif key.startswith("cosine_"):
+                cosine_data.setdefault(key, []).append(float(val))
+
+    if not epoch_list:
+        logger.warning("No NFE consistency data; skipping.")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    # (a) MSE (log scale)
+    for i, (key, vals) in enumerate(sorted(mse_data.items())):
+        label = key.replace("mse_", "").replace("vs", " vs ")
+        axes[0].plot(
+            epoch_list,
+            vals,
+            color=COLORBLIND_PALETTE[i % len(COLORBLIND_PALETTE)],
+            marker="o",
+            markersize=3,
+            linewidth=1.2,
+            label=label,
+        )
+    axes[0].set_yscale("log")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("MSE (log)")
+    axes[0].set_title("1-NFE vs Multi-Step MSE")
+    axes[0].legend(fontsize=8)
+    axes[0].grid(True, alpha=0.3)
+
+    # (b) Cosine similarity
+    for i, (key, vals) in enumerate(sorted(cosine_data.items())):
+        label = key.replace("cosine_", "").replace("vs", " vs ")
+        axes[1].plot(
+            epoch_list,
+            vals,
+            color=COLORBLIND_PALETTE[i % len(COLORBLIND_PALETTE)],
+            marker="o",
+            markersize=3,
+            linewidth=1.2,
+            label=label,
+        )
+    axes[1].axhline(1.0, color="gray", linestyle="--", linewidth=0.8)
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Cosine Similarity")
+    axes[1].set_title("1-NFE vs Multi-Step Cosine Similarity")
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    save_figure(fig, output_dir / "nfe_consistency_evolution")
+    logger.info("Saved NFE consistency evolution (%d epochs)", len(epoch_list))
+
+
+def plot_inter_epoch_delta(
+    archive: dict,
+    output_dir: Path,
+) -> None:
+    """1x2 panel of inter-epoch sample deltas (stability indicator).
+
+    Compares consecutive-epoch 1-NFE samples generated from the same noise.
+    (a) L2 distance between consecutive epochs.
+    (b) Cosine similarity between consecutive epochs.
+
+    Args:
+        archive: Loaded ``sample_archive.pt`` dict.
+        output_dir: Directory to save the figure.
+    """
+    import torch
+
+    _apply_style()
+
+    epochs = sorted(archive["epochs"])
+    if len(epochs) < 2:
+        logger.warning("Need >= 2 epochs for inter-epoch delta; skipping.")
+        return
+
+    mid_epochs: list[int] = []
+    l2_distances: list[float] = []
+    cosine_sims: list[float] = []
+
+    prev_z = None
+    for ep in epochs:
+        epoch_key = f"epoch_{ep:04d}"
+        z = archive[epoch_key]["nfe_1"]
+        if isinstance(z, np.ndarray):
+            z = torch.from_numpy(z)
+        z_flat = z.float().reshape(z.shape[0], -1)  # (N, D)
+
+        if prev_z is not None:
+            # Per-sample L2 distance, averaged
+            l2 = (z_flat - prev_z).norm(dim=1).mean().item()
+            l2_distances.append(l2)
+
+            # Per-sample cosine similarity, averaged
+            cos = torch.nn.functional.cosine_similarity(z_flat, prev_z, dim=1).mean().item()
+            cosine_sims.append(cos)
+
+            mid_epochs.append(ep)
+
+        prev_z = z_flat.clone()
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    # (a) L2 distance
+    axes[0].plot(
+        mid_epochs,
+        l2_distances,
+        color=COLORBLIND_PALETTE[0],
+        marker="o",
+        markersize=4,
+        linewidth=1.2,
+    )
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("L2 Distance")
+    axes[0].set_title("Inter-Epoch Sample Delta (L2)")
+    axes[0].grid(True, alpha=0.3)
+
+    # (b) Cosine similarity
+    axes[1].plot(
+        mid_epochs,
+        cosine_sims,
+        color=COLORBLIND_PALETTE[2],
+        marker="o",
+        markersize=4,
+        linewidth=1.2,
+    )
+    axes[1].axhline(1.0, color="gray", linestyle="--", linewidth=0.8)
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Cosine Similarity")
+    axes[1].set_title("Inter-Epoch Sample Stability (Cosine)")
+    axes[1].grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    save_figure(fig, output_dir / "inter_epoch_delta")
+    logger.info("Saved inter-epoch delta (%d transitions)", len(mid_epochs))

@@ -1,5 +1,14 @@
-# Phase 4 training config (skeleton prepared in Phase 3)
-# Full training configuration for MeanFlow on brain MRI latents
+# MeanFlow training config — best known architecture
+# Full training configuration for MeanFlow on brain MRI latents.
+#
+# Architecture choices (proven in xpred_exact_jvp ablation, FID 14.4):
+#   - x-prediction + exact JVP (stable; u-pred + FD-JVP diverges)
+#   - (t, h) conditioning (MF Table 1c: FID 61.06 vs h-only 63.13)
+#   - v-head with 1 ResBlock (tangent supervision + extra gradient signal)
+#   - L2 loss (p=2) with adaptive weighting (norm_p=1, norm_eps=1)
+#
+# Picasso overlay overrides hardware settings (GPUs, batch, workers, augmentation).
+# Ablation overlays override only what they test (inheriting everything else).
 
 # Trainer infrastructure
 # For multi-GPU DDP, override devices/strategy in picasso/train_meanflow.yaml
@@ -20,14 +29,14 @@ unet:
   norm_num_groups: 32
   resblock_updown: true
   transformer_num_layers: 1
-  use_flash_attention: false
+  use_flash_attention: false           # must be false for exact JVP (torch.func.jvp)
   with_conditioning: false
-  prediction_type: u
+  prediction_type: x                   # x-prediction (proven stable with exact JVP)
   t_min: 0.05
-  gradient_checkpointing: true
-  use_v_head: false
-  v_head_num_res_blocks: 0         # 0=projection only (~7K), 1=+ResBlock (~228K)
-  conditioning_mode: dual
+  gradient_checkpointing: false        # must be false for exact JVP (torch.func.jvp)
+  use_v_head: true                     # iMF dual-head: v-head provides JVP tangent
+  v_head_num_res_blocks: 1             # 1 ResBlock (~228K params)
+  conditioning_mode: t_h               # MF Table 1c optimal: (t, h=t-r)
 
 # Training
 training:
@@ -36,22 +45,22 @@ training:
   weight_decay: 0
   optimizer: adamw
   betas: [0.9, 0.95]            # reference: adam_beta2=0.95
-  max_epochs: 300
+  max_epochs: 1500              # target ~61K optimizer steps on Picasso
   warmup_steps: 0               # reference: no warmup
-  lr_schedule: cosine             # "constant" | "cosine" | "linear"
+  lr_schedule: cosine            # "constant" | "cosine" | "linear"
   gradient_clip_norm: 1.0
-  gradient_checkpointing: true
+  gradient_checkpointing: false  # must be false for exact JVP
   mixed_precision: bf16
   log_every_n_steps: 50
-  val_every_n_epochs: 5
-  save_every_n_epochs: 10
+  val_every_n_epochs: 10
+  save_every_n_epochs: 50
   num_workers: 0
   prefetch_factor: null
   split_ratios: [0.85, 0.10, 0.05]  # train/val/test (stratified by dataset)
   split_seed: 42
   accumulate_grad_batches: 1      # gradient accumulation steps
-  divergence_grace_steps: 500     # skip first N steps for EMA warnings (EMA needs warmup)
-  augmentation:                   # Phase B (disabled by default)
+  divergence_grace_steps: 1000    # skip first N steps for EMA warnings
+  augmentation:                   # disabled for local dev; enabled in Picasso overlay
     enabled: false
     transforms:
       flip_d:                      # depth axis = L-R in RAS (approximately symmetric)
@@ -61,22 +70,22 @@ training:
         std_fraction: 0.05        # 5% of per-channel std
       intensity_scale:
         prob: 0.2
-        factors: 0.05             # ±5% scaling
+        factors: 0.05             # +/-5% scaling
 
 # MeanFlow
 meanflow:
   p: 2.0
   adaptive: true
-  norm_eps: 1.0                   # match reference CLI default (Phase 4c fix)
+  norm_eps: 1.0                   # stability constant (Phase 4c fix)
   lambda_mf: 1.0
-  prediction_type: u
+  prediction_type: x              # must match unet.prediction_type
   t_min: 0.05
-  jvp_strategy: exact
+  jvp_strategy: exact             # exact JVP via torch.func.jvp
   fd_step_size: 1.0e-3
   channel_weights: null
-  norm_p: 1.0                     # match all references (PyTorch MF, pMF, JAX MF)
-  spatial_mask_ratio: 0.0         # Phase C (0.0=off; e.g. 0.5=mask 50%)
-  use_v_head: false
+  norm_p: 1.0                     # adaptive weight exponent (1.0 = log-loss)
+  spatial_mask_ratio: 0.0         # Phase C (0.0=off)
+  use_v_head: true                # must match unet.use_v_head
 
 # Time sampling
 time_sampling:
@@ -91,15 +100,15 @@ ema:
   decay: 0.9999
 
 # Sampling / logging (legacy keys, kept for backward compat)
-sample_every_n_epochs: 15
+sample_every_n_epochs: 50
 n_samples_per_log: 4
 latent_spatial_size: 48
 
 # Sample collection (replaces inline sample generation)
 sample_collector:
   enabled: true
-  collect_every_n_epochs: 15    # matches sample_every_n_epochs
-  n_samples: 4                  # matches n_samples_per_log
+  collect_every_n_epochs: 50    # reduced for 1500-epoch training
+  n_samples: 4
   nfe_steps: [1, 2, 5, 10]     # multi-NFE for comparison
   seed: 42                      # fixed noise for evolution tracking
 
@@ -132,16 +141,16 @@ evaluation:
   n_real_cache: 200
   n_fid_samples: 100
   n_fid_real_samples: 200
-  fid_every_n_val_epochs: 2
+  fid_every_n_val_epochs: 3
   center_slices_ratio: 0.6
   fid_weights_path: ""
-  early_stop_patience: 5
+  early_stop_patience: 10
   seed: 42
 
 # Diagnostics
 diagnostics:
   enabled: false
-  every_n_epochs: 25
+  every_n_epochs: 50
 
 # Paths (will be merged with base.yaml)
 paths:

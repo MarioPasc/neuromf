@@ -118,6 +118,68 @@ def test_P3_u_from_x_t_min_clamping(small_model: MAISIUNetWrapper) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+def test_P4_t_h_conditioning_mode() -> None:
+    """Verify (t, h) conditioning mode produces valid output."""
+    torch.manual_seed(42)
+    config = MAISIUNetConfig(prediction_type="x", conditioning_mode="t_h")
+    model = MAISIUNetWrapper(config)
+    model.eval()
+
+    B, C, D, H, W = 1, 4, 16, 16, 16
+    z_t = torch.randn(B, C, D, H, W)
+    r = torch.tensor([0.2])
+    t = torch.tensor([0.7])
+
+    with torch.no_grad():
+        out = model(z_t, r, t)
+
+    assert out.shape == (B, C, D, H, W)
+    assert torch.isfinite(out).all()
+    assert hasattr(model, "h_embed"), "t_h mode should create h_embed MLP"
+    assert not hasattr(model, "r_embed"), "t_h mode should not create r_embed"
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
+def test_P4_t_h_differs_from_h_only() -> None:
+    """(t, h) conditioning should differ from h-only (adds absolute time t)."""
+    torch.manual_seed(42)
+
+    config_th = MAISIUNetConfig(prediction_type="x", conditioning_mode="t_h")
+    model_th = MAISIUNetWrapper(config_th)
+
+    config_h = MAISIUNetConfig(prediction_type="x", conditioning_mode="h")
+    model_h = MAISIUNetWrapper(config_h)
+
+    # Copy shared UNet weights for fair comparison
+    model_th.unet.load_state_dict(model_h.unet.state_dict())
+
+    # Re-init zero-init output conv so outputs are non-zero
+    for m in (model_th, model_h):
+        for name, module in m.named_modules():
+            if isinstance(module, torch.nn.Conv3d) and module.weight.abs().sum() == 0:
+                torch.nn.init.kaiming_normal_(module.weight, nonlinearity="linear")
+
+    model_th.eval()
+    model_h.eval()
+
+    B, C, D, H, W = 1, 4, 16, 16, 16
+    z_t = torch.randn(B, C, D, H, W)
+    r = torch.tensor([0.2])
+    t = torch.tensor([0.7])
+
+    with torch.no_grad():
+        out_th = model_th(z_t, r, t)
+        out_h = model_h(z_t, r, t)
+
+    # (t, h) has additional absolute time info, so should differ from h-only
+    assert not torch.allclose(out_th, out_h, atol=1e-4), (
+        "(t, h) conditioning and h-only should produce different outputs"
+    )
+
+
+@pytest.mark.phase4
+@pytest.mark.informational
 def test_P4g_T10_h_conditioning_differs_from_dual() -> None:
     """P4g-T10: h-conditioning produces different embeddings than dual for r != t."""
     torch.manual_seed(42)

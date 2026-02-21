@@ -3,15 +3,13 @@
 # PHASE 4: MEANFLOW TRAINING — SLURM LAUNCHER
 #
 # Login-node script that submits the Phase 4 training job on Picasso.
-# Supports single-GPU and multi-GPU (DDP) within one DGX node.
+# Uses x-pred + exact JVP (best known config), requiring batch_size=2 per GPU.
 #
-# Expected time: ~24-48h on 1×A100, ~12-24h on 2×A100, ~6-12h on 4×A100
+# Expected time: ~400s/epoch x 1500 epochs = ~7 days on 6×A100
 #
 # Usage (from login node):
-#   bash experiments/slurm/phase_4/train.sh              # 2 GPUs (default)
-#   N_GPUS=1 bash experiments/slurm/phase_4/train.sh     # 1 GPU
-#   N_GPUS=4 bash experiments/slurm/phase_4/train.sh     # 4 GPUs
-#   N_GPUS=8 bash experiments/slurm/phase_4/train.sh     # Full DGX node
+#   bash experiments/slurm/phase_4/train.sh              # 6 GPUs (default)
+#   N_GPUS=4 bash experiments/slurm/phase_4/train.sh     # 4 GPUs (slower)
 #   bash experiments/slurm/phase_4/train.sh --resume /path/to/checkpoint.ckpt
 # =============================================================================
 
@@ -35,8 +33,8 @@ export REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf"
 export CONFIGS_DIR="${REPO_SRC}/configs/picasso"
 export RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results"
 
-# Number of GPUs — override with N_GPUS env var
-export N_GPUS="${N_GPUS:-2}"
+# Number of GPUs — 6 for exact JVP (batch=2/GPU, accum=11, eff=132)
+export N_GPUS="${N_GPUS:-6}"
 
 # Optional: pass --resume /path/to/ckpt as argument
 export RESUME_CKPT="${1:-}"
@@ -73,7 +71,7 @@ mkdir -p "${RESULTS_DST}/phase_4/diagnostics"
 # needs 1 task with N GPUs allocated. No srun needed.
 JOB_ID=$(sbatch --parsable \
     --job-name="neuromf_p4_${N_GPUS}gpu" \
-    --time=2-00:00:00 \
+    --time=7-00:00:00 \
     --ntasks=1 \
     --cpus-per-task="${CPUS}" \
     --mem="${MEM}G" \

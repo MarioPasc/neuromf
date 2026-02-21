@@ -4,40 +4,41 @@
 # produce better generation quality than u-prediction (predicting average velocity)
 # when training on MAISI VAE-GAN latents?
 #
-# x-prediction is motivated by the hypothesis that MAISI VAE latents live on a
-# structured manifold, making direct data prediction easier than velocity prediction.
-# However, x-pred requires exact JVP (torch.func.jvp), which is incompatible with
-# gradient checkpointing and flash attention.
+# The x-pred arm inherits the best known config from base + Picasso overlay:
+#   x-pred, exact JVP, (t,h) conditioning, v-head (1 ResBlock), 1500 epochs,
+#   augmentation, cosine LR, L2 loss with adaptive weighting.
+# The ablation overlay only redirects output paths.
+#
+# The u-pred arm was run with the previous config (u-pred, FD-JVP, h-conditioning,
+# 300 epochs) and diverged at epoch 150. It serves as the comparison baseline.
 #
 # Merge chain: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml -> ablation.yaml
 #
-# Both arms use the same effective batch size (128) and training hyperparameters.
-# The only differences are prediction type, JVP strategy, and memory optimization.
-#
 # Usage:
-#   bash experiments/ablations/xpred_vs_upred/launch.sh            # both arms
-#   bash experiments/ablations/xpred_vs_upred/launch.sh xpred      # x-pred only
-#   bash experiments/ablations/xpred_vs_upred/launch.sh upred      # u-pred only
+#   bash experiments/ablations/xpred_vs_upred/launch.sh                # x-pred only (default)
+#   bash experiments/ablations/xpred_vs_upred/launch.sh --xpred-only   # explicit
+#   bash experiments/ablations/xpred_vs_upred/launch.sh both           # both arms
 
 ablations:
   xpred_exact_jvp:
-    description: "x-prediction + exact JVP (no gradient checkpointing, no flash attention)"
+    description: "x-prediction + exact JVP + (t,h) conditioning + v-head + 1500 epochs + augmentation"
     config: configs/xpred_exact_jvp.yaml
-    n_gpus: 4
+    n_gpus: 6
     prediction_type: x
     jvp_strategy: exact
+    conditioning_mode: t_h
     gradient_checkpointing: false
-    effective_batch: 128  # 2 x 4 x 16
+    effective_batch: 132  # 2 x 6 x 11
+    wall_time: "7-00:00:00"
 
   upred_fd_jvp:
-    description: "u-prediction + FD-JVP (gradient checkpointing + flash attention)"
+    description: "u-prediction + FD-JVP + h-conditioning (BASELINE — collapsed at epoch 150)"
     config: configs/upred_fd_jvp.yaml
     n_gpus: 2
     prediction_type: u
     jvp_strategy: finite_difference
+    conditioning_mode: h
     gradient_checkpointing: true
     effective_batch: 128  # 16 x 2 x 4
-
-# Shared settings inherited from Picasso overlay (NOT overridden per arm):
-#   use_v_head: true, v_head_num_res_blocks: 1, conditioning_mode: h
-# Both arms use the iMF dual-head architecture for JVP tangent quality.
+    status: completed_diverged
+    wall_time: "3-00:00:00"

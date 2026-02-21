@@ -1,48 +1,16 @@
-# x-prediction + exact JVP (no gradient checkpointing)
+# x-prediction + exact JVP — ablation output paths
 #
 # Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
 #
-# Inherits from Picasso overlay (intentionally not overridden):
-#   use_v_head: true, v_head_num_res_blocks: 1, conditioning_mode: h
-#   The v-head provides JVP tangent quality; held constant across ablation arms.
+# The base config already specifies x-pred + exact JVP + (t,h) conditioning +
+# v-head + 1500 epochs. This overlay only redirects output to the ablation dir
+# and adjusts GPU count (4→6 GPUs handled by base Picasso overlay).
 #
-# Rationale: x-prediction may produce better samples when the data lives on a
-# structured low-dimensional manifold (MAISI VAE latent space). But x-pred
-# requires exact JVP (FD-JVP + x-pred is unstable due to 1/t amplification).
-# Exact JVP via torch.func.jvp is incompatible with gradient checkpointing
-# and flash attention, so we disable both and compensate with smaller batch
-# size + more gradient accumulation.
-#
-# Memory budget (A100 40GB, no gradient checkpointing):
-#   Fixed: ~6 GB (params doubled during JVP + optimizer + grads)
-#   Activations: ~20 GB at batch_size=2 without checkpointing (batch_size=4 OOMs)
-#   Headroom: ~14 GB
-#
-# Effective batch = batch_size x devices x accumulate = 2 x 4 x 16 = 128
+# Effective batch = 2 x 6 x 11 = 132 (~128)
+# Compare results against the existing upred_fd_jvp baseline (collapsed at epoch 150).
 
 paths:
   checkpoints_dir: "${paths.results_root}/ablations/xpred_exact_jvp/checkpoints"
   logs_dir: "${paths.results_root}/ablations/xpred_exact_jvp/logs"
   samples_dir: "${paths.results_root}/ablations/xpred_exact_jvp/samples"
   diagnostics_dir: "${paths.results_root}/ablations/xpred_exact_jvp/diagnostics"
-
-# --- Override prediction type and JVP strategy ---
-unet:
-  prediction_type: x
-  use_flash_attention: false    # required: flash attention incompatible with torch.func.jvp
-  gradient_checkpointing: false # required: gradient checkpointing incompatible with torch.func.jvp
-
-meanflow:
-  prediction_type: x
-  jvp_strategy: exact           # exact JVP via torch.func.jvp
-
-# --- Smaller batch, more accumulation to compensate for no gradient checkpointing ---
-# batch_size=4 OOMs on A100 40GB (torch.func.jvp doubles activations, no checkpointing).
-# Use batch_size=2 with 4 GPUs to maintain effective batch = 128.
-trainer:
-  devices: 4                       # override Picasso default (2) — need 4 GPUs for batch_size=2
-
-training:
-  batch_size: 2                  # reduced from 4 (batch_size=4 OOMs on A100 40GB with exact JVP)
-  accumulate_grad_batches: 16    # effective batch = 2 x 4 x 16 = 128 (same as u-pred arm)
-  gradient_checkpointing: false  # must be false for exact JVP

@@ -1,22 +1,39 @@
-# u-prediction + FD-JVP (with gradient checkpointing)
+# u-prediction + FD-JVP (BASELINE — completed, diverged at epoch 150)
 #
 # Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
 #
-# Inherits from Picasso overlay (intentionally not overridden):
-#   use_v_head: true, v_head_num_res_blocks: 1, conditioning_mode: h
-#   The v-head provides JVP tangent quality; held constant across ablation arms.
-#
-# This arm uses the current default config (u-prediction was chosen because
-# x-pred + FD-JVP is unstable). FD-JVP allows gradient checkpointing and
-# flash attention, enabling larger batch sizes per GPU.
+# Since the base config now defaults to x-pred + exact JVP + (t,h) conditioning,
+# this overlay reverts to the u-pred settings used in the original baseline run.
+# FD-JVP allows gradient checkpointing and flash attention for larger per-GPU batch.
 #
 # Effective batch = batch_size x devices x accumulate = 16 x 2 x 4 = 128
 #
-# Note: The Picasso overlay already sets the correct values for this arm.
-# This config only overrides the output paths for result isolation.
+# NOTE: This arm already ran and diverged at epoch 150. Re-running is only needed
+# if you want to test u-pred with the new enhancements (augmentation, t_h, etc.).
 
 paths:
   checkpoints_dir: "${paths.results_root}/ablations/upred_fd_jvp/checkpoints"
   logs_dir: "${paths.results_root}/ablations/upred_fd_jvp/logs"
   samples_dir: "${paths.results_root}/ablations/upred_fd_jvp/samples"
   diagnostics_dir: "${paths.results_root}/ablations/upred_fd_jvp/diagnostics"
+
+# --- Override back to u-prediction + FD-JVP ---
+unet:
+  prediction_type: u
+  use_flash_attention: true          # safe with FD-JVP (no torch.func)
+  gradient_checkpointing: true       # saves memory, compatible with FD-JVP
+  conditioning_mode: h               # iMF convention (original baseline setting)
+
+meanflow:
+  prediction_type: u
+  jvp_strategy: finite_difference    # FD-JVP (h=1e-3)
+
+# --- Larger batch per GPU (gradient checkpointing saves memory) ---
+trainer:
+  devices: 2
+
+training:
+  batch_size: 16                     # per-GPU (A100 40GB with grad ckpt)
+  accumulate_grad_batches: 4         # effective batch = 16 x 2 x 4 = 128
+  gradient_checkpointing: true
+  max_epochs: 300                    # original baseline length

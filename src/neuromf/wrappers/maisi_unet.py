@@ -85,7 +85,7 @@ class MAISIUNetConfig:
     t_min: float = 0.05
     use_v_head: bool = False
     v_head_num_res_blocks: int = 0  # 0=projection only (~7K), 1+=ResBlocks (~221K each)
-    conditioning_mode: str = "dual"  # "dual" for (r, t), "h" for h=t-r
+    conditioning_mode: str = "dual"  # "dual" for (r, t), "h" for h=t-r, "t_h" for (t, h=t-r)
 
     @classmethod
     def from_omegaconf(cls, cfg: DictConfig) -> MAISIUNetConfig:
@@ -267,13 +267,20 @@ class MAISIUNetWrapper(nn.Module):
             with_conditioning=config.with_conditioning,
         )
 
-        # Parallel r-embedding MLP (same architecture as unet.time_embed).
-        # Only needed for dual (r, t) conditioning; h-conditioning uses a
-        # single embedding through unet.time_embed.  Skipping creation when
-        # conditioning_mode="h" avoids DDP unused-parameter errors.
-        if config.conditioning_mode != "h":
-            time_embed_dim = config.channels[0] * 4
+        # Auxiliary embedding MLPs for time conditioning.
+        # Only created when needed to avoid DDP unused-parameter errors.
+        # - "dual": r_embed for separate (r, t) conditioning (pMF convention)
+        # - "h": no extra MLP; single h=t-r through unet.time_embed (iMF convention)
+        # - "t_h": h_embed for (t, h=t-r) conditioning (original MF optimal, Table 1c)
+        time_embed_dim = config.channels[0] * 4
+        if config.conditioning_mode == "dual":
             self.r_embed = nn.Sequential(
+                nn.Linear(config.channels[0], time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, time_embed_dim),
+            )
+        elif config.conditioning_mode == "t_h":
+            self.h_embed = nn.Sequential(
                 nn.Linear(config.channels[0], time_embed_dim),
                 nn.SiLU(),
                 nn.Linear(time_embed_dim, time_embed_dim),
@@ -416,9 +423,11 @@ class MAISIUNetWrapper(nn.Module):
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Forward pass with configurable time conditioning.
 
-        Supports two conditioning modes:
+        Supports three conditioning modes:
         - ``"dual"``: separate sinusoidal embeddings for r and t, summed.
         - ``"h"``: single embedding for h = t - r (iMF convention).
+        - ``"t_h"``: separate embeddings for t and h = t - r, summed
+          (original MF optimal per Table 1c).
 
         Args:
             z_t: Noisy latent ``(B, C, D, H, W)``.
@@ -436,6 +445,19 @@ class MAISIUNetWrapper(nn.Module):
             h_sin = get_timestep_embedding(h_scaled, self._sinusoidal_dim)
             h_sin = h_sin.to(dtype=z_t.dtype)
             emb = self.unet.time_embed(h_sin)
+        elif self.conditioning_mode == "t_h":
+            # Original MF convention: condition on both t and h = t - r
+            # MF paper Table 1c: (t, h) FID=61.06 vs h-only FID=63.13
+            h_val = t - r
+            t_scaled = t * _TIME_SCALE
+            h_scaled = h_val * _TIME_SCALE
+            t_sin = get_timestep_embedding(t_scaled, self._sinusoidal_dim)
+            h_sin = get_timestep_embedding(h_scaled, self._sinusoidal_dim)
+            t_sin = t_sin.to(dtype=z_t.dtype)
+            h_sin = h_sin.to(dtype=z_t.dtype)
+            t_emb = self.unet.time_embed(t_sin)
+            h_emb = self.h_embed(h_sin)
+            emb = t_emb + h_emb
         else:
             # Dual (r, t) conditioning (pMF convention)
             t_scaled = t * _TIME_SCALE

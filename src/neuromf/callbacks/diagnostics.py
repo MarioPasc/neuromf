@@ -647,3 +647,25 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 json.dump(self._training_history, f, indent=2, default=str)
         except Exception as e:
             logger.warning("Failed to write diagnostics JSON: %s", e)
+
+    def on_fit_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+    ) -> None:
+        """Generate training dashboard at end of training."""
+        if self._diag_dir is None or not trainer.is_global_zero:
+            return
+
+        summary_path = self._diag_dir / "aggregate_results" / "training_summary.json"
+        if not summary_path.exists():
+            return
+
+        try:
+            from neuromf.utils.training_dashboard import plot_training_dashboard
+
+            figures_dir = self._diag_dir.parent / "figures"
+            plot_training_dashboard(summary_path, figures_dir)
+            logger.info("Training dashboard generated at end of training")
+        except Exception as e:
+            logger.warning("Failed to generate training dashboard: %s", e)

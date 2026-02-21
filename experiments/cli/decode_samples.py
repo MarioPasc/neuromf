@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=str,
         default=None,
-        help="Output directory for decoded images. Defaults to {samples-dir}/decoded/.",
+        help="Output directory for decoded images. Defaults to {samples-dir}/../figures/.",
     )
     parser.add_argument(
         "--nfe",
@@ -370,7 +370,7 @@ def main() -> None:
         logger.error("Samples directory not found: %s", samples_dir)
         sys.exit(1)
 
-    output_dir = Path(args.output_dir) if args.output_dir else samples_dir / "decoded"
+    output_dir = Path(args.output_dir) if args.output_dir else samples_dir.parent / "figures"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load archives
@@ -388,6 +388,40 @@ def main() -> None:
     # Generate latent stats and NFE consistency plots (no VAE needed)
     _plot_latent_stats_evolution(archives, output_dir)
     _plot_nfe_consistency(archives, output_dir)
+
+    # Load combined sample_archive.pt for advanced evolution plots
+    combined_archive_path = samples_dir / "sample_archive.pt"
+    combined_archive = None
+    if combined_archive_path.exists():
+        try:
+            combined_archive = torch.load(
+                combined_archive_path,
+                map_location="cpu",
+                weights_only=False,
+            )
+            logger.info(
+                "Loaded combined archive (%d epochs)", len(combined_archive.get("epochs", []))
+            )
+        except Exception as e:
+            logger.warning("Failed to load sample_archive.pt: %s", e)
+
+    if combined_archive is not None:
+        from neuromf.utils.sample_plots import (
+            plot_channel_stats_evolution,
+            plot_inter_epoch_delta,
+            plot_nfe_comparison_grid,
+            plot_nfe_consistency_evolution,
+            plot_sample_evolution_grid,
+            plot_spectral_evolution,
+        )
+
+        plot_sample_evolution_grid(combined_archive, output_dir)
+        plot_channel_stats_evolution(combined_archive, output_dir)
+        plot_spectral_evolution(combined_archive, output_dir)
+        plot_nfe_comparison_grid(combined_archive, output_dir)
+        plot_nfe_consistency_evolution(combined_archive, output_dir)
+        plot_inter_epoch_delta(combined_archive, output_dir)
+        logger.info("Generated 6 evolution plots in %s", output_dir)
 
     # Determine NFE keys and sample indices
     sample_nfe_keys: list[str] = []
