@@ -1,0 +1,29 @@
+# x-prediction + exact JVP + MAISI rflow pretrained init — ablation output paths
+#
+# Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
+#
+# Identical to xpred_exact_jvp.yaml except initialisation uses the pretrained
+# MAISI-v2 rectified flow UNet weights (diff_unet_3d_rflow-mr.pt, 28851 epochs)
+# instead of Kaiming init. 402/430 inner UNet keys transfer exactly; 28
+# time_emb_proj.weight keys are sliced from (C, 512) to (C, 256).
+# Pretrained params get 0.1x LR; new params (h_embed, v_out) get full LR.
+#
+# Dual purpose:
+#   1. Kaiming vs rflow transfer:  xpred_exact_jvp  vs  xpred_exact_jvp_rflow
+#   2. x-pred vs u-pred:           xpred_exact_jvp  vs  upred_fd_jvp
+#
+# Effective batch = 2 x 6 x 11 = 132 (~128)
+
+unet:
+  initialization:
+    method: rflow_transfer
+    rflow_checkpoint_path: "${paths.maisi_diffusion_weights}"
+    slice_time_emb_proj: true
+    reinit_output_conv: false
+    backbone_lr_factor: 0.1
+
+paths:
+  checkpoints_dir: "${paths.results_root}/ablations/xpred_exact_jvp_rflow/checkpoints"
+  logs_dir: "${paths.results_root}/ablations/xpred_exact_jvp_rflow/logs"
+  samples_dir: "${paths.results_root}/ablations/xpred_exact_jvp_rflow/samples"
+  diagnostics_dir: "${paths.results_root}/ablations/xpred_exact_jvp_rflow/diagnostics"

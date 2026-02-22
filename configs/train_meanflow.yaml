@@ -37,6 +37,13 @@ unet:
   use_v_head: true                     # iMF dual-head: v-head provides JVP tangent
   v_head_num_res_blocks: 1             # 1 ResBlock (~228K params)
   conditioning_mode: t_h               # MF Table 1c optimal: (t, h=t-r)
+  # Initialization strategy
+  initialization:
+    method: kaiming                    # "kaiming" | "rflow_transfer"
+    rflow_checkpoint_path: null        # path to diff_unet_3d_rflow-mr.pt (null = disabled)
+    slice_time_emb_proj: true          # slice rflow time_emb_proj[:, :256] for our 256-dim
+    reinit_output_conv: false          # re-init output conv (rflow predicts velocity, we use x-pred)
+    backbone_lr_factor: 0.1            # LR multiplier for pretrained params
 
 # Training
 training:

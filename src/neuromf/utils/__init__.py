@@ -6,5 +6,7 @@ statistics, 3D volume slice plotting, and checkpoint management.
 """
 
 from neuromf.utils.ema import EMAModel
+from neuromf.utils.param_groups import build_transfer_param_groups
+from neuromf.utils.pretrained_loading import load_rflow_pretrained
 
-__all__ = ["EMAModel"]
+__all__ = ["EMAModel", "build_transfer_param_groups", "load_rflow_pretrained"]

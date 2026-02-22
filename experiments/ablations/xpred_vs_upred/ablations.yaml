@@ -31,6 +31,19 @@ ablations:
     effective_batch: 132  # 2 x 6 x 11
     wall_time: "7-00:00:00"
 
+  xpred_exact_jvp_rflow:
+    description: "x-prediction + exact JVP + MAISI rflow pretrained init (same as xpred_exact_jvp but rflow transfer)"
+    config: configs/xpred_exact_jvp_rflow.yaml
+    n_gpus: 6
+    prediction_type: x
+    jvp_strategy: exact
+    conditioning_mode: t_h
+    gradient_checkpointing: false
+    initialization: rflow_transfer
+    backbone_lr_factor: 0.1
+    effective_batch: 132  # 2 x 6 x 11
+    wall_time: "7-00:00:00"
+
   upred_fd_jvp:
     description: "u-prediction + FD-JVP + h-conditioning (BASELINE — collapsed at epoch 150)"
     config: configs/upred_fd_jvp.yaml

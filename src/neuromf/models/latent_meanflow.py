@@ -48,6 +48,22 @@ class LatentMeanFlow(pl.LightningModule):
         self.net = MAISIUNetWrapper(unet_config)
         self._use_v_head = unet_config.use_v_head
 
+        # Load pretrained weights if configured (MUST be before EMA init)
+        self._pretrained_load_stats: dict | None = None
+        init_cfg = config.unet.get("initialization", {})
+        init_method = init_cfg.get("method", "kaiming") if init_cfg else "kaiming"
+        if init_method == "rflow_transfer":
+            ckpt_path = init_cfg.get("rflow_checkpoint_path")
+            if ckpt_path:
+                from neuromf.utils.pretrained_loading import load_rflow_pretrained
+
+                self._pretrained_load_stats = load_rflow_pretrained(
+                    wrapper=self.net,
+                    checkpoint_path=ckpt_path,
+                    slice_time_emb_proj=bool(init_cfg.get("slice_time_emb_proj", True)),
+                    reinit_output_conv=bool(init_cfg.get("reinit_output_conv", False)),
+                )
+
         # Build loss pipeline
         mf = config.meanflow
         pipeline_config = MeanFlowPipelineConfig(
@@ -323,12 +339,28 @@ class LatentMeanFlow(pl.LightningModule):
             Dict with ``optimizer`` and ``lr_scheduler``.
         """
         tr = self.cfg.training
-        optimizer = torch.optim.AdamW(
-            self.net.parameters(),
-            lr=float(tr.lr),
-            weight_decay=float(tr.weight_decay),
-            betas=tuple(tr.betas),
-        )
+
+        if self._pretrained_load_stats is not None:
+            from neuromf.utils.param_groups import build_transfer_param_groups
+
+            init_cfg = self.cfg.unet.get("initialization", {})
+            loaded_inner = set(self._pretrained_load_stats.get("loaded_keys", set()))
+            loaded_wrapper = {f"unet.{k}" for k in loaded_inner}
+            param_groups = build_transfer_param_groups(
+                model=self.net,
+                loaded_keys=loaded_wrapper,
+                base_lr=float(tr.lr),
+                backbone_lr_factor=float(init_cfg.get("backbone_lr_factor", 0.1)),
+                weight_decay=float(tr.weight_decay),
+            )
+            optimizer = torch.optim.AdamW(param_groups, betas=tuple(tr.betas))
+        else:
+            optimizer = torch.optim.AdamW(
+                self.net.parameters(),
+                lr=float(tr.lr),
+                weight_decay=float(tr.weight_decay),
+                betas=tuple(tr.betas),
+            )
 
         total_steps = self.trainer.estimated_stepping_batches
         warmup_steps = int(tr.warmup_steps)
