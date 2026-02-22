@@ -9,12 +9,28 @@
 # (x-pred, exact JVP, t_h conditioning, v-head, 1500 epochs, augmentation).
 # The ablation overlay only redirects output paths.
 #
+#  ┌─────────────────┬──────────────────────────┐                                            
+#  │     Command     │     What it submits      │                                            
+#  ├─────────────────┼──────────────────────────┤                                          
+#  │ launch.sh       │ x-pred Kaiming (default) │                                            
+#  ├─────────────────┼──────────────────────────┤                                              
+#  │ launch.sh xpred │ x-pred Kaiming           │                                              
+#  ├─────────────────┼──────────────────────────┤
+#  │ launch.sh rflow │ x-pred + rflow transfer  │
+#  ├─────────────────┼──────────────────────────┤
+#  │ launch.sh upred │ u-pred FD-JVP            │
+#  ├─────────────────┼──────────────────────────┤
+#  │ launch.sh both  │ x-pred Kaiming + u-pred  │
+#  ├─────────────────┼──────────────────────────┤
+#  │ launch.sh all   │ all 3 arms               │
+#  └─────────────────┴──────────────────────────┘
 # Usage (from login node):
-#   bash experiments/ablations/xpred_vs_upred/launch.sh               # x-pred (default)
-#   bash experiments/ablations/xpred_vs_upred/launch.sh xpred         # explicit x-pred
-#   bash experiments/ablations/xpred_vs_upred/launch.sh --xpred-only  # alias
+#   bash experiments/ablations/xpred_vs_upred/launch.sh               # x-pred Kaiming (default)
+#   bash experiments/ablations/xpred_vs_upred/launch.sh xpred         # explicit x-pred Kaiming
+#   bash experiments/ablations/xpred_vs_upred/launch.sh rflow         # x-pred + rflow transfer
 #   bash experiments/ablations/xpred_vs_upred/launch.sh upred         # u-pred (re-run)
-#   bash experiments/ablations/xpred_vs_upred/launch.sh both          # both arms
+#   bash experiments/ablations/xpred_vs_upred/launch.sh both          # x-pred Kaiming + u-pred
+#   bash experiments/ablations/xpred_vs_upred/launch.sh all           # all 3 arms
 #   bash experiments/ablations/xpred_vs_upred/launch.sh --resume /path/to/ckpt  # resume x-pred
 # =============================================================================
 
@@ -49,8 +65,10 @@ RESUME_CKPT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         xpred|--xpred-only) ARM="xpred"; shift ;;
+        rflow|--rflow)      ARM="rflow"; shift ;;
         upred|--upred-only) ARM="upred"; shift ;;
         both|--both)        ARM="both"; shift ;;
+        all|--all)          ARM="all"; shift ;;
         --resume)           RESUME_CKPT="$2"; shift 2 ;;
         *)                  echo "Unknown argument: $1"; exit 1 ;;
     esac
@@ -109,13 +127,19 @@ submit_arm() {
 # SUBMIT ARMS
 # ========================================================================
 
-if [ "${ARM}" = "xpred" ] || [ "${ARM}" = "both" ]; then
-    # x-pred: 6 GPUs (batch=2 x 6 GPUs x 11 accum = 132), 7-day wall time
+if [ "${ARM}" = "xpred" ] || [ "${ARM}" = "both" ] || [ "${ARM}" = "all" ]; then
+    # x-pred Kaiming: 6 GPUs (batch=2 x 6 GPUs x 11 accum = 132), 7-day wall time
     # Inherits all settings from base (x-pred, exact JVP, t_h, 1500 epochs)
     submit_arm "xpred_exact_jvp" "xpred_exact_jvp.yaml" 6 "7-00:00:00"
 fi
 
-if [ "${ARM}" = "upred" ] || [ "${ARM}" = "both" ]; then
+if [ "${ARM}" = "rflow" ] || [ "${ARM}" = "all" ]; then
+    # x-pred + rflow transfer: same as xpred_exact_jvp but initialised from
+    # MAISI-v2 pretrained rflow UNet (28851 epochs). Pretrained params get 0.1x LR.
+    submit_arm "xpred_exact_jvp_rflow" "xpred_exact_jvp_rflow.yaml" 6 "7-00:00:00"
+fi
+
+if [ "${ARM}" = "upred" ] || [ "${ARM}" = "both" ] || [ "${ARM}" = "all" ]; then
     # u-pred: 2 GPUs (batch=16 x 2 GPUs x 4 accum = 128), 3-day wall time
     # NOTE: u-pred already collapsed at epoch 150 in previous run. Re-running
     # is only needed if configs changed. The existing results serve as baseline.
@@ -129,7 +153,7 @@ echo "Monitor: squeue -u \$USER"
 echo "Compare results in: ${RESULTS_DST}/ablations/"
 echo ""
 echo "After completion, compare:"
-echo "  tensorboard --logdir_spec xpred:${RESULTS_DST}/ablations/xpred_exact_jvp/logs,upred:${RESULTS_DST}/ablations/upred_fd_jvp/logs"
+echo "  tensorboard --logdir_spec xpred:${RESULTS_DST}/ablations/xpred_exact_jvp/logs,rflow:${RESULTS_DST}/ablations/xpred_exact_jvp_rflow/logs,upred:${RESULTS_DST}/ablations/upred_fd_jvp/logs"
 echo ""
 echo "Generate report:"
 echo "  python experiments/ablations/xpred_vs_upred/compare_arms.py --results-dir ${RESULTS_DST}/ablations"
