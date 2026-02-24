@@ -116,12 +116,15 @@ def main() -> None:
     with open(stats_path) as f:
         stats = json.load(f)
 
-    latent_mean = torch.tensor(stats["mean"], dtype=torch.float32, device=device).reshape(
+    per_ch = stats["per_channel"]
+    n_channels = len(per_ch)
+    mean_list = [per_ch[f"channel_{c}"]["mean"] for c in range(n_channels)]
+    std_list = [per_ch[f"channel_{c}"]["std"] for c in range(n_channels)]
+
+    latent_mean = torch.tensor(mean_list, dtype=torch.float32, device=device).reshape(
         1, -1, 1, 1, 1
     )
-    latent_std = torch.tensor(stats["std"], dtype=torch.float32, device=device).reshape(
-        1, -1, 1, 1, 1
-    )
+    latent_std = torch.tensor(std_list, dtype=torch.float32, device=device).reshape(1, -1, 1, 1, 1)
 
     # Build test dataset
     split_ratios = list(config.training.get("split_ratios", [0.85, 0.10, 0.05]))
