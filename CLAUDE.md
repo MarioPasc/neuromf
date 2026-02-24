@@ -92,7 +92,7 @@ The project is implemented in **9 gated phases** (Phase 0 through Phase 8). **Ph
 | 2 | Toy Experiment — MeanFlow on Toroid | Validated MeanFlow on known manifold |
 | 3 | MeanFlow Loss + 3D UNet | JVP-compatible wrapper, MeanFlow loss |
 | 4 | Training on Brain MRI Latents | Trained model, EMA checkpoints |
-| 5 | Evaluation Suite | FID, SSIM, SynthSeg metrics |
+| 5 | Generation Pipeline + Evaluation | Latent generation, VAE decoding, FID/MMD/MS-SSIM/spectral metrics |
 | 6 | Ablation Runs | x-pred vs u-pred, Lp sweep, NFE steps |
 | 7 | LoRA Fine-Tuning for FCD | Joint image-mask synthesis |
 | 8 | Paper Figures and Tables | Publication-ready figures (PDF+PNG) |

@@ -389,7 +389,7 @@ if key in OUTPUT_CONV_KEYS:
 ### 3.5 Real Checkpoint Path
 
 ```
-/media/mpascual/Sandisk2TB/research/neuroimf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt
+/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt
 ```
 
 For tests, always use mock checkpoints created via `_create_mock_rflow_ckpt()`. Never depend on the real checkpoint in tests (it is 2GB).

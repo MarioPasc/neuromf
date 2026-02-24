@@ -636,7 +636,7 @@ class TestLatentMeanFlowIntegration:
 # Hardcoded path to the real 2GB MAISI rflow checkpoint.
 # This file lives on the external drive and may not be mounted in CI.
 _REAL_RFLOW_PATH = Path(
-    "/media/mpascual/Sandisk2TB/research/neuroimf/checkpoints/"
+    "/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/"
     "NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt"
 )
 

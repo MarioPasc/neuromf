@@ -1,0 +1,50 @@
+# Phase 5: Generation & Evaluation Configuration
+# Used by generate_latents.py, decode_volumes.py, compute_metrics.py
+
+generation:
+  n_samples: 2000
+  nfe_levels: [1, 2, 5, 10, 25, 50]
+  decode_nfe_levels: [1, 10, 50]
+  batch_size_generate: 8
+  batch_size_decode: 1
+  base_seed: 42
+  prediction_type: "x"
+  latent_shape: [4, 48, 48, 48]
+  volume_shape: [1, 192, 192, 192]
+
+features:
+  med3d:
+    enabled: true
+    weights_path: ""
+    batch_size: 1
+  radimagenet:
+    enabled: true
+    weights_path: ""
+    center_slices_ratio: 0.6
+    batch_size: 16
+
+metrics:
+  fid_3d: true
+  fid_2d5: true
+  mmd: true
+  ms_ssim: true
+  psnr: true
+  coverage_density: true
+  spectral: true
+  pairing:
+    method: "nearest_neighbour"
+    feature_space: "med3d"
+    k: 5
+
+timing:
+  n_warmup: 10
+  n_measured: 90
+  batch_size: 1
+
+# Paths (resolved against base.yaml)
+paths:
+  checkpoint: ""
+  latent_stats: ${paths.results_root}/latents/latent_stats.json
+  generation_dir: ${paths.results_root}/phase_5/generation
+  features_dir: ${paths.results_root}/phase_5/features
+  metrics_dir: ${paths.results_root}/phase_5/metrics

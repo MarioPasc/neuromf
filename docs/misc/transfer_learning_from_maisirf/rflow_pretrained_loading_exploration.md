@@ -7,7 +7,7 @@
 
 ## 1. MAISI rflow Checkpoint Structure
 
-**Path:** `/media/mpascual/Sandisk2TB/research/neuroimf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt`
+**Path:** `/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt`
 **Size:** 2,066.3 MB
 
 ### 1.1 Top-Level Keys
@@ -27,7 +27,7 @@ The checkpoint contains full training state (optimizer, scheduler), not just mod
 
 ### 1.2 Architecture Config
 
-**Config path:** `/media/mpascual/Sandisk2TB/research/neuroimf/checkpoints/NV-Generate-MR/configs/config_network_rflow.json`
+**Config path:** `/media/mpascual/Sandisk2TB/research/neuromf/checkpoints/NV-Generate-MR/configs/config_network_rflow.json`
 
 ```json
 {
@@ -360,7 +360,7 @@ training:
 
 ### 7.1 Existing Test Infrastructure
 
-**Test directory:** `/home/mpascual/research/code/neuroimf/tests/`
+**Test directory:** `/home/mpascual/research/code/neuromf/tests/`
 
 Relevant patterns for transfer learning tests:
 

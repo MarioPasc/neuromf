@@ -18,6 +18,9 @@ from neuromf.metrics.fid_3d import (
     load_med3d_resnet50,
 )
 from neuromf.metrics.mmd import compute_mmd
+from neuromf.metrics.ms_ssim_3d import compute_ms_ssim_3d
+from neuromf.metrics.pairing import compute_nn_pairs
+from neuromf.metrics.spectral import compute_hf_energy_ratio
 from neuromf.metrics.swd import compute_swd
 
 __all__ = [
@@ -31,4 +34,7 @@ __all__ = [
     "compute_fid_3d",
     "extract_3d_features",
     "load_med3d_resnet50",
+    "compute_ms_ssim_3d",
+    "compute_nn_pairs",
+    "compute_hf_energy_ratio",
 ]
