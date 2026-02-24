@@ -116,10 +116,11 @@ class LatentGenerator:
             "timestamp": datetime.now(tz=UTC).isoformat(),
         }
         if latent_stats is not None:
-            if "mean" in latent_stats:
-                archive_meta["latent_mean"] = latent_stats["mean"]
-            if "std" in latent_stats:
-                archive_meta["latent_std"] = latent_stats["std"]
+            per_ch = latent_stats.get("per_channel", {})
+            n_ch = len(per_ch)
+            if n_ch > 0:
+                archive_meta["latent_mean"] = [per_ch[f"channel_{c}"]["mean"] for c in range(n_ch)]
+                archive_meta["latent_std"] = [per_ch[f"channel_{c}"]["std"] for c in range(n_ch)]
         if metadata:
             archive_meta.update(metadata)
 

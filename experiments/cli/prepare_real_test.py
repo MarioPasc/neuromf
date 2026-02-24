@@ -101,7 +101,11 @@ def main() -> None:
     config = _load_config(args)
 
     latent_dir = Path(config.paths.latents_dir)
-    output_dir = Path(args.output_dir or str(config.paths.get("generation_dir", "")))
+    raw_output = args.output_dir or str(config.paths.get("generation_dir", ""))
+    if not raw_output:
+        logger.error("No output directory specified (use --output-dir or set paths.generation_dir)")
+        sys.exit(1)
+    output_dir = Path(raw_output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -161,7 +165,8 @@ def main() -> None:
 
         try:
             for i in range(n_test):
-                z_hat, _ = test_ds[i]  # normalised latent
+                item = test_ds[i]
+                z_hat = item["z"]  # normalised latent
 
                 # Denormalise
                 z_0 = z_hat.unsqueeze(0).to(device) * latent_std + latent_mean

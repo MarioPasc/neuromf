@@ -92,15 +92,30 @@ echo "=========================================="
 echo "STAGE 1: FEATURE EXTRACTION"
 echo "=========================================="
 
-# Extract Med3D features for real test set
+# Extract Med3D features for real test set and generated volumes
 python -c "
 import torch
 from pathlib import Path
+from omegaconf import OmegaConf
+
 from neuromf.metrics.feature_extractor import FeatureExtractor
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Load config to get weights path
+configs_dir = Path('${CONFIGS_DIR}')
+layers = []
+base = configs_dir / 'base.yaml'
+if base.exists():
+    layers.append(OmegaConf.load(base))
+gen_yaml = configs_dir / 'generate.yaml'
+if gen_yaml.exists():
+    layers.append(OmegaConf.load(gen_yaml))
+config = OmegaConf.merge(*layers)
+OmegaConf.resolve(config)
 
-med3d_weights = '${CONFIGS_DIR}/../../../fscratch/checkpoints/med3d/resnet_50_23dataset.pth'
+med3d_weights = config.features.med3d.weights_path
+print(f'Med3D weights: {med3d_weights}')
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 extractor = FeatureExtractor('med3d', med3d_weights, device)
 
 # Real features
