@@ -204,16 +204,16 @@ class LatentMeanFlow(pl.LightningModule):
             self._step_diagnostics = None
             return torch.tensor(0.0, device=self.device, requires_grad=True)
 
-        self.log("train/loss", loss, prog_bar=True)
+        self.log("train/loss", loss, prog_bar=True, sync_dist=True)
 
         # Always log raw (pre-adaptive) loss — essential for convergence monitoring
         raw_loss = result["raw_loss"]
-        self.log("train/raw_loss", raw_loss, prog_bar=True)
+        self.log("train/raw_loss", raw_loss, prog_bar=True, sync_dist=True)
 
         # Dual-head loss components (v-head)
         if "raw_loss_u" in result:
-            self.log("train/raw_loss_u", result["raw_loss_u"])
-            self.log("train/raw_loss_v", result["raw_loss_v"])
+            self.log("train/raw_loss_u", result["raw_loss_u"], sync_dist=True)
+            self.log("train/raw_loss_v", result["raw_loss_v"], sync_dist=True)
 
         # EMA-smoothed divergence monitor (warning-only, no crash).
         # Early stopping is handled by EvaluationCallback (FID-based).
@@ -248,8 +248,8 @@ class LatentMeanFlow(pl.LightningModule):
                     self._min_ema_raw_loss,
                 )
                 self._divergence_warned_5x = True
-        self.log("train/ema_raw_loss", self._ema_raw_loss)
-        self.log("train/min_ema_raw_loss", self._min_ema_raw_loss)
+        self.log("train/ema_raw_loss", self._ema_raw_loss, sync_dist=True)
+        self.log("train/min_ema_raw_loss", self._min_ema_raw_loss, sync_dist=True)
 
         if self._diag_enabled:
             self._step_diagnostics = result
@@ -268,7 +268,7 @@ class LatentMeanFlow(pl.LightningModule):
             optimizer: Current optimizer.
         """
         total_norm = nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=float("inf"))
-        self.log("train/grad_norm", total_norm)
+        self.log("train/grad_norm", total_norm, sync_dist=True)
 
     def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int) -> None:
         """Update EMA after each training step.

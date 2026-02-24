@@ -399,8 +399,7 @@ class SampleCollectorCallback(pl.Callback):
             if nfe_key not in archive[last_key]:
                 continue
             z_norm = archive[last_key][nfe_key]  # (N, C, D, H, W)
-            z_denorm = z_norm[0:1] * latent_std + latent_mean
-            z_denorm = z_denorm.to(device)
+            z_denorm = (z_norm[0:1] * latent_std + latent_mean).float().to(device)
             decoded = self._vae.decode(z_denorm).cpu().float()
             decoded_nfe[nfe] = decoded[0, 0].numpy()  # (D, H, W)
             del z_denorm, decoded
@@ -415,8 +414,7 @@ class SampleCollectorCallback(pl.Callback):
             if "nfe_1" not in archive[epoch_key]:
                 continue
             z_norm = archive[epoch_key]["nfe_1"]
-            z_denorm = z_norm[0:1] * latent_std + latent_mean
-            z_denorm = z_denorm.to(device)
+            z_denorm = (z_norm[0:1] * latent_std + latent_mean).float().to(device)
             decoded = self._vae.decode(z_denorm).cpu().float()
             decoded_1nfe_by_epoch[ep] = decoded[0, 0].numpy()
             del z_denorm, decoded
