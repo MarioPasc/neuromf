@@ -7,11 +7,31 @@
 #
 # Usage (from login node):
 #   bash experiments/slurm/phase_5/evaluate.sh
+#   bash experiments/slurm/phase_5/evaluate.sh --depends-on 95484
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ========================================================================
+# PARSE ARGUMENTS
+# ========================================================================
+DEPENDS_ON=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --depends-on)
+            DEPENDS_ON="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: bash experiments/slurm/phase_5/evaluate.sh [--depends-on JOB_ID]"
+            exit 1
+            ;;
+    esac
+done
 
 echo "=========================================="
 echo "PHASE 5: EVALUATION LAUNCHER"
@@ -42,18 +62,26 @@ mkdir -p "${RESULTS_DST}/phase_5/metrics/synthseg"
 # ========================================================================
 # SUBMIT JOB
 # ========================================================================
-JOB_ID=$(sbatch --parsable \
-    --job-name="neuromf_p5_eval" \
-    --time=0-12:00:00 \
-    --ntasks=1 \
-    --cpus-per-task=16 \
-    --mem=128G \
-    --constraint=dgx \
-    --gres=gpu:1 \
-    --output="${RESULTS_DST}/phase_5/evaluate_%j.out" \
-    --error="${RESULTS_DST}/phase_5/evaluate_%j.err" \
-    --export=ALL \
-    "${SCRIPT_DIR}/evaluate_worker.sh")
+SBATCH_ARGS=(
+    --parsable
+    --job-name="neuromf_p5_eval"
+    --time=0-12:00:00
+    --ntasks=1
+    --cpus-per-task=16
+    --mem=128G
+    --constraint=dgx
+    --gres=gpu:1
+    --output="${RESULTS_DST}/phase_5/evaluate_%j.out"
+    --error="${RESULTS_DST}/phase_5/evaluate_%j.err"
+    --export=ALL
+)
+
+if [ -n "${DEPENDS_ON}" ]; then
+    SBATCH_ARGS+=(--dependency=afterok:${DEPENDS_ON})
+    echo "Dependency:  afterok:${DEPENDS_ON}"
+fi
+
+JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/evaluate_worker.sh")
 
 echo "=========================================="
 echo "JOB SUBMITTED"
