@@ -11,6 +11,12 @@ features:
   radimagenet:
     weights_path: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/radimagenet/RadImageNet-ResNet50_notop.pt"
 
+synthseg:
+  command:
+    - "/mnt/home/users/tic_163_uma/mpascual/fscratch/tools/synthseg_env/bin/python"
+    - "/mnt/home/users/tic_163_uma/mpascual/fscratch/tools/SynthSeg/scripts/commands/SynthSeg_predict.py"
+  threads: 8
+
 paths:
   checkpoint: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/ablations/xpred_exact_jvp/checkpoints/best_raw_epoch=589_train/raw_loss=1295477.5000.ckpt"
   latent_stats: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/latents/latent_stats.json"

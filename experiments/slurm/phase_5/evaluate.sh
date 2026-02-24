@@ -37,6 +37,7 @@ echo ""
 # Create output directories
 mkdir -p "${RESULTS_DST}/phase_5/features"
 mkdir -p "${RESULTS_DST}/phase_5/metrics"
+mkdir -p "${RESULTS_DST}/phase_5/metrics/synthseg"
 
 # ========================================================================
 # SUBMIT JOB

@@ -31,10 +31,33 @@ metrics:
   psnr: true
   coverage_density: true
   spectral: true
+  synthseg: true
   pairing:
     method: "nearest_neighbour"
     feature_space: "med3d"
     k: 5
+
+synthseg:
+  # Command to invoke SynthSeg. Two supported modes:
+  #   FreeSurfer:  ["mri_synthseg"]
+  #   Standalone:  ["/path/to/synthseg_env/bin/python", "/path/to/SynthSeg/scripts/commands/SynthSeg_predict.py"]
+  command: ["mri_synthseg"]
+  robust: true
+  parc: false
+  threads: 0
+  crop: 0
+  voxel_size_mm: 1.0
+  regions_of_interest:
+    - "Left-Hippocampus"
+    - "Right-Hippocampus"
+    - "Left-Lateral-Ventricle"
+    - "Right-Lateral-Ventricle"
+    - "Left-Cerebral-Cortex"
+    - "Right-Cerebral-Cortex"
+    - "Left-Thalamus"
+    - "Left-Caudate"
+    - "Left-Putamen"
+    - "Left-Cerebellum-Cortex"
 
 timing:
   n_warmup: 10

@@ -83,6 +83,7 @@ eval = [
     "torch-fidelity>=0.3",
     "radimagenet-models @ git+https://github.com/Warvito/radimagenet-models.git",
     "gdown>=5.0",
+    "huggingface_hub>=0.20",
 ]
 # LoRA fine-tuning (epilepsy/FCD stage)
 finetune = [

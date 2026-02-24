@@ -1,4 +1,4 @@
-"""Phase 5 tests: Evaluation metrics (spectral, MS-SSIM, pairing, feature_extractor).
+"""Phase 5 tests: Evaluation metrics (spectral, MS-SSIM, pairing, feature_extractor, SynthSeg).
 
 Test naming convention: test_P5_T{N}_{description}
 """
@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import h5py
+import nibabel as nib
 import numpy as np
 import pytest
 import torch
@@ -16,6 +17,16 @@ import torch
 from neuromf.metrics.ms_ssim_3d import compute_ms_ssim_3d
 from neuromf.metrics.pairing import compute_nn_pairs
 from neuromf.metrics.spectral import compute_hf_energy_ratio
+from neuromf.metrics.synthseg_metrics import (
+    SynthSegConfig,
+    _h5_volumes_to_nifti,
+    check_synthseg_available,
+    compute_dice_from_labels,
+    compute_regional_correlation,
+    compute_regional_kl,
+    compute_success_rate,
+    parse_volumes_csv,
+)
 
 # ---------------------------------------------------------------------------
 # P5-T6: Spectral HF energy ratio — known signals
@@ -162,3 +173,173 @@ def test_P5_T9_feature_extractor_mock(tmp_path: Path) -> None:
         loaded = FeatureExtractor.load_cached(feat_path)
         assert loaded.shape == (n, 2048)
         np.testing.assert_allclose(features.numpy(), loaded.numpy(), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# P5-T11: SynthSeg — HDF5 to NIfTI conversion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T11_h5_to_nifti_conversion(tmp_path: Path) -> None:
+    """Verify HDF5 volumes are correctly converted to NIfTI files."""
+    n, D, H, W = 3, 16, 16, 16
+    h5_path = tmp_path / "volumes.h5"
+    with h5py.File(str(h5_path), "w") as f:
+        data = np.random.rand(n, D, H, W).astype(np.float32)
+        f.create_dataset("volumes", data=data)
+
+    nifti_dir = tmp_path / "nifti"
+    paths = _h5_volumes_to_nifti(h5_path, nifti_dir, voxel_size_mm=1.0)
+
+    assert len(paths) == n
+    for p in paths:
+        assert p.exists()
+        assert p.suffix == ".gz"
+
+    # Verify round-trip: NIfTI data matches original
+    nii = nib.load(str(paths[0]))
+    nii_data = np.asarray(nii.dataobj, dtype=np.float32)
+    np.testing.assert_allclose(nii_data, data[0], atol=1e-6)
+
+    # Verify affine encodes 1mm isotropic
+    np.testing.assert_allclose(np.diag(nii.affine), [1.0, 1.0, 1.0, 1.0])
+
+
+# ---------------------------------------------------------------------------
+# P5-T12: SynthSeg — Dice computation from label maps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T12_dice_from_labels(tmp_path: Path) -> None:
+    """Verify Dice computation between identical and different label maps."""
+    shape = (16, 16, 16)
+    affine = np.eye(4)
+
+    # Create identical label maps
+    labels = np.zeros(shape, dtype=np.int32)
+    labels[2:8, 2:8, 2:8] = 17  # Left-Hippocampus
+    labels[8:14, 8:14, 8:14] = 53  # Right-Hippocampus
+
+    real_path = tmp_path / "real_labels.nii.gz"
+    gen_path_same = tmp_path / "gen_labels_same.nii.gz"
+    nib.save(nib.Nifti1Image(labels, affine), str(real_path))
+    nib.save(nib.Nifti1Image(labels, affine), str(gen_path_same))
+
+    dices_same = compute_dice_from_labels(real_path, gen_path_same)
+    assert dices_same["Left-Hippocampus"] == 1.0
+    assert dices_same["Right-Hippocampus"] == 1.0
+    assert dices_same["mean"] == pytest.approx(1.0, abs=0.01)
+
+    # Create different label maps (shifted)
+    labels_shifted = np.zeros(shape, dtype=np.int32)
+    labels_shifted[4:10, 4:10, 4:10] = 17  # Shifted hippocampus
+    gen_path_diff = tmp_path / "gen_labels_diff.nii.gz"
+    nib.save(nib.Nifti1Image(labels_shifted, affine), str(gen_path_diff))
+
+    dices_diff = compute_dice_from_labels(real_path, gen_path_diff)
+    assert dices_diff["Left-Hippocampus"] < 1.0
+    assert dices_diff["Left-Hippocampus"] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# P5-T13: SynthSeg — Success rate computation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T13_synthseg_success_rate(tmp_path: Path) -> None:
+    """Verify success rate counts output files correctly."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+
+    # Create 4 input files, 3 output files (1 missing = 75% success)
+    for i in range(4):
+        (input_dir / f"vol_{i:04d}.nii.gz").write_bytes(b"dummy")
+    for i in range(3):
+        (output_dir / f"vol_{i:04d}.nii.gz").write_bytes(b"dummy")
+
+    rate = compute_success_rate(input_dir, output_dir)
+    assert rate == pytest.approx(0.75)
+
+
+# ---------------------------------------------------------------------------
+# P5-T14: SynthSeg — Regional volume correlation and KL
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T14_regional_correlation_and_kl() -> None:
+    """Verify regional correlation and KL with synthetic volume data."""
+    np.random.seed(42)
+
+    # Create correlated real/gen volume measurements (100 samples for stable histograms)
+    real_volumes = {}
+    gen_volumes = {}
+    for i in range(100):
+        base_hippo = 3000 + np.random.normal(0, 200)
+        real_volumes[f"real_{i:03d}"] = {"Left-Hippocampus": base_hippo}
+        gen_volumes[f"gen_{i:03d}"] = {"Left-Hippocampus": base_hippo + np.random.normal(0, 50)}
+
+    corr = compute_regional_correlation(real_volumes, gen_volumes, regions=["Left-Hippocampus"])
+    assert "Left-Hippocampus" in corr
+    # Correlated data should have positive Pearson r
+    assert corr["Left-Hippocampus"]["pearson_r"] > 0.5
+
+    kl = compute_regional_kl(real_volumes, gen_volumes, regions=["Left-Hippocampus"], n_bins=20)
+    assert "Left-Hippocampus" in kl
+    # KL should be small for similar distributions
+    assert kl["Left-Hippocampus"] < 2.0
+    assert kl["Left-Hippocampus"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# P5-T15: SynthSeg — Volumes CSV parsing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T15_parse_volumes_csv(tmp_path: Path) -> None:
+    """Verify parsing of SynthSeg volumes CSV output."""
+    csv_path = tmp_path / "volumes.csv"
+    csv_path.write_text(
+        "subject,Left-Hippocampus,Right-Hippocampus,Left-Lateral-Ventricle\n"
+        "vol_0000.nii.gz,3200.5,3150.2,8500.1\n"
+        "vol_0001.nii.gz,3100.0,3050.8,9200.3\n"
+    )
+
+    volumes = parse_volumes_csv(csv_path)
+    assert len(volumes) == 2
+    assert volumes["vol_0000.nii.gz"]["Left-Hippocampus"] == pytest.approx(3200.5)
+    assert volumes["vol_0001.nii.gz"]["Right-Hippocampus"] == pytest.approx(3050.8)
+
+
+# ---------------------------------------------------------------------------
+# P5-T16: SynthSeg — Config and availability check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T16_synthseg_config_and_availability() -> None:
+    """Verify SynthSegConfig defaults and availability check."""
+    config = SynthSegConfig()
+    assert config.command == ["mri_synthseg"]
+    assert config.robust is True
+    assert len(config.regions_of_interest) == 10
+
+    # Custom command
+    config_custom = SynthSegConfig(command=["/nonexistent/python", "/nonexistent/script.py"])
+    assert not check_synthseg_available(config_custom)
+
+    # A binary that definitely exists
+    config_ls = SynthSegConfig(command=["ls"])
+    assert check_synthseg_available(config_ls)

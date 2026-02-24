@@ -13,7 +13,8 @@
 # PHASE 5: EVALUATION WORKER
 #
 # Stage 1: Extract Med3D features (real + generated)
-# Stage 2: Compute metrics (FID, MMD, Coverage, Density, MS-SSIM, PSNR, spectral)
+# Stage 2: Compute metrics (FID, MMD, Coverage, Density, MS-SSIM, PSNR,
+#           spectral, SynthSeg morphological)
 #
 # Expected env vars (exported by evaluate.sh):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME
@@ -56,6 +57,7 @@ cd "${REPO_SRC}"
 GEN_DIR="${RESULTS_DST}/phase_5/generation"
 FEAT_DIR="${RESULTS_DST}/phase_5/features"
 METRICS_DIR="${RESULTS_DST}/phase_5/metrics"
+SYNTHSEG_DIR="${METRICS_DIR}/synthseg"
 
 # ========================================================================
 # PRE-FLIGHT

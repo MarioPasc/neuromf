@@ -1,7 +1,8 @@
 """CLI script for computing evaluation metrics on generated volumes.
 
-Computes distributional metrics (3D-FID, 2.5D-FID, MMD, Coverage, Density)
-and per-volume metrics (MS-SSIM, PSNR) with NN pairing in feature space.
+Computes distributional metrics (3D-FID, 2.5D-FID, MMD, Coverage, Density),
+per-volume metrics (MS-SSIM, PSNR) with NN pairing in feature space,
+spectral analysis, and SynthSeg morphological evaluation.
 
 Usage:
     python experiments/cli/compute_metrics.py \
@@ -9,6 +10,14 @@ Usage:
         --volumes-dir /path/to/generation/volumes/ \
         --real-features-dir /path/to/features/ \
         --nfe 1 10 50
+
+    # Skip SynthSeg for faster iteration:
+    python experiments/cli/compute_metrics.py \
+        --config configs/generate.yaml \
+        --volumes-dir /path/to/volumes/ \
+        --real-features-dir /path/to/features/ \
+        --nfe 1 10 50 \
+        --skip-synthseg
 """
 
 from __future__ import annotations
@@ -88,6 +97,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Output directory for metrics JSON files.",
+    )
+    parser.add_argument(
+        "--skip-synthseg",
+        action="store_true",
+        help="Skip SynthSeg morphological evaluation.",
     )
     return parser.parse_args()
 
@@ -273,20 +287,60 @@ def main() -> None:
         # Distributional metrics
         dist_results = _compute_distributional_metrics(real_feats, gen_feats, metrics_cfg)
 
-        # Per-volume metrics (requires volume files + NN pairing)
+        # NN pairing (used by per-volume metrics and SynthSeg)
+        nn_indices: torch.Tensor | None = None
         per_vol_results: dict = {}
         spectral_results: dict = {}
+        morphological_results: dict = {}
 
-        if gen_vol_path.exists() and args.real_volumes_h5:
+        has_real_vols = args.real_volumes_h5 and Path(args.real_volumes_h5).exists()
+
+        if has_real_vols and gen_vol_path.exists():
+            nn_indices = compute_nn_pairs(real_feats, gen_feats)
+
+        # Per-volume metrics
+        if nn_indices is not None and gen_vol_path.exists():
             real_vol_path = Path(args.real_volumes_h5)
-            if real_vol_path.exists():
-                nn_indices = compute_nn_pairs(real_feats, gen_feats)
-                per_vol_results = _compute_per_volume_metrics(
-                    gen_vol_path, real_vol_path, nn_indices, gen_feats.shape[0]
-                )
+            per_vol_results = _compute_per_volume_metrics(
+                gen_vol_path, real_vol_path, nn_indices, gen_feats.shape[0]
+            )
 
         if gen_vol_path.exists() and metrics_cfg.get("spectral", True):
             spectral_results = _compute_spectral_metrics(gen_vol_path)
+
+        # SynthSeg morphological evaluation
+        if (
+            nn_indices is not None
+            and gen_vol_path.exists()
+            and metrics_cfg.get("synthseg", False)
+            and not args.skip_synthseg
+        ):
+            from neuromf.metrics.synthseg_metrics import (
+                SynthSegConfig,
+                run_synthseg_evaluation,
+            )
+
+            synthseg_cfg_raw = config.get("synthseg", {})
+            synthseg_config = SynthSegConfig(
+                command=list(synthseg_cfg_raw.get("command", ["mri_synthseg"])),
+                regions_of_interest=list(synthseg_cfg_raw.get("regions_of_interest", [])) or None,
+                robust=bool(synthseg_cfg_raw.get("robust", True)),
+                parc=bool(synthseg_cfg_raw.get("parc", False)),
+                voxel_size_mm=float(synthseg_cfg_raw.get("voxel_size_mm", 1.0)),
+                threads=int(synthseg_cfg_raw.get("threads", 0)),
+                crop=int(synthseg_cfg_raw.get("crop", 0)),
+            )
+
+            synthseg_result = run_synthseg_evaluation(
+                gen_volumes_h5=gen_vol_path,
+                real_volumes_h5=Path(args.real_volumes_h5),
+                output_dir=output_dir,
+                nn_indices=nn_indices,
+                config=synthseg_config,
+                nfe=nfe,
+            )
+            if synthseg_result is not None:
+                morphological_results = synthseg_result
 
         # Assemble final metrics
         metrics_result = {
@@ -298,6 +352,7 @@ def main() -> None:
             "distributional": dist_results,
             "per_volume": per_vol_results,
             "spectral": spectral_results,
+            "morphological": morphological_results,
         }
 
         out_path = output_dir / f"metrics_nfe{nfe:03d}.json"
