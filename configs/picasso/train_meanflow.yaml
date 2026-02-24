@@ -49,7 +49,9 @@ diagnostics:
 # --- Evaluation: enable with Picasso paths ---
 evaluation:
   enabled: true
+  fid_mode: "3d"                   # 3D-FID for MOTFM-comparable evaluation
   fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
+  fid_3d_weights_path: "${paths.checkpoints_root}/fid_weights/resnet_50_23dataset.pth"
 
 # --- VAE: A100 can decode without memory splits ---
 vae:

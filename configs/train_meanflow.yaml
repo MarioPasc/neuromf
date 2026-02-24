@@ -140,17 +140,19 @@ vae:
   scale_factor: 0.96240234375
   downsample_factor: 4
 
-# Evaluation (two-tier: SWD + 2.5D FID)
+# Evaluation (two-tier: SWD + FID)
 evaluation:
   enabled: false
+  fid_mode: "2d5"                  # "2d5" (RadImageNet slices) or "3d" (Med3D volumes)
   n_swd_samples: 64
   n_swd_projections: 128
   n_real_cache: 200
   n_fid_samples: 100
   n_fid_real_samples: 200
   fid_every_n_val_epochs: 3
-  center_slices_ratio: 0.6
-  fid_weights_path: ""
+  center_slices_ratio: 0.6         # only used in 2d5 mode
+  fid_weights_path: ""             # RadImageNet ResNet-50 (2d5 mode)
+  fid_3d_weights_path: ""          # Med3D ResNet-50 (3d mode)
   early_stop_patience: 10
   seed: 42
 

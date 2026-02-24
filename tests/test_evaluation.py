@@ -343,7 +343,7 @@ def test_P4h_T9_fid_cache_reuse() -> None:
 
         # Load should find the cache
         device = torch.device("cpu")
-        result = cb._load_or_compute_real_features(device)
+        result = cb._load_or_compute_real_features_2d5(device)
 
         assert result[0].shape == fake_feats[0].shape
         assert torch.allclose(result[0], fake_feats[0])

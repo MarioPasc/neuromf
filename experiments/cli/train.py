@@ -529,7 +529,7 @@ def main() -> None:
                 figures_dir,
             )
 
-    # Evaluation callback (Tier 1: SWD, Tier 2: 2.5D FID)
+    # Evaluation callback (Tier 1: SWD, Tier 2: FID — 2.5D or 3D)
     eval_cfg = config.get("evaluation", {})
     if eval_cfg.get("enabled", False):
         from neuromf.callbacks.evaluation import EvaluationCallback
@@ -548,6 +548,8 @@ def main() -> None:
                 fid_every_n_val_epochs=int(eval_cfg.get("fid_every_n_val_epochs", 2)),
                 center_slices_ratio=float(eval_cfg.get("center_slices_ratio", 0.6)),
                 fid_weights_path=str(eval_cfg.get("fid_weights_path", "")),
+                fid_mode=str(eval_cfg.get("fid_mode", "2d5")),
+                fid_3d_weights_path=str(eval_cfg.get("fid_3d_weights_path", "")),
                 vae_config=vae_cfg_dict,
                 prediction_type=str(config.unet.prediction_type),
                 cache_dir=eval_cache_dir,
@@ -556,8 +558,10 @@ def main() -> None:
             )
         )
 
+        fid_mode = str(eval_cfg.get("fid_mode", "2d5"))
         logger.info(
-            "Evaluation enabled (SWD every val, FID every %d val epochs, patience=%d)",
+            "Evaluation enabled (SWD every val, %s-FID every %d val epochs, patience=%d)",
+            fid_mode.upper(),
             eval_cfg.get("fid_every_n_val_epochs", 2),
             eval_cfg.get("early_stop_patience", 5),
         )

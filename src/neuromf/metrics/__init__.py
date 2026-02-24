@@ -12,6 +12,11 @@ from neuromf.metrics.fid import (
     extract_2d5_features,
     load_radimagenet_resnet50,
 )
+from neuromf.metrics.fid_3d import (
+    compute_fid_3d,
+    extract_3d_features,
+    load_med3d_resnet50,
+)
 from neuromf.metrics.mmd import compute_mmd
 from neuromf.metrics.swd import compute_swd
 
@@ -23,4 +28,7 @@ __all__ = [
     "compute_fid_2d5",
     "extract_2d5_features",
     "load_radimagenet_resnet50",
+    "compute_fid_3d",
+    "extract_3d_features",
+    "load_med3d_resnet50",
 ]

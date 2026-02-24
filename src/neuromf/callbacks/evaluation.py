@@ -1,11 +1,14 @@
-"""Two-tier evaluation callback: SWD (fast) + 2.5D FID (thorough).
+"""Two-tier evaluation callback: SWD (fast) + FID (thorough).
 
 Tier 1 (SWD): Every validation epoch — generates latents via 1-NFE EMA model,
 computes Sliced Wasserstein Distance vs cached real latents. Fast (~2s).
 
-Tier 2 (2.5D FID): Every ``fid_every_n_val_epochs`` validation epochs — decodes
-latents through frozen MAISI VAE, extracts RadImageNet features from 3
-orthogonal planes, computes FID. Enables FID-based early stopping.
+Tier 2 (FID): Every ``fid_every_n_val_epochs`` validation epochs — decodes
+latents through frozen MAISI VAE, extracts features, and computes FID.
+Two modes are supported:
+
+- ``"2d5"`` (default): RadImageNet ResNet-50 on 3 orthogonal 2D planes.
+- ``"3d"``: Med3D ResNet-50 on full 3D volumes (matches MOTFM/HA-GAN protocol).
 
 Both tiers always run on the **first** validation epoch to establish a
 lower-bound baseline (random-model performance).
@@ -33,9 +36,11 @@ from neuromf.sampling.one_step import sample_one_step
 
 logger = logging.getLogger(__name__)
 
+_VALID_FID_MODES = ("2d5", "3d")
+
 
 class EvaluationCallback(pl.Callback):
-    """Two-tier evaluation: SWD every val epoch, 2.5D FID periodically.
+    """Two-tier evaluation: SWD every val epoch, FID periodically.
 
     Args:
         n_swd_samples: Number of latents to generate for SWD.
@@ -45,7 +50,9 @@ class EvaluationCallback(pl.Callback):
         n_fid_real_samples: Number of real latents to decode for FID reference.
         fid_every_n_val_epochs: Tier 2 frequency (in validation epochs).
         center_slices_ratio: Fraction of center slices for 2.5D extraction.
-        fid_weights_path: Path to RadImageNet ResNet-50 state dict.
+        fid_weights_path: Path to RadImageNet ResNet-50 state dict (2d5 mode).
+        fid_mode: ``"2d5"`` for RadImageNet 2.5D or ``"3d"`` for Med3D 3D.
+        fid_3d_weights_path: Path to Med3D ResNet-50 state dict (3d mode).
         vae_config: Dict of VAE config params (for lazy loading).
         prediction_type: ``"u"`` or ``"x"`` prediction mode.
         cache_dir: Directory for caching real FID features to disk.
@@ -63,6 +70,8 @@ class EvaluationCallback(pl.Callback):
         fid_every_n_val_epochs: int = 2,
         center_slices_ratio: float = 0.6,
         fid_weights_path: str = "",
+        fid_mode: str = "2d5",
+        fid_3d_weights_path: str = "",
         vae_config: dict | None = None,
         prediction_type: str = "u",
         cache_dir: str = "",
@@ -70,6 +79,9 @@ class EvaluationCallback(pl.Callback):
         seed: int = 42,
     ) -> None:
         super().__init__()
+        if fid_mode not in _VALID_FID_MODES:
+            raise ValueError(f"fid_mode must be one of {_VALID_FID_MODES}, got '{fid_mode}'")
+
         self._n_swd_samples = n_swd_samples
         self._n_swd_projections = n_swd_projections
         self._n_real_cache = n_real_cache
@@ -78,6 +90,8 @@ class EvaluationCallback(pl.Callback):
         self._fid_every_n_val = fid_every_n_val_epochs
         self._center_slices_ratio = center_slices_ratio
         self._fid_weights_path = fid_weights_path
+        self._fid_mode = fid_mode
+        self._fid_3d_weights_path = fid_3d_weights_path
         self._vae_config = vae_config
         self._prediction_type = prediction_type
         self._cache_dir = Path(cache_dir) if cache_dir else None
@@ -97,10 +111,23 @@ class EvaluationCallback(pl.Callback):
         self._val_epoch_count: int = 0
         self._best_fid: float = float("inf")
         self._patience_counter: int = 0
-        self._real_features_cached: tuple[Tensor, Tensor, Tensor] | None = None
+        # Cache type depends on mode: tuple of 3 tensors (2d5) or single tensor (3d)
+        self._real_features_cached: tuple[Tensor, Tensor, Tensor] | Tensor | None = None
 
         # Per-epoch metrics history (written to JSON at end of training)
         self._eval_history: list[dict[str, Any]] = []
+
+    @property
+    def _fid_key(self) -> str:
+        """Primary FID metric key used for logging and early stopping."""
+        return "fid_3d" if self._fid_mode == "3d" else "fid_avg"
+
+    @property
+    def _active_weights_path(self) -> str:
+        """Weights path for the active FID mode."""
+        if self._fid_mode == "3d":
+            return self._fid_3d_weights_path
+        return self._fid_weights_path
 
     def on_fit_start(
         self,
@@ -124,9 +151,11 @@ class EvaluationCallback(pl.Callback):
         self._fid_noise = torch.randn(self._n_fid_samples, C, S, S, S, generator=gen)
 
         logger.info(
-            "EvaluationCallback: SWD noise=%d, FID noise=%d (real latents cached on first val)",
+            "EvaluationCallback: SWD noise=%d, FID noise=%d, mode=%s "
+            "(real latents cached on first val)",
             self._n_swd_samples,
             self._n_fid_samples,
+            self._fid_mode,
         )
 
     def on_train_epoch_end(
@@ -191,8 +220,9 @@ class EvaluationCallback(pl.Callback):
         if fid_results is None:
             return
 
+        fid_key = self._fid_key
         for key, val in fid_results.items():
-            pl_module.log(f"val/{key}", val, rank_zero_only=True, prog_bar=(key == "fid_avg"))
+            pl_module.log(f"val/{key}", val, rank_zero_only=True, prog_bar=(key == fid_key))
 
         # Attach FID to the most recent eval_history record (from on_train_epoch_end)
         fid_record = {
@@ -212,26 +242,34 @@ class EvaluationCallback(pl.Callback):
             )
             self._eval_history.append(fid_record)
 
-        logger.info(
-            "Tier 2 FID: xy=%.2f yz=%.2f zx=%.2f avg=%.2f%s",
-            fid_results["fid_xy"],
-            fid_results["fid_yz"],
-            fid_results["fid_zx"],
-            fid_results["fid_avg"],
-            " [BASELINE]" if is_first else "",
-        )
+        # Mode-specific logging
+        if self._fid_mode == "3d":
+            logger.info(
+                "Tier 2 FID (3D): %.2f%s",
+                fid_results["fid_3d"],
+                " [BASELINE]" if is_first else "",
+            )
+        else:
+            logger.info(
+                "Tier 2 FID (2.5D): xy=%.2f yz=%.2f zx=%.2f avg=%.2f%s",
+                fid_results["fid_xy"],
+                fid_results["fid_yz"],
+                fid_results["fid_zx"],
+                fid_results["fid_avg"],
+                " [BASELINE]" if is_first else "",
+            )
 
         # Early stopping check (skip first epoch — it's baseline)
+        fid_primary = fid_results[fid_key]
         if not is_first:
-            fid_avg = fid_results["fid_avg"]
-            if fid_avg < self._best_fid:
-                self._best_fid = fid_avg
+            if fid_primary < self._best_fid:
+                self._best_fid = fid_primary
                 self._patience_counter = 0
             else:
                 self._patience_counter += 1
                 logger.info(
                     "FID not improved: %.2f >= best %.2f (patience %d/%d)",
-                    fid_avg,
+                    fid_primary,
                     self._best_fid,
                     self._patience_counter,
                     self._early_stop_patience,
@@ -245,7 +283,7 @@ class EvaluationCallback(pl.Callback):
                     trainer.should_stop = True
         else:
             # First FID sets the initial best
-            self._best_fid = fid_results["fid_avg"]
+            self._best_fid = fid_primary
 
         if self._eval_history:
             self._eval_history[-1]["best_fid"] = self._best_fid
@@ -262,11 +300,14 @@ class EvaluationCallback(pl.Callback):
         if not self._eval_history:
             return
 
+        fid_key = self._fid_key
+
         # Build aggregate summary
         swd_values = [r["swd"] for r in self._eval_history if "swd" in r]
-        fid_values = [r["fid_avg"] for r in self._eval_history if "fid_avg" in r]
+        fid_values = [r[fid_key] for r in self._eval_history if fid_key in r]
 
         summary: dict[str, Any] = {
+            "fid_mode": self._fid_mode,
             "n_val_epochs": self._val_epoch_count,
             "early_stopped": trainer.should_stop,
             "final_train_epoch": trainer.current_epoch,
@@ -302,7 +343,8 @@ class EvaluationCallback(pl.Callback):
             )
         if fid_values:
             logger.info(
-                "Eval summary — FID: first=%.2f (baseline), best=%.2f, last=%.2f",
+                "Eval summary — FID (%s): first=%.2f (baseline), best=%.2f, last=%.2f",
+                self._fid_mode,
                 fid_values[0],
                 min(fid_values),
                 fid_values[-1],
@@ -396,16 +438,16 @@ class EvaluationCallback(pl.Callback):
         )
 
     def _compute_fid(self, pl_module: pl.LightningModule) -> dict[str, float] | None:
-        """Decode latents, extract features, compute 2.5D FID.
+        """Decode latents, extract features, compute FID.
+
+        Dispatches to 2.5D or 3D path based on ``fid_mode``.
 
         Returns:
-            FID results dict, or None if VAE/feature net not available.
+            FID results dict, or None if weights/noise not available.
         """
-        if not self._fid_weights_path or self._fid_noise is None:
+        if not self._active_weights_path or self._fid_noise is None:
             logger.info("FID skipped: no weights path or noise")
             return None
-
-        from neuromf.metrics.fid import compute_fid_2d5
 
         device = pl_module.device
 
@@ -416,14 +458,35 @@ class EvaluationCallback(pl.Callback):
         if self._vae is None or self._feature_net is None:
             return None
 
-        # Get/compute real features
-        real_feats = self._load_or_compute_real_features(device)
+        if self._fid_mode == "3d":
+            return self._compute_fid_3d(pl_module, device)
+        return self._compute_fid_2d5(pl_module, device)
 
-        # Generate fake latents and extract features
+    def _compute_fid_2d5(
+        self,
+        pl_module: pl.LightningModule,
+        device: torch.device,
+    ) -> dict[str, float]:
+        """2.5D FID path: RadImageNet features from orthogonal slices."""
+        from neuromf.metrics.fid import compute_fid_2d5
+
+        real_feats = self._load_or_compute_real_features_2d5(device)
         fake_z = self._generate_latents(pl_module, self._fid_noise)
-        fake_feats = self._extract_volume_features(fake_z, device)
-
+        fake_feats = self._extract_volume_features_2d5(fake_z, device)
         return compute_fid_2d5(real_feats, fake_feats)
+
+    def _compute_fid_3d(
+        self,
+        pl_module: pl.LightningModule,
+        device: torch.device,
+    ) -> dict[str, float]:
+        """3D FID path: Med3D ResNet-50 features from full volumes."""
+        from neuromf.metrics.fid_3d import compute_fid_3d
+
+        real_feats = self._load_or_compute_real_features_3d(device)
+        fake_z = self._generate_latents(pl_module, self._fid_noise)
+        fake_feats = self._extract_volume_features_3d(fake_z, device)
+        return {"fid_3d": compute_fid_3d(real_feats, fake_feats)}
 
     def _ensure_vae_loaded(self, device: torch.device) -> None:
         """Lazy-load the MAISI VAE on first Tier 2 call."""
@@ -440,45 +503,51 @@ class EvaluationCallback(pl.Callback):
         logger.info("Loaded MAISI VAE for FID evaluation")
 
     def _ensure_feature_net_loaded(self, device: torch.device) -> None:
-        """Lazy-load the RadImageNet feature network on first Tier 2 call."""
+        """Lazy-load the feature network based on FID mode."""
         if self._feature_net is not None:
             return
 
-        from neuromf.metrics.fid import load_radimagenet_resnet50
+        if self._fid_mode == "3d":
+            from neuromf.metrics.fid_3d import load_med3d_resnet50
 
-        self._feature_net = load_radimagenet_resnet50(self._fid_weights_path)
-        self._feature_net = self._feature_net.to(device)
-        self._feature_net.eval()
-        logger.info("Loaded RadImageNet ResNet-50 for FID evaluation")
+            self._feature_net = load_med3d_resnet50(self._fid_3d_weights_path)
+            self._feature_net = self._feature_net.to(device)
+            self._feature_net.eval()
+            logger.info("Loaded Med3D ResNet-50 for 3D-FID evaluation")
+        else:
+            from neuromf.metrics.fid import load_radimagenet_resnet50
 
-    def _load_or_compute_real_features(self, device: torch.device) -> tuple[Tensor, Tensor, Tensor]:
-        """Load real features from cache or compute from real latents.
+            self._feature_net = load_radimagenet_resnet50(self._fid_weights_path)
+            self._feature_net = self._feature_net.to(device)
+            self._feature_net.eval()
+            logger.info("Loaded RadImageNet ResNet-50 for 2.5D-FID evaluation")
 
-        On first call, decodes real latents through VAE and extracts
-        features. Saves to disk for subsequent calls.
-        """
-        # Check in-memory cache
+    # ------------------------------------------------------------------
+    # 2.5D feature extraction (existing path)
+    # ------------------------------------------------------------------
+
+    def _load_or_compute_real_features_2d5(
+        self,
+        device: torch.device,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Load or compute real 2.5D features (3-plane tuple)."""
         if self._real_features_cached is not None:
+            assert isinstance(self._real_features_cached, tuple)
             return self._real_features_cached
 
-        # Check disk cache
         if self._cache_dir is not None:
             cache_path = self._cache_dir / "real_features.pt"
             if cache_path.exists():
-                logger.info("Loading cached real features from %s", cache_path)
+                logger.info("Loading cached 2.5D real features from %s", cache_path)
                 cached = torch.load(str(cache_path), map_location="cpu", weights_only=True)
                 self._real_features_cached = (cached["xy"], cached["yz"], cached["zx"])
                 return self._real_features_cached
 
-        # Compute from real latents
         assert self._real_latents is not None
         n_use = min(self._n_fid_real_samples, self._real_latents.shape[0])
-        real_z = self._real_latents[:n_use]
-
-        feats = self._extract_volume_features(real_z, device)
+        feats = self._extract_volume_features_2d5(self._real_latents[:n_use], device)
         self._real_features_cached = feats
 
-        # Save to disk
         if self._cache_dir is not None:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             cache_path = self._cache_dir / "real_features.pt"
@@ -486,19 +555,17 @@ class EvaluationCallback(pl.Callback):
                 {"xy": feats[0], "yz": feats[1], "zx": feats[2]},
                 str(cache_path),
             )
-            logger.info("Cached real features to %s", cache_path)
+            logger.info("Cached 2.5D real features to %s", cache_path)
 
         return feats
 
     @torch.no_grad()
-    def _extract_volume_features(
+    def _extract_volume_features_2d5(
         self,
         latents: Tensor,
         device: torch.device,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Decode latents through VAE and extract 2.5D features.
-
-        Processes one volume at a time to limit peak memory.
 
         Args:
             latents: Latent tensor ``(N, 4, 48, 48, 48)``.
@@ -518,11 +585,7 @@ class EvaluationCallback(pl.Callback):
 
         for i in range(latents.shape[0]):
             z_i = latents[i : i + 1].to(device)
-
-            # Decode to pixel space
             x_hat = self._vae.decode(z_i)
-
-            # Extract 2.5D features
             xy, yz, zx = extract_2d5_features(
                 x_hat,
                 self._feature_net,
@@ -537,3 +600,65 @@ class EvaluationCallback(pl.Callback):
             torch.cat(all_yz, dim=0),
             torch.cat(all_zx, dim=0),
         )
+
+    # ------------------------------------------------------------------
+    # 3D feature extraction (new path)
+    # ------------------------------------------------------------------
+
+    def _load_or_compute_real_features_3d(self, device: torch.device) -> Tensor:
+        """Load or compute real 3D features (single tensor)."""
+        if self._real_features_cached is not None:
+            assert isinstance(self._real_features_cached, Tensor)
+            return self._real_features_cached
+
+        if self._cache_dir is not None:
+            cache_path = self._cache_dir / "real_features_3d.pt"
+            if cache_path.exists():
+                logger.info("Loading cached 3D real features from %s", cache_path)
+                cached = torch.load(str(cache_path), map_location="cpu", weights_only=True)
+                self._real_features_cached = cached
+                return self._real_features_cached
+
+        assert self._real_latents is not None
+        n_use = min(self._n_fid_real_samples, self._real_latents.shape[0])
+        feats = self._extract_volume_features_3d(self._real_latents[:n_use], device)
+        self._real_features_cached = feats
+
+        if self._cache_dir is not None:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = self._cache_dir / "real_features_3d.pt"
+            torch.save(feats, str(cache_path))
+            logger.info("Cached 3D real features to %s", cache_path)
+
+        return feats
+
+    @torch.no_grad()
+    def _extract_volume_features_3d(
+        self,
+        latents: Tensor,
+        device: torch.device,
+    ) -> Tensor:
+        """Decode latents through VAE and extract 3D features.
+
+        Processes one volume at a time to limit peak memory.
+
+        Args:
+            latents: Latent tensor ``(N, 4, 48, 48, 48)``.
+            device: Compute device.
+
+        Returns:
+            Feature tensor ``(N, 2048)``.
+        """
+        from neuromf.metrics.fid_3d import extract_3d_features
+
+        assert self._vae is not None
+        assert self._feature_net is not None
+
+        all_feats: list[Tensor] = []
+        for i in range(latents.shape[0]):
+            z_i = latents[i : i + 1].to(device)
+            x_hat = self._vae.decode(z_i)
+            feats = extract_3d_features(x_hat, self._feature_net, normalize=True)
+            all_feats.append(feats)
+
+        return torch.cat(all_feats, dim=0)
