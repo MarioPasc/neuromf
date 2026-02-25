@@ -48,6 +48,9 @@ def compute_coverage(
     real = real.detach().float()
     gen = gen.detach().float()
 
+    if real.shape[0] <= k or gen.shape[0] == 0:
+        return 0.0
+
     radii = _kth_nearest_distance(real, k)  # (N,)
     dists_real_gen = torch.cdist(real, gen)  # (N, M)
     min_dist_to_gen = dists_real_gen.min(dim=1).values  # (N,)
@@ -74,6 +77,9 @@ def compute_density(
     """
     real = real.detach().float()
     gen = gen.detach().float()
+
+    if real.shape[0] <= k or gen.shape[0] == 0:
+        return 0.0
 
     radii = _kth_nearest_distance(real, k)  # (N,)
     dists_gen_real = torch.cdist(gen, real)  # (M, N)

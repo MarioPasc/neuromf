@@ -55,6 +55,9 @@ def compute_mmd(
     x = x.detach().float()
     y = y.detach().float()
 
+    if x.shape[0] < 2 or y.shape[0] < 2:
+        return 0.0
+
     d_xx = _pairwise_sq_distances(x, x)
     d_yy = _pairwise_sq_distances(y, y)
     d_xy = _pairwise_sq_distances(x, y)
