@@ -24,6 +24,8 @@ def compute_psnr(x: torch.Tensor, x_hat: torch.Tensor) -> float:
     if mse < 1e-10:
         return 100.0
     data_range = (x.max() - x.min()).item()
+    if data_range < 1e-10:
+        return 0.0
     return 10.0 * math.log10(data_range**2 / mse)
 
 
@@ -43,5 +45,7 @@ def compute_ssim_3d(x: torch.Tensor, x_hat: torch.Tensor) -> float:
     from monai.metrics import SSIMMetric
 
     data_range = (x.max() - x.min()).item()
+    if data_range < 1e-10:
+        return 0.0
     ssim_metric = SSIMMetric(spatial_dims=3, data_range=data_range)
     return ssim_metric(x, x_hat).item()
