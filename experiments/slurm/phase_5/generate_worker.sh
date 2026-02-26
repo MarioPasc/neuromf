@@ -13,7 +13,7 @@
 # PHASE 5: GENERATION PIPELINE WORKER
 #
 # Stage 1: Generate latents at all NFE levels (1, 2, 5, 10, 25, 50)
-# Stage 2: Prepare real test volumes
+# Stage 2: Prepare real test volumes (from original NIfTI, no VAE round-trip)
 # Stage 3: Decode volumes at selected NFE levels (1, 10, 50)
 # Stage 4: Visualization sanity-check figures (CPU-only)
 #
@@ -90,6 +90,8 @@ python -c "
 from neuromf.generation import LatentGenerator, VolumeDecoder, H5Manager
 from neuromf.wrappers.maisi_unet import MAISIUNetWrapper
 from neuromf.wrappers.maisi_vae import MAISIVAEWrapper
+from neuromf.data.latent_dataset import export_split_manifest
+from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
 print('All imports OK')
 "
 
@@ -113,12 +115,13 @@ python experiments/cli/generate_latents.py \
 echo "Stage 1 complete."
 
 # ========================================================================
-# STAGE 2: PREPARE REAL TEST VOLUMES
+# STAGE 2: PREPARE REAL TEST VOLUMES (from original NIfTI, no VAE)
 # ========================================================================
 echo ""
 echo "=========================================="
 echo "STAGE 2: PREPARING REAL TEST VOLUMES"
 echo "=========================================="
+echo "(Reading original NIfTI files — no VAE round-trip)"
 
 python experiments/cli/prepare_real_test.py \
     --config "${CONFIGS_DIR}/generate.yaml" \

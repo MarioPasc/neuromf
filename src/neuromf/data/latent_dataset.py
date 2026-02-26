@@ -198,6 +198,148 @@ def _compute_split_info(
     return info
 
 
+def _build_entry_source_paths(
+    entries: list[tuple[Path, int]],
+) -> list[str]:
+    """Read ``source_path`` for every entry from the HDF5 shards.
+
+    Opens each shard once to batch-read source paths for all entries
+    referencing that shard.
+
+    Args:
+        entries: Global index — list of ``(shard_path, local_idx)`` tuples.
+
+    Returns:
+        List of source NIfTI paths, one per entry, in the same order
+        as ``entries``.
+    """
+    result: list[str] = [""] * len(entries)
+
+    shard_to_entries: dict[Path, list[tuple[int, int]]] = {}
+    for entry_idx, (shard_path, local_idx) in enumerate(entries):
+        shard_to_entries.setdefault(shard_path, []).append((entry_idx, local_idx))
+
+    for shard_path, pairs in shard_to_entries.items():
+        with h5py.File(str(shard_path), "r") as f:
+            source_paths = f["source_path"][:]
+            for entry_idx, local_idx in pairs:
+                raw = source_paths[local_idx]
+                result[entry_idx] = raw.decode() if isinstance(raw, bytes) else str(raw)
+
+    return result
+
+
+def export_split_manifest(
+    latent_dir: Path,
+    output_path: Path | None = None,
+    split_ratios: list[float] | None = None,
+    split_seed: int = 42,
+) -> dict:
+    """Export a JSON manifest mapping each split to its entries with source paths.
+
+    Computes the deterministic subject-stratified split, reads ``source_path``
+    from each HDF5 shard entry, and persists the result as a JSON file.
+    This makes the split auditable and allows downstream tools (e.g.
+    ``prepare_real_test.py``) to locate original NIfTI files without
+    re-reading all shards.
+
+    Args:
+        latent_dir: Directory containing ``.h5`` shard files.
+        output_path: Where to save the JSON manifest. Defaults to
+            ``latent_dir / "split_manifest.json"``.
+        split_ratios: Fractions for N-way split. Defaults to
+            ``[0.85, 0.10, 0.05]`` (train/val/test).
+        split_seed: Random seed for deterministic splitting.
+
+    Returns:
+        The manifest dict with structure::
+
+            {
+                "config": {"split_ratios": [...], "split_seed": 42},
+                "splits": {
+                    "train": {"n_subjects": ..., "n_scans": ..., "entries": [...]},
+                    "val":   {...},
+                    "test":  {...},
+                },
+            }
+
+        Each entry is a dict with ``subject_key``, ``dataset``,
+        ``source_path``, ``shard``, and ``local_idx``.
+    """
+    import json
+
+    latent_dir = Path(latent_dir)
+    if split_ratios is None:
+        split_ratios = [0.85, 0.10, 0.05]
+    if output_path is None:
+        output_path = latent_dir / "split_manifest.json"
+
+    # Discover shards and build global index
+    shard_paths = discover_shards(latent_dir)
+    if not shard_paths:
+        raise FileNotFoundError(f"No .h5 shard files found in {latent_dir}")
+
+    all_entries = build_global_index(shard_paths)
+    if not all_entries:
+        raise FileNotFoundError(f"No written samples found in shards at {latent_dir}")
+
+    # Build subject index and compute stratified split
+    subject_to_indices, subject_to_dataset = _build_subject_index(all_entries)
+    split_groups = _stratified_subject_split(
+        subject_to_indices, subject_to_dataset, split_ratios, split_seed
+    )
+
+    # Read source_path for all entries
+    source_paths = _build_entry_source_paths(all_entries)
+
+    # Build manifest
+    split_names = ["train", "val", "test", "extra"][: len(split_ratios)]
+    manifest: dict = {
+        "config": {
+            "split_ratios": split_ratios,
+            "split_seed": split_seed,
+            "n_shards": len(shard_paths),
+            "n_total_entries": len(all_entries),
+        },
+        "splits": {},
+    }
+
+    for split_name in split_names:
+        chosen_subjects = split_groups[split_name]
+        entries_for_split: list[dict] = []
+        for subj_key in sorted(chosen_subjects):
+            ds_name = subject_to_dataset[subj_key]
+            for entry_idx in sorted(subject_to_indices[subj_key]):
+                shard_path, local_idx = all_entries[entry_idx]
+                entries_for_split.append(
+                    {
+                        "subject_key": subj_key,
+                        "dataset": ds_name,
+                        "source_path": source_paths[entry_idx],
+                        "shard": shard_path.name,
+                        "local_idx": local_idx,
+                    }
+                )
+        manifest["splits"][split_name] = {
+            "n_subjects": len(chosen_subjects),
+            "n_scans": len(entries_for_split),
+            "entries": entries_for_split,
+        }
+
+    # Persist
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    logger.info(
+        "Split manifest saved: %s (%s)",
+        output_path,
+        {k: v["n_scans"] for k, v in manifest["splits"].items()},
+    )
+    return manifest
+
+
 class LatentDataset(Dataset):
     """PyTorch Dataset backed by HDF5 latent shard files.
 

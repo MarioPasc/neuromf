@@ -10,15 +10,16 @@ NeuroMF trains a **MeanFlow** model in the latent space of a **frozen MAISI 3D V
 
 **Layer 3 — Improved MeanFlow / iMF**: Original MF computes the JVP using ground-truth velocity (eps - z_0) as the tangent direction. Problem: this makes V depend on data you don't have at inference. iMF says: use the model's own prediction v_tilde = u(z_t, t, t) as the tangent instead. Now V depends only on z_t — matching what happens at inference. This gives lower-variance gradients and stable loss curves.
 
-**Layer 4 — iMF Dual-Head (what we use):** The UNet has a shared backbone with two output heads: the u-head predicts the average velocity u, and a v-head (supervised with its own loss `||v - v_c||^p`) predicts the instantaneous velocity used as the JVP tangent. The v-head receives direct supervision toward the correct tangent, providing high-quality JVP tangents from early training — solving the MF loss divergence problem. The v-head is disabled at inference (zero cost). We use u-prediction (model directly outputs u) with FD-JVP and h-conditioning (condition on h=t-r, not separate r and t). Dual loss: `loss = loss_u_weighted + loss_v_weighted`, each independently adaptive-weighted.
+**Layer 4 — iMF Dual-Head (what we use):** The UNet has a shared backbone with two output heads: the u-head predicts the average velocity u (or x_hat in x-prediction mode), and a v-head (supervised with its own loss `||v - v_c||^p`) predicts the instantaneous velocity used as the JVP tangent. The v-head receives direct supervision toward the correct tangent, providing high-quality JVP tangents from early training — solving the MF loss divergence problem. The v-head is disabled at inference (zero cost). Our best configuration uses **x-prediction** (model outputs denoised data estimate x_hat, from which u is derived as `u = (z_t - x_hat) / t`) with **exact JVP** (`torch.func.jvp`) and **(t, h) conditioning** (condition on both t and h=t-r, per MF Table 1c). Dual loss: `loss = loss_u_weighted + loss_v_weighted`, each independently adaptive-weighted. **Critical rule:** x-pred + exact JVP = stable; u-pred + FD-JVP = stable; x-pred + FD-JVP = explosion (1/t singularity amplified by finite differences).
 
 In summary, one training step does:
-1. Sample z_0 (data), eps (noise), t, r
-2. Interpolate: z_t = (1-t)z_0 + teps
-3. Forward pass 1: v_tangent = v_head(z_t, t, t) [no grad — tangent direction from v-head]
-4. Forward pass 2+3: JVP gives u and du/dt using v_tangent as tangent
-5. Compound velocity: V = u + (t-r)*stop_grad(du/dt)
-6. Loss: ||V - v_c||^p + ||v - v_c||^p with independent adaptive weighting
+1. Sample z_0 (data), eps (noise), t, r; compute z_t = (1-t)z_0 + teps
+2. v_tangent = v_head(z_t, t, t) [no grad — tangent from supervised v-head]
+3. JVP via `torch.func.jvp` with `has_aux=True`: get (u, du/dt, v) from dual_fn
+   - dual_fn returns (u, v) where u = (z_t - x_hat) / t [x-pred -> u conversion]
+4. Compound velocity: V = u + (t-r)*sg[du/dt]
+5. Loss: ||V - v_c||^p (MF consistency) + ||v - v_c||^p (tangent supervision), each adaptive-weighted
+6. At inference (1-NFE): z_0 = model(noise, r=0, t=1) — direct x-prediction output
 
 ### Core Pipeline
 
