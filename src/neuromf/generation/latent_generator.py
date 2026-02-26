@@ -162,6 +162,10 @@ class LatentGenerator:
                 idx += b
                 if idx % (batch_size * 10) == 0 or idx >= n_samples:
                     logger.info("  Generated %d / %d", idx, n_samples)
+
+            # Flush to ensure n_written attr is persisted on network filesystems
+            # (protects against SIGTERM/SIGKILL leaving stale metadata)
+            h5file.flush()
         finally:
             h5file.close()
 

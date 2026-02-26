@@ -151,6 +151,7 @@ class VolumeDecoder:
                     logger.info("  Decoded %d / %d", idx, n_samples)
 
             src_h5.close()
+            vol_h5.flush()
         finally:
             vol_h5.close()
 

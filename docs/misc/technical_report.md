@@ -4,7 +4,7 @@
 
 **Author:** Mario Pascual-Gonzalez
 **Date:** February 2026
-**Status:** Phases 0-5 complete (code); Phase 4 best model trained; Phase 5 awaiting Picasso evaluation
+**Status:** Phases 0–5 complete (code); Phase 4 best model trained and evaluated; Phase 5 generation pipeline ready
 **Supporting Notes:** `docs/misc/technical_report_notes.md`
 
 ---
@@ -18,7 +18,7 @@
 5. [Data Pipeline](#5-data-pipeline)
 6. [Training Protocol](#6-training-protocol)
 7. [Sampling and Generation](#7-sampling-and-generation)
-8. [Experimental Results and Ablations](#8-experimental-results-and-ablations)
+8. [Experimental Results](#8-experimental-results)
 9. [Evaluation Protocol](#9-evaluation-protocol)
 10. [Implementation Details](#10-implementation-details)
 11. [Novel Contributions](#11-novel-contributions)
@@ -31,7 +31,7 @@
 
 ### 1.1 Clinical Need
 
-Generative models for 3D brain MRI synthesis serve three clinical purposes: (i) data augmentation for rare pathologies with scarce training data, (ii) synthetic cohorts for privacy-preserving research, and (iii) counterfactual generation for explainability. The critical bottleneck in existing methods is **sampling cost**: state-of-the-art approaches (DDPM, flow matching, rectified flow) require 5-1000 network evaluations per volume, making large-scale synthesis prohibitively slow.
+Generative models for 3D brain MRI synthesis serve three clinical purposes: (i) data augmentation for rare pathologies with scarce training data, (ii) synthetic cohorts for privacy-preserving research, and (iii) counterfactual generation for explainability. The critical bottleneck in existing methods is **sampling cost**: state-of-the-art approaches (DDPM, flow matching, rectified flow) require 5–1000 network evaluations per volume, making large-scale synthesis prohibitively slow.
 
 ### 1.2 Gap in the Literature
 
@@ -39,8 +39,8 @@ No prior work has applied MeanFlow — or any 1-step flow-based model — to 3D 
 
 | Method | Space | Steps (NFE) | Paradigm | Domain |
 |--------|-------|-------------|----------|--------|
-| MAISI-v2 (Zhao et al., 2025) | Latent | 5-50 | Rectified Flow | 3D CT/MRI |
-| MOTFM (Yazdani et al., 2025) | Pixel | 10-50 | OT Flow Matching | 3D Brain MRI |
+| MAISI-v2 (Zhao et al., 2025) | Latent | 5–50 | Rectified Flow | 3D CT/MRI |
+| MOTFM (Yazdani et al., 2025) | Pixel | 10–50 | OT Flow Matching | 3D Brain MRI |
 | Med-DDPM (Dorjsembe et al., 2024) | Pixel | 1000 | DDPM | 3D Brain MRI |
 | pMF (Lu et al., 2026) | Pixel | 1 | Progressive MeanFlow | 2D Natural Images |
 | **NeuroMF (ours)** | **Latent** | **1** | **MeanFlow (iMF dual-head)** | **3D Brain MRI** |
@@ -52,12 +52,12 @@ Our work fills the intersection: **1-step + latent + 3D + medical**.
 NeuroMF trains a MeanFlow model in the latent space of a frozen MAISI 3D VAE. The core pipeline is:
 
 ```
-Input MRI (1x192^3) --> Frozen MAISI VAE Encoder --> Latent (4x48^3)
-                                                         |
+Input MRI (1×192³) ──► Frozen MAISI VAE Encoder ──► Latent (4×48³)
+                                                         │
                                                   Train MeanFlow
-                                                         |
-                                                         v
-Synthetic MRI (1x192^3) <-- Frozen MAISI VAE Decoder <---'
+                                                         │
+                                                         ▼
+Synthetic MRI (1×192³) ◄── Frozen MAISI VAE Decoder ◄───┘
 ```
 
 At inference, a **single forward pass** through the MeanFlow network generates a complete 3D brain MRI volume. The network learns the *average velocity* of a probability flow ODE, which by construction encodes the entire transport from noise to data in one evaluation.
@@ -70,79 +70,68 @@ At inference, a **single forward pass** through the MeanFlow network generates a
 
 Flow matching (Lipman et al., 2023; Liu et al., 2023) defines a probability path between data and noise via linear interpolation:
 
-```
-z_t = (1 - t) * z_0 + t * eps,    z_0 ~ p_data, eps ~ N(0, I),    t in [0, 1]
-```
+$$z_t = (1 - t)\, z_0 + t\, \varepsilon, \qquad z_0 \sim p_{\mathrm{data}},\quad \varepsilon \sim \mathcal{N}(0, I), \quad t \in [0, 1]$$
 
-where `t=0` is data and `t=1` is noise. The conditional velocity field is `v_c(z_t, t) = eps - z_0`, and a neural network is trained to match this field: `L_FM = E[||v_theta(z_t, t) - v_c||^2]`.
+where $t = 0$ is data and $t = 1$ is noise. The conditional velocity field is $v_c(z_t, t) = \varepsilon - z_0$, and a neural network is trained to match this field:
 
-**Limitation:** Sampling requires integrating the learned velocity field from t=1 to t=0 via numerical ODE solvers, requiring K >= 5 network evaluations even with trajectory straightening (rectified flow).
+$$\mathcal{L}_{\mathrm{FM}} = \mathbb{E}_{z_0, \varepsilon, t}\Big[\|v_\theta(z_t, t) - v_c\|^2\Big]$$
+
+**Limitation:** Sampling requires integrating the learned velocity field from $t=1$ to $t=0$ via numerical ODE solvers, requiring $K \geq 5$ network evaluations even with trajectory straightening (rectified flow).
 
 ### 2.2 MeanFlow: Average Velocity for 1-Step Generation
 
-MeanFlow (Geng et al., 2025a) replaces the instantaneous velocity `v(z_t, t)` with the **average velocity** over an interval [r, t]:
+MeanFlow (Geng et al., 2025a) replaces the instantaneous velocity $v(z_t, t)$ with the **average velocity** over an interval $[r, t]$:
 
-```
-u(z_t, r, t) = (1 / (t - r)) * integral_r^t v(z_s, s) ds
-```
+$$u(z_t, r, t) = \frac{1}{t - r}\int_r^t v(z_s, s)\, ds$$
 
-The key insight: if the average velocity from t=0 to t=1 is known exactly, the entire flow can be computed in one step:
+The key insight: if the average velocity from $t=0$ to $t=1$ is known exactly, the entire flow can be computed in one step:
 
-```
-z_0 = z_1 - 1 * u_theta(z_1, 0, 1)     [1-NFE generation]
-```
+$$z_0 = z_1 - u_\theta(z_1, 0, 1) \qquad \text{[1-NFE generation]}$$
 
 ### 2.3 The MeanFlow Identity and Self-Consistency
 
-The average velocity u must satisfy a self-consistency condition. Differentiating the integral definition and applying the chain rule yields the **MeanFlow Identity**:
+The average velocity $u$ must satisfy a self-consistency condition. Differentiating the integral definition and applying the chain rule yields the **MeanFlow Identity**:
 
-```
-v(z_t, t) = u(z_t, r, t) + (t - r) * [du/dz_t * v(z_t, t) + du/dt]
-```
+$$v(z_t, t) = u(z_t, r, t) + (t - r)\left[\frac{\partial u}{\partial z_t}\, v(z_t, t) + \frac{\partial u}{\partial t}\right]$$
 
 The right-hand side, evaluated with the neural approximation, gives the **compound velocity**:
 
-```
-V_theta = u_theta + (t - r) * sg[JVP(u_theta, (z_t,t,r), (v_tilde, 1, 0))]
-```
+$$V_\theta = u_\theta + (t - r) \cdot \mathrm{sg}\!\left[\mathrm{JVP}\!\left(u_\theta,\; (z_t, t, r),\; (\tilde{v}, 1, 0)\right)\right]$$
 
-where `sg[.]` denotes stop-gradient and the JVP (Jacobian-Vector Product) is:
+where $\mathrm{sg}[\cdot]$ denotes stop-gradient and the JVP (Jacobian-Vector Product) is:
 
-```
-JVP = du/dz_t * v_tilde + du/dt * 1 + du/dr * 0
-```
+$$\mathrm{JVP} = \frac{\partial u}{\partial z_t}\,\tilde{v} + \frac{\partial u}{\partial t}\cdot 1 + \frac{\partial u}{\partial r}\cdot 0$$
 
-This JVP is computed in O(d) time via forward-mode automatic differentiation (`torch.func.jvp`), avoiding the O(d^2) cost of constructing the full Jacobian. The tangent vector `v_tilde` is the model's own estimate of the instantaneous velocity at r=t: `v_tilde = u_theta(z_t, t, t)`.
+This JVP is computed in $O(d)$ time via forward-mode automatic differentiation (`torch.func.jvp`), avoiding the $O(d^2)$ cost of constructing the full Jacobian. The tangent vector $\tilde{v}$ is the model's own estimate of the instantaneous velocity at $r = t$: $\tilde{v} = u_\theta(z_t, t, t)$.
 
 ### 2.4 Improved MeanFlow (iMF) and the Dual-Head Architecture
 
-The original MeanFlow uses the ground-truth velocity `v_c = eps - z_0` as the JVP tangent. **Problem:** this creates a dependency on data at inference time (where we don't have z_0). The improved MeanFlow (iMF; Geng et al., 2025b) resolves this by using the model's own prediction as the tangent, making V a function of z_t alone.
+The original MeanFlow uses the ground-truth velocity $v_c = \varepsilon - z_0$ as the JVP tangent. **Problem:** this creates a dependency on data at inference time (where $z_0$ is unavailable). The improved MeanFlow (iMF; Geng et al., 2025b) resolves this by using the model's own prediction as the tangent, making $V$ a function of $z_t$ alone.
 
 **The dual-head extension** (our architecture, inspired by iMF) introduces two output heads on a shared UNet backbone:
 
-- **u-head** (main): Predicts the average velocity u (or equivalently, x_hat in x-prediction mode). Used at inference.
-- **v-head** (auxiliary): Predicts the instantaneous velocity, directly supervised against v_c. Provides the JVP tangent during training. **Disabled at inference** (zero cost).
+- **u-head** (main): Predicts the average velocity $u$ (or equivalently, $\hat{x}$ in x-prediction mode). Used at inference.
+- **v-head** (auxiliary): Predicts the instantaneous velocity, directly supervised against $v_c$. Provides the JVP tangent during training. **Disabled at inference** (zero cost).
 
-The v-head solves a critical practical problem: without it, the tangent comes from the u-head's own prediction, which is poor in early training, creating a bootstrapping problem that causes loss divergence. The v-head receives direct supervision (`||v - v_c||^p`), providing high-quality tangents from the first epoch.
+The v-head solves a critical practical problem: without it, the tangent comes from the u-head's own prediction, which is poor in early training, creating a bootstrapping problem that causes loss divergence. The v-head receives direct supervision ($\|v - v_c\|^p$), providing high-quality tangents from the first epoch. In our training, the v-head cosine alignment $\cos(\hat{v}, v_c)$ reached 0.39 by epoch 50 — 85% of its final value of 0.44.
 
 ### 2.5 x-Prediction Reparameterisation
 
-Instead of directly outputting the average velocity u, the network outputs a denoised data estimate x_hat (x-prediction, following pMF; Lu et al., 2026):
+Instead of directly outputting the average velocity $u$, the network outputs a denoised data estimate $\hat{x}$ (x-prediction, following pMF; Lu et al., 2026):
 
-```
-x_hat = net_theta(z_t, r, t)
-u_theta = (z_t - x_hat) / max(t, t_min)
-```
+$$\hat{x} = f_\theta(z_t, r, t), \qquad u_\theta = \frac{z_t - \hat{x}}{\max(t,\, t_{\min})}$$
 
-**Justification (manifold hypothesis):** The x-prediction target lies on the data manifold, which has low intrinsic dimensionality. The velocity u spans a higher-dimensional space. For architectures with a bottleneck (UNet encoder-decoder), predicting a low-dimensional target (x_hat) is easier than predicting a high-dimensional one (u).
+**Justification (manifold hypothesis):** The x-prediction target lies on the data manifold, which has low intrinsic dimensionality. The velocity $u$ spans a higher-dimensional space. For architectures with a bottleneck (UNet encoder-decoder), predicting a low-dimensional target ($\hat{x}$) is easier than predicting a high-dimensional one ($u$).
 
-**Quantitative criterion (pMF Table 2):** x-prediction dominates when `d_input / d_bottleneck > 1`. For our 3D UNet: `d_input = 4 x 48^3 = 442,368` vs `d_bottleneck = 512 x 6^3 = 110,592`, giving ratio ~4, firmly in the x-prediction regime.
+**Quantitative criterion (pMF Table 2):** x-prediction dominates when $d_{\mathrm{input}} / d_{\mathrm{bottleneck}} > 1$. For our 3D UNet:
+
+$$\frac{d_{\mathrm{input}}}{d_{\mathrm{bottleneck}}} = \frac{4 \times 48^3}{512 \times 6^3} = \frac{442{,}368}{110{,}592} \approx 4$$
+
+This is firmly in the x-prediction regime.
 
 **At inference (1-NFE):** With x-prediction, 1-step sampling simplifies to:
 
-```
-z_0 = model(noise, r=0, t=1)     [the output IS the denoised data]
-```
+$$z_0 = f_\theta(\varepsilon,\; r{=}0,\; t{=}1)$$
 
 No velocity-to-data conversion is needed — the model directly outputs the synthetic latent.
 
@@ -150,9 +139,9 @@ No velocity-to-data conversion is needed — the model directly outputs the synt
 
 All of the above operates identically in latent space. The computational advantages are:
 
-1. **JVP cost reduction:** Latent dimension d = 4 x 48^3 = 442,368 vs pixel space d = 192^3 = 7,077,888 — a **16x reduction** in JVP compute per iteration.
-2. **Memory reduction:** UNet operates on 48^3 feature maps vs 192^3 — approximately **64x reduction** in activation memory per JVP pass.
-3. **Training efficiency:** The latent space is pre-computed (Phase 1), so VAE encode/decode cost is amortised across epochs.
+1. **JVP cost reduction:** Latent dimension $d = 4 \times 48^3 = 442{,}368$ vs pixel space $d = 192^3 = 7{,}077{,}888$ — a **16× reduction** in JVP compute per iteration.
+2. **Memory reduction:** The UNet operates on $48^3$ feature maps vs $192^3$ — approximately **64× reduction** in activation memory per JVP pass.
+3. **Training efficiency:** The latent space is pre-computed (Phase 1), so VAE encode/decode cost is amortised across all training epochs.
 
 ---
 
@@ -165,18 +154,29 @@ The MAISI VAE (Guo et al., 2024) is a 3D variational autoencoder with adversaria
 | Property | Value |
 |----------|-------|
 | Parameters | 20,944,897 (~21M) |
-| Encoder stages | 3 levels of 2x strided 3D convolution |
+| Encoder stages | 3 levels of 2× strided 3D convolution |
 | Latent channels | 4 (with KL regularisation) |
-| Spatial compression | 4x per axis: 192^3 -> 48^3 |
+| Spatial compression | 4× per axis: $(1, 192^3) \to (4, 48^3)$ |
 | Attention | None (all `attention_levels=false`) |
-| Training losses | L1 + LPIPS perceptual + PatchGAN adversarial + KL |
+| Training losses | $L_1$ + LPIPS perceptual + PatchGAN adversarial + KL |
 | Checkpoint format | Wrapped in `"unet_state_dict"` key |
 | scale_factor | 0.96240234375 (extracted from diffusion checkpoint) |
 | Memory optimisation | `num_splits` parameter for chunk-based processing |
 
 **Reconstruction quality (Phase 0, 20 IXI volumes):** Mean SSIM = 0.9213, Mean PSNR = 30.86 dB. This establishes the VAE as a faithful encoder-decoder for brain MRI, with acceptable smoothing in cortical boundary regions.
 
-**Scale factor:** The decode operation divides by scale_factor before passing to the decoder: `x_hat = decoder(z / 0.9624)`. This calibration ensures the latent distribution matches the prior used during VAE training. The scale_factor was extracted from the MAISI diffusion checkpoint (`diff_unet_3d_rflow-mr.pt["scale_factor"]`), not the VAE checkpoint.
+**Scale factor:** The decode operation divides by scale_factor before passing to the decoder: $\hat{x} = \mathrm{decoder}(z / 0.9624)$. This calibration ensures the latent distribution matches the prior used during VAE training. The scale_factor was extracted from the MAISI diffusion checkpoint (`diff_unet_3d_rflow-mr.pt["scale_factor"]`), not the VAE checkpoint.
+
+**Latent distribution quality:** Encoding all 6,471 volumes (train + val + test) confirms the latent space is well-regularised:
+
+| Channel | Mean | Std | Skewness | Kurtosis |
+|---------|------|-----|----------|----------|
+| 0 | $-0.053$ | $0.970$ | $+0.105$ | $-0.123$ |
+| 1 | $-0.185$ | $1.019$ | $+0.002$ | $-0.019$ |
+| 2 | $-0.051$ | $0.970$ | $+0.045$ | $+0.099$ |
+| 3 | $+0.001$ | $1.011$ | $+0.069$ | $+0.144$ |
+
+The distributions are near-Gaussian: skewness $|\gamma| < 0.11$, excess kurtosis $|\kappa| < 0.15$, and standard deviations cluster around $0.97$–$1.02$. Cross-channel correlations are negligible (max off-diagonal $|r| = 0.046$), confirming the KL regularisation produces approximately independent, unit-variance channels.
 
 ### 3.2 MeanFlow UNet (Generative Model)
 
@@ -187,7 +187,7 @@ The MeanFlow UNet (`MAISIUNetWrapper`) uses the **same architecture** as the MAI
 | Backbone | MONAI `DiffusionModelUNet` (3D) |
 | Total parameters | ~178M |
 | Channels per level | [64, 128, 256, 512] |
-| Attention levels | [false, false, true, true] — only at 12^3 and 6^3 resolution |
+| Attention levels | [false, false, true, true] — only at $12^3$ and $6^3$ resolution |
 | Attention heads | 32 channels per head at attention levels |
 | ResBlocks per level | 2 |
 | GroupNorm groups | 32 |
@@ -195,7 +195,7 @@ The MeanFlow UNet (`MAISIUNetWrapper`) uses the **same architecture** as the MAI
 | Flash attention | **Disabled** (required for `torch.func.jvp` compatibility) |
 | Gradient checkpointing | **Disabled** (required for exact JVP forward-mode AD) |
 | ResBlock downsampling | Strided convolution (not pooling) |
-| Prediction type | x-prediction (network outputs denoised data estimate) |
+| Prediction type | x-prediction (network outputs denoised data $\hat{x}$) |
 
 **Flash attention incompatibility:** `torch.func.jvp` uses forward-mode automatic differentiation, which requires the computation graph to be fully traceable. Flash attention's fused CUDA kernels are opaque to PyTorch's AD system. Disabling flash attention adds ~10% latency per forward pass but enables exact JVP computation.
 
@@ -203,17 +203,19 @@ The MeanFlow UNet (`MAISIUNetWrapper`) uses the **same architecture** as the MAI
 
 ### 3.3 Dual-Time Conditioning
 
-MeanFlow requires conditioning on two time variables: t (current time) and r (interval lower bound). We implement three conditioning modes and select `t_h` based on ablation:
+MeanFlow requires conditioning on two time variables: $t$ (current time) and $r$ (interval lower bound). We implement three conditioning modes and select `t_h` based on ablation:
 
 | Mode | Inputs | Embedding | Source |
 |------|--------|-----------|--------|
-| `dual` | (r, t) | sin(r) + sin(t) through separate MLPs | pMF convention |
-| `h` | h = t-r | sin(h) through UNet's built-in MLP | iMF convention |
-| **`t_h`** | **(t, h=t-r)** | **sin(t) through UNet MLP + sin(h) through new h_embed MLP** | **MF Table 1c optimal** |
+| `dual` | $(r, t)$ | $\mathrm{sin}(r) + \mathrm{sin}(t)$ through separate MLPs | pMF convention |
+| `h` | $h = t - r$ | $\mathrm{sin}(h)$ through UNet's built-in MLP | iMF convention |
+| **`t_h`** | **$(t,\; h = t - r)$** | **$\mathrm{sin}(t)$ through UNet MLP + $\mathrm{sin}(h)$ through new $h$-embed MLP** | **MF Table 1c optimal** |
 
-The `t_h` mode conditions on both the absolute time t and the interval width h = t-r. This is strictly more informative than h-only conditioning (the model can distinguish between "near data at t=0.1" and "near noise at t=0.9" even when h is the same).
+The `t_h` mode conditions on both the absolute time $t$ and the interval width $h = t - r$. This is strictly more informative than $h$-only conditioning (the model can distinguish between "near data at $t = 0.1$" and "near noise at $t = 0.9$" even when $h$ is the same). The original MeanFlow paper (Table 1c) reports FID 61.06 for $(t, h)$ vs 63.13 for $h$-only on ImageNet.
 
-**Implementation:** Continuous time values in [0,1] are scaled by 1000 before computing sinusoidal embeddings (`_TIME_SCALE = 1000.0`). This prevents degenerate embeddings — with the standard `max_period=10000`, times in [0,1] would produce nearly constant embeddings. After sinusoidal encoding, each embedding passes through a 2-layer MLP (`Linear(64, 256) -> SiLU -> Linear(256, 256)`), and the two embeddings are summed: `emb = t_emb + h_emb`.
+**Implementation:** Continuous time values in $[0, 1]$ are scaled by 1000 before computing sinusoidal embeddings. This prevents degenerate embeddings — with the standard $\mathrm{max\_period} = 10000$, times in $[0, 1]$ would produce nearly constant embeddings. After sinusoidal encoding, each embedding passes through a 2-layer MLP ($\mathrm{Linear}(64, 256) \to \mathrm{SiLU} \to \mathrm{Linear}(256, 256)$), and the two embeddings are summed:
+
+$$\mathrm{emb} = \mathrm{MLP}_t\!\left(\mathrm{sin}(t \cdot 1000)\right) + \mathrm{MLP}_h\!\left(\mathrm{sin}(h \cdot 1000)\right)$$
 
 ### 3.4 v-Head (Auxiliary Tangent Predictor)
 
@@ -221,20 +223,20 @@ The v-head is a lightweight auxiliary output path branching from the UNet's fina
 
 ```
 Shared Backbone Features (B, 64, 48, 48, 48)
-    |
-    +-- u-head: self.unet.out(h)  -->  (B, 4, 48, 48, 48)  [main output]
-    |
-    +-- v-head: ResBlock(64) -> GroupNorm(32,64) -> SiLU -> Conv3d(64,4,3,pad=1)  -->  (B, 4, 48, 48, 48)
+    │
+    ├── u-head: UNet output conv  ──►  (B, 4, 48, 48, 48)  [main output]
+    │
+    └── v-head: ResBlock(64) → GN(32,64) → SiLU → Conv3d(64→4)  ──►  (B, 4, 48, 48, 48)
 ```
 
 | Property | Value |
 |----------|-------|
 | ResBlocks | 1 (configurable via `v_head_num_res_blocks`) |
-| Parameters | ~228K (<0.13% of total model) |
-| Initialisation | Final Conv3d is zero-initialised (v-head starts at zero) |
-| Inference cost | Zero (v-head output is discarded at sampling time) |
+| Parameters | ~228K (<0.13% of total 178M) |
+| Initialisation | Final Conv3d is zero-initialised ($v$-head starts at zero) |
+| Inference cost | Zero ($v$-head output is discarded at sampling time) |
 
-**Zero initialisation rationale:** By initialising the v-head's final convolution to zero, the initial v-head output is identically zero. This means the u-head's training is completely unaffected by the v-head at initialisation. As training progresses, the v-head learns to predict the instantaneous velocity, providing an increasingly accurate tangent for the JVP computation.
+**Zero initialisation rationale:** By initialising the v-head's final convolution to zero, the initial v-head output is identically zero. This means the u-head's training is completely unaffected by the v-head at initialisation. As training progresses, the v-head learns to predict the instantaneous velocity, providing an increasingly accurate tangent for the JVP computation. Our training data confirms this: $\cos(\hat{v}, v_c)$ rises from 0.17 (epoch 0) to 0.39 (epoch 50) to 0.44 (epoch 689).
 
 ---
 
@@ -244,89 +246,85 @@ Shared Backbone Features (B, 64, 48, 48, 48)
 
 The training loss has two independently-weighted components:
 
-```
-L = L_u_weighted + L_v_weighted
-```
+$$\mathcal{L} = \mathcal{L}_u^{\mathrm{weighted}} + \mathcal{L}_v^{\mathrm{weighted}}$$
 
 where:
 
-- **L_u (compound velocity loss):** `||V_theta - v_c||_p^p` — enforces MeanFlow self-consistency
-- **L_v (tangent supervision loss):** `||v_head - v_c||_p^p` — directly supervises the v-head
+- $\mathcal{L}_u$ (**compound velocity loss**): $\|V_\theta - v_c\|_p^p$ — enforces MeanFlow self-consistency
+- $\mathcal{L}_v$ (**tangent supervision loss**): $\|\hat{v} - v_c\|_p^p$ — directly supervises the v-head
 
-Both losses target the same conditional velocity `v_c = eps - z_0`. The compound velocity V incorporates the MeanFlow identity correction, while v_head is a direct prediction.
+Both losses target the same conditional velocity $v_c = \varepsilon - z_0$. The compound velocity $V$ incorporates the MeanFlow identity correction, while $\hat{v}$ is a direct prediction.
 
 ### 4.2 Adaptive Weighting
 
 Each loss component is independently normalised by its own magnitude:
 
-```
-weight_u = (raw_loss_u.detach() + norm_eps) ^ norm_p
-loss_u_weighted = raw_loss_u / weight_u
+$$w_u = \left(\mathcal{L}_u^{\mathrm{raw}}\big|_{\mathrm{detach}} + \varepsilon_{\mathrm{norm}}\right)^{p_{\mathrm{norm}}}, \qquad \mathcal{L}_u^{\mathrm{weighted}} = \frac{\mathcal{L}_u^{\mathrm{raw}}}{w_u}$$
 
-weight_v = (raw_loss_v.detach() + norm_eps) ^ norm_p
-loss_v_weighted = raw_loss_v / weight_v
-```
+$$w_v = \left(\mathcal{L}_v^{\mathrm{raw}}\big|_{\mathrm{detach}} + \varepsilon_{\mathrm{norm}}\right)^{p_{\mathrm{norm}}}, \qquad \mathcal{L}_v^{\mathrm{weighted}} = \frac{\mathcal{L}_v^{\mathrm{raw}}}{w_v}$$
 
-With `norm_eps=1.0` and `norm_p=1.0`:
+With $\varepsilon_{\mathrm{norm}} = 1.0$ and $p_{\mathrm{norm}} = 1.0$:
 
-```
-weight = raw_loss + 1.0
-loss_weighted = raw_loss / (raw_loss + 1.0)
-```
+$$w = \mathcal{L}^{\mathrm{raw}} + 1.0, \qquad \mathcal{L}^{\mathrm{weighted}} = \frac{\mathcal{L}^{\mathrm{raw}}}{\mathcal{L}^{\mathrm{raw}} + 1.0}$$
 
-This is a form of **logarithmic loss normalisation**: the effective loss is bounded in [0, 1) and varies slowly with raw_loss magnitude. It prevents large loss spikes from destabilising training and equalises the gradient contribution across timesteps (where raw loss naturally varies by orders of magnitude due to the signal-to-noise ratio at different t values).
+This is a form of **logarithmic loss normalisation**: the effective loss is bounded in $[0, 1)$ and varies slowly with raw loss magnitude. It prevents large loss spikes from destabilising training and equalises the gradient contribution across timesteps (where raw loss naturally varies by orders of magnitude due to the signal-to-noise ratio at different $t$ values).
 
-**Why norm_eps=1.0 and not smaller?** Through Phase 4c debugging, we discovered that `norm_eps=0.01` caused catastrophic gradient amplification for samples with small raw loss (near-perfect predictions). The weight `1/(loss + 0.01)` can reach 100x, creating a positive feedback loop. Setting `norm_eps=1.0` caps the maximum amplification at a benign level.
+At convergence, the loss decomposition (epoch 388, best FID) shows this balancing in action:
 
-**Why norm_p=1.0 and not 0.5?** `norm_p=0.5` causes `weight = sqrt(raw_loss + 1.0)`, which under-normalises large losses, leading to a 1000x gradient explosion observed in Phase 4e testing.
+| Component | Raw Loss | Share |
+|-----------|----------|-------|
+| FM loss ($r = t$, flow matching) | 715,432 | 10.3% |
+| MF loss ($r < t$, self-consistency) | 6,254,997 | 89.7% |
+| v-head loss | 714,646 | — |
+| u-head loss (compound $V$) | 3,485,215 | — |
 
-### 4.3 Per-Channel Lp Loss
+The MF loss is ~9× larger than the FM loss, which is expected: the compound velocity $V$ must also capture the JVP correction term, a harder target than the direct velocity at $r = t$. The adaptive weighting equalises their gradient contributions to ~1.0 each.
 
-The base loss function computes a per-channel, spatially-summed Lp norm:
+**Why $\varepsilon_{\mathrm{norm}} = 1.0$ and not smaller?** Through Phase 4c debugging, we discovered that $\varepsilon_{\mathrm{norm}} = 0.01$ caused catastrophic gradient amplification for samples with small raw loss. The weight $1 / (\mathcal{L} + 0.01)$ can reach 100×, creating a positive feedback loop. Setting $\varepsilon_{\mathrm{norm}} = 1.0$ caps the maximum amplification at a benign level.
 
-```
-lp_loss(pred, target, p) = sum_c sum_spatial |pred_c - target_c|^p
-```
+**Why $p_{\mathrm{norm}} = 1.0$ and not 0.5?** With $p_{\mathrm{norm}} = 0.5$, the weight becomes $w = \sqrt{\mathcal{L} + 1.0}$, which under-normalises large losses, leading to a 1000× gradient explosion observed in Phase 4e testing.
 
-For the best model: `p=2.0` (standard L2 loss). The per-channel Lp framework supports ablation over p in {1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0} and per-channel weight vectors, extending the SLIM-Diff per-channel loss (Pascual-Gonzalez et al., 2026) from pixel-space DDPM to latent-space MeanFlow.
+### 4.3 Per-Channel $L_p$ Loss
 
-**Key scientific question:** Does the optimal Lp exponent from pixel space (p=1.5 for images, p=2.0 for masks) transfer through the VAE nonlinearity to latent space? The VAE's encoder Jacobian mixes spatial and channel information, so the error distribution in latent space may have different statistical properties than in pixel space.
+The base loss function computes a per-channel, spatially-summed $L_p$ norm:
+
+$$\ell_p(\hat{y}, y) = \sum_{c=1}^{C} \sum_{\mathbf{x}} \left|\hat{y}_{c,\mathbf{x}} - y_{c,\mathbf{x}}\right|^p$$
+
+For the best model: $p = 2.0$ (standard $L_2$ loss). The per-channel $L_p$ framework supports ablation over $p \in \{1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0\}$ and per-channel weight vectors, extending the SLIM-Diff per-channel loss (Pascual-Gonzalez et al., 2026) from pixel-space DDPM to latent-space MeanFlow.
+
+**Key scientific question:** Does the optimal $L_p$ exponent from pixel space ($p = 1.5$ for images, $p = 2.0$ for masks in SLIM-Diff) transfer through the VAE nonlinearity to latent space? The VAE's encoder Jacobian mixes spatial and channel information, so the error distribution in latent space may have different statistical properties.
 
 ### 4.4 JVP Strategies
 
 Two strategies are implemented:
 
 **Exact JVP** (`torch.func.jvp`):
-```python
-u, du_dt = torch.func.jvp(u_fn, (z_t, t, r), (v_tangent, dt=1, dr=0))
-V = u + (t-r) * sg[du_dt]
-```
-- Most accurate, O(d) cost
+
+$$u,\; \frac{du}{dt} = \texttt{jvp}\!\left(u_\theta,\; (z_t, t, r),\; (\tilde{v},\, 1,\, 0)\right), \qquad V = u + (t - r) \cdot \mathrm{sg}\!\left[\frac{du}{dt}\right]$$
+
+- Most accurate, $O(d)$ cost
 - Requires: no in-place ops, no flash attention, no gradient checkpointing
-- Memory: ~20GB activation per sample at batch=2 on A100-40GB
+- Memory: ~20 GB activation per sample at batch=2 on A100-40GB
 
 **Finite Difference JVP** (FD-JVP):
-```python
-u = u_fn(z_t, t, r)
-u_perturbed = u_fn(z_t + h*v_tangent, t + h, r)  # no_grad
-du_dt = (u_perturbed.float() - u.detach().float()) / h
-V = u + (t-r) * sg[du_dt]
-```
-- Step size h=1e-3
+
+$$u_h = u_\theta(z_t + h\tilde{v},\; t + h,\; r), \qquad \frac{du}{dt} \approx \frac{u_h^{\mathrm{(fp32)}} - u^{\mathrm{(fp32)}}}{h}, \qquad V = u + (t - r) \cdot \mathrm{sg}\!\left[\frac{du}{dt}\right]$$
+
+- Step size $h = 10^{-3}$
 - FP32 subtraction to avoid bf16 catastrophic cancellation
-- Lower memory (perturbed pass is no_grad)
+- Lower memory (perturbed pass is no\_grad)
 
-**Critical incompatibility discovered (Phase 4f):** x-prediction + FD-JVP is **numerically unstable**. The x-to-u conversion `u = (z_t - x_hat) / t` has a 1/t singularity. When FD-JVP computes `(u(t+h) - u(t)) / h`, the result involves `O(1/t)` terms divided by h=0.001, yielding `du/dt ~ O(1/t^2)` which explodes as t approaches t_min. With exact JVP, the 1/t factor is analytically differentiated, yielding stable gradients.
+**Critical incompatibility discovered (Phase 4f):** x-prediction + FD-JVP is **numerically unstable**. The x-to-u conversion $u = (z_t - \hat{x}) / t$ has a $1/t$ singularity. When FD-JVP computes $(u(t{+}h) - u(t)) / h$, the result involves $O(1/t)$ terms divided by $h = 0.001$, yielding:
 
-**Rule:** `x-prediction + exact JVP = stable`. `u-prediction + FD-JVP = stable`. `x-prediction + FD-JVP = explosion`.
+$$\frac{du}{dt} \sim O\!\left(\frac{1}{t^2 \cdot h}\right) \to \infty \quad \text{as } t \to t_{\min}$$
+
+With exact JVP, the $1/t$ factor is analytically differentiated, yielding stable gradients.
+
+**Rule:** $\textbf{x-prediction + exact JVP = stable}$. $\textbf{u-prediction + FD-JVP = stable}$. $\textbf{x-prediction + FD-JVP = explosion}$.
 
 For dual-head models, exact JVP uses `has_aux=True` to capture the v-head output alongside the JVP computation, avoiding redundant forward passes:
 
-```python
-u, du_dt, v = torch.func.jvp(
-    u_with_v_aux, (z_t, t, r), (v_tangent, dt, dr), has_aux=True
-)
-```
+$$(u,\; du/dt,\; \hat{v}) = \texttt{jvp}\!\left(u_{\mathrm{with\_v\_aux}},\; (z_t, t, r),\; (\tilde{v}, 1, 0),\; \texttt{has\_aux=True}\right)$$
 
 ---
 
@@ -334,39 +332,44 @@ u, du_dt, v = torch.func.jvp(
 
 ### 5.1 Dataset
 
-We use a 3-dataset subset of FOMO-60K, a large-scale preprocessed brain MRI collection:
+We use 8 datasets from FOMO-60K, a large-scale preprocessed brain MRI collection. The actual training corpus is substantially larger than originally planned:
 
-| Dataset | N subjects | Properties |
-|---------|-----------|------------|
-| PT001_OASIS1 | 436 | T1w, skull-stripped, RAS, co-registered |
-| PT002_OASIS2 | 362 | T1w, skull-stripped, RAS, co-registered |
-| PT005_IXI | 581 | T1w, skull-stripped, RAS, co-registered |
-| **Total** | **1,379** | 85/10/5 split -> ~1,172 train / 138 val / 69 test |
+| Dataset | Train Subjects | Train Scans | Val Scans | Test Scans |
+|---------|---------------|-------------|-----------|------------|
+| PT001\_OASIS1 | 352 | 1,414 | 170 | 96 |
+| PT002\_OASIS2 | 71 | 682 | 82 | 37 |
+| PT005\_IXI | 494 | 494 | 58 | 29 |
+| PT007\_NIMH | 212 | 428 | 48 | 23 |
+| PT008\_DLBS | 394 | 807 | 109 | 51 |
+| PT011\_MBSR | 125 | 295 | 36 | 16 |
+| PT012\_UCLA | 106 | 106 | 13 | 6 |
+| PT015\_NKI | 722 | 1,245 | 158 | 68 |
+| **Total** | **2,476** | **5,471** | **674** | **326** |
 
-The split is stratified by dataset to ensure proportional representation. Split seed is fixed at 42 for reproducibility.
+Many subjects have multiple sessions (longitudinal scans), yielding 5,471 training scans from 2,476 subjects — approximately 4× more data than the initially planned ~1,172 scans from 3 datasets. All volumes are T1-weighted, skull-stripped, RAS-oriented, and co-registered. The split is stratified by dataset with a fixed seed of 42 for reproducibility.
 
 ### 5.2 Preprocessing Pipeline
 
 ```
 NIfTI (.nii.gz)
-  -> LoadImaged (MONAI)
-  -> EnsureChannelFirstd
-  -> Spacingd(pixdim=1.0mm isotropic, bilinear)
-  -> ScaleIntensityRangePercentilesd(lower=0%, upper=99.5%, b_min=0, b_max=1, clip=False)
-  -> CropForegroundd(source_key="image", margin=4)     [brain-centered crop]
-  -> ResizeWithPadOrCropd(spatial_size=(192,192,192))   [pad to target]
-  -> EnsureTyped(dtype=float32)
+  → LoadImaged (MONAI)
+  → EnsureChannelFirstd
+  → Spacingd(pixdim=1.0mm isotropic, bilinear)
+  → ScaleIntensityRangePercentilesd(lower=0%, upper=99.5%, b_min=0, b_max=1, clip=False)
+  → CropForegroundd(source_key="image", margin=4)     [brain-centred crop]
+  → ResizeWithPadOrCropd(spatial_size=(192, 192, 192)) [pad to target]
+  → EnsureTyped(dtype=float32)
 ```
 
-**Resolution choice (192^3 at 1.0mm isotropic):** This was selected after a quantitative analysis of brain extent across 30 FOMO-60K subjects (see `docs/data/resolution_analysis.md`). Key findings:
+**Resolution choice ($192^3$ at 1.0 mm isotropic):** This was selected after a quantitative analysis of brain extent across 30 FOMO-60K subjects. Key findings:
 
-- Brain AP extent reaches 193mm for the largest subjects
-- The brain is systematically 13mm anterior to the volume center
-- 128^3 and 160^3 both clip frontal/occipital cortex
-- `CropForegroundd` centers the crop on brain tissue (not volume center), preventing systematic tissue loss
-- 192^3 achieves 100% brain coverage for all subjects
+- Brain AP extent reaches 193 mm for the largest subjects
+- The brain is systematically ~13 mm anterior to the volume centre
+- $128^3$ and $160^3$ both clip frontal/occipital cortex
+- `CropForegroundd` centres the crop on brain tissue (not volume centre), preventing systematic tissue loss
+- $192^3$ achieves 100% brain coverage for all subjects
 
-**Latent shape:** 192 / 4 = 48 per spatial axis, giving latents of shape (4, 48, 48, 48).
+**Latent shape:** $192 / 4 = 48$ per spatial axis, giving latents of shape $(4, 48, 48, 48)$.
 
 ### 5.3 Latent Pre-Computation (Phase 1)
 
@@ -375,28 +378,28 @@ All training volumes are pre-encoded through the frozen MAISI VAE and stored in 
 | Property | Value |
 |----------|-------|
 | Storage format | Per-dataset HDF5 shards (e.g. `PT005_IXI.h5`) |
-| Layout per shard | `/latents` (N,4,48,48,48), `/written` (bool mask), `/subject_id`, `/session_id` |
-| Per-sample size | 4 x 48^3 x 4 bytes = 1.77 MB (float32) |
-| Total storage | ~1,379 x 1.77 MB ~ 2.4 GB |
-| Resumability | Written mask tracks completed slots |
+| Layout per shard | `/latents` $(N, 4, 48, 48, 48)$, `/written`, `/subject_id`, `/session_id` |
+| Per-sample size | $4 \times 48^3 \times 4$ bytes = 1.77 MB (float32) |
+| Total encoded | 6,471 volumes (train + val + test) |
+| Total storage | ~11.5 GB |
 
 **Latent statistics** are computed online during encoding via `LatentStatsAccumulator` (sum-of-powers method in float64):
 - Per-channel mean, std, skewness, kurtosis, min, max
-- 4x4 cross-channel Pearson correlation matrix
+- $4 \times 4$ cross-channel Pearson correlation matrix
 
-These statistics serve dual purposes: (i) per-channel normalisation for training, and (ii) quality assessment of the latent distribution.
+These statistics serve dual purposes: (i) per-channel normalisation for training, and (ii) quality assessment of the latent distribution (see Section 3.1).
 
 ### 5.4 Latent Augmentation
 
-Three augmentation transforms operate directly on latents during training (enabled on Picasso):
+Three augmentation transforms operate directly on latents during training:
 
 | Transform | Probability | Parameters | Rationale |
 |-----------|-------------|------------|-----------|
-| Flip depth axis | 0.5 | Along dim=2 (L-R in RAS) | Brain is approximately bilaterally symmetric in this axis |
+| Flip depth axis | 0.5 | Along dim=2 (L–R in RAS) | Brain is approximately bilaterally symmetric |
 | Gaussian noise | 0.2 | std = 5% of per-channel std | Regularisation; simulates encoding noise |
-| Intensity scale | 0.2 | +/- 5% scaling | Simulates scanner-dependent intensity variation |
+| Intensity scale | 0.2 | ±5% scaling | Simulates scanner-dependent intensity variation |
 
-Augmentation is critical for 1500-epoch training on ~1,172 samples (effective epochs-per-sample ~1,280).
+Approximately 68% of training samples are augmented per epoch (~3,720 augmented out of 5,471).
 
 ---
 
@@ -404,73 +407,74 @@ Augmentation is critical for 1500-epoch training on ~1,172 samples (effective ep
 
 ### 6.1 Algorithm (One Training Step)
 
-```
-Input: batch of pre-computed latents {z_0}, model with u-head and v-head
+Given a batch of pre-computed latents $\{z_0\}$ and the model with u-head and v-head:
 
-1.  Sample eps ~ N(0, I), same shape as z_0
-2.  Sample t ~ LogitNormal(mu=-0.4, sigma=1.0), clamp to [0.001, 1.0]
-3.  With probability 0.5: set r = t (FM sample)
-    Otherwise: sample r independently, enforce r < t (MF sample)
-4.  Compute z_t = (1-t) * z_0 + t * eps                       [interpolation]
-5.  Compute v_c = eps - z_0                                     [target]
-6.  v_tangent = v_head(z_t, t, t)  [no_grad]                   [tangent from v-head]
-7.  (u, du/dt, v) = JVP(dual_fn, (z_t,t,r), (v_tangent,1,0))  [exact JVP with aux]
-8.  V = u + (t-r) * sg[du/dt]                                   [compound velocity]
-9.  raw_loss_u = ||V - v_c||_2^2                                [MF consistency loss]
-10. raw_loss_v = ||v - v_c||_2^2                                [tangent supervision]
-11. loss = adaptive(raw_loss_u) + adaptive(raw_loss_v)           [independent weighting]
-12. Backward, clip gradients (max_norm=1.0), optimizer step
-13. EMA update (decay=0.9999)
-```
+1. Sample $\varepsilon \sim \mathcal{N}(0, I)$, same shape as $z_0$
+2. Sample $t \sim \mathrm{LogitNormal}(\mu{=}{-0.4},\, \sigma{=}1.0)$, clamp to $[0.001, 1.0]$
+3. With probability 0.5: set $r = t$ (FM sample); otherwise: sample $r < t$ (MF sample)
+4. Interpolate: $z_t = (1 - t)\,z_0 + t\,\varepsilon$
+5. Target: $v_c = \varepsilon - z_0$
+6. Tangent: $\tilde{v} = v\text{-head}(z_t, t, t)$ [no\_grad]
+7. JVP: $(u, \; du/dt, \; \hat{v}) = \texttt{jvp}(\text{dual\_fn}, (z_t, t, r), (\tilde{v}, 1, 0))$ [exact, with aux]
+8. Compound velocity: $V = u + (t - r)\cdot\mathrm{sg}[du/dt]$
+9. Losses: $\mathcal{L}_u^{\mathrm{raw}} = \|V - v_c\|_2^2$, $\;\mathcal{L}_v^{\mathrm{raw}} = \|\hat{v} - v_c\|_2^2$
+10. Adaptive weighting: $\mathcal{L} = \mathcal{L}_u^{\mathrm{raw}} / (|\mathcal{L}_u^{\mathrm{raw}}| + 1) + \mathcal{L}_v^{\mathrm{raw}} / (|\mathcal{L}_v^{\mathrm{raw}}| + 1)$
+11. Backward, clip gradients ($\|\nabla\|_{\max} = 1.0$), optimiser step
+12. EMA update ($\beta = 0.9999$)
 
 ### 6.2 Time Sampling
 
-Times are drawn from a logit-normal distribution: `t = sigmoid(N(mu=-0.4, sigma=1.0))`, clamped to `[0.001, 1.0]`. This distribution is heavy near t=0 (near data), which focuses training on the denoising regime. The negative mean (mu=-0.4) shifts the mass toward smaller t values compared to uniform sampling.
+Times are drawn from a logit-normal distribution:
 
-**data_proportion = 0.5:** Half the batch has r = t (FM samples where the JVP term vanishes, reducing to standard flow matching loss), and half has r < t (MF samples where the self-consistency constraint is enforced). This 50/50 split was found optimal empirically — pure MF samples (data_proportion=0) diverge, while too many FM samples (data_proportion=0.75) slow convergence of the 1-NFE capability.
+$$t = \sigma\!\left(\mathcal{N}(\mu{=}{-0.4},\, \sigma{=}1.0)\right), \qquad t \in [0.001, 1.0]$$
+
+where $\sigma(\cdot)$ is the sigmoid function. This distribution is heavy near $t = 0$ (near data), which focuses training on the denoising regime. The negative mean ($\mu = -0.4$) shifts the mass toward smaller $t$ values compared to uniform sampling.
+
+**$\mathrm{data\_proportion} = 0.5$:** Half the batch has $r = t$ (FM samples where the JVP term vanishes, reducing to standard flow matching loss), and half has $r < t$ (MF samples where the self-consistency constraint is enforced). This 50/50 split was found optimal empirically — pure MF samples ($\mathrm{data\_proportion} = 0$) diverge, while too many FM samples ($\mathrm{data\_proportion} = 0.75$) slow convergence of the 1-NFE capability.
 
 ### 6.3 Optimiser and Schedule
 
 | Hyperparameter | Value | Justification |
 |----------------|-------|---------------|
 | Optimiser | AdamW | Standard for diffusion/flow models |
-| Learning rate | 1e-4 | MeanFlow reference default |
+| Learning rate | $10^{-4}$ | MeanFlow reference default |
 | Weight decay | 0.0 | MeanFlow reference (no regularisation needed with adaptive loss) |
-| Betas | (0.9, 0.95) | beta2=0.95 for faster momentum adaptation (default 0.999 caused stale gradients) |
-| LR schedule | Cosine decay | From lr to 0 over total steps |
+| Betas | $(0.9, 0.95)$ | $\beta_2 = 0.95$ for faster momentum adaptation (default 0.999 caused stale gradients) |
+| LR schedule | Cosine decay | From $10^{-4}$ to $5.6 \times 10^{-5}$ at early stop |
 | Warmup | 0 steps | Warmup destabilised MF loss (Phase 4c finding) |
-| Gradient clip | max_norm=1.0 | Prevents spike propagation |
+| Gradient clip | $\|\nabla\|_{\max} = 1.0$ | Prevents spike propagation |
 | Mixed precision | bf16 | Standard for A100 training |
 
 ### 6.4 Compute Budget
 
 | Property | Value |
 |----------|-------|
-| Hardware | 6x A100-SXM4-40GB (within one DGX node) |
+| Hardware | 6× A100-SXM4-40GB (within one DGX node) |
 | Strategy | DDP (DistributedDataParallel) |
-| Per-GPU batch | 2 (limited by exact JVP activation memory ~20GB) |
+| Per-GPU batch | 2 (limited by exact JVP activation memory ~20 GB) |
 | Gradient accumulation | 11 steps |
-| Effective batch | 2 x 6 x 11 = 132 (~128) |
-| Training steps | ~1,172 / 2 / 6 = ~98 batches/epoch x 1500 epochs / 11 accum = ~13,364 optimizer steps |
-| Estimated wall time | ~7 days |
+| Effective batch | $2 \times 6 \times 11 = 132$ |
+| Optimiser steps/epoch | 41 |
+| Planned optimiser steps | 61,500 (1,500 epochs × 41) |
+| Actual optimiser steps | ~28,980 (early-stopped at epoch 690) |
+| Mean epoch time | 268.1 s (~4.5 min) |
+| **Total wall time** | **~51.4 hours (~2.1 days)** |
 
 ### 6.5 EMA (Exponential Moving Average)
 
-An EMA model with decay 0.9999 is maintained throughout training. After each optimiser step, shadow parameters are updated:
+An EMA model with decay $\beta = 0.9999$ is maintained throughout training. After each optimiser step, shadow parameters are updated:
 
-```
-shadow_param = 0.9999 * shadow_param + 0.0001 * current_param
-```
+$$\theta_{\mathrm{EMA}} \leftarrow \beta \cdot \theta_{\mathrm{EMA}} + (1 - \beta) \cdot \theta$$
 
-At inference time, the EMA weights replace the model parameters. This smooths over training noise and typically improves generation quality by 10-20% in FID.
+At inference time, the EMA weights replace the model parameters. All FID evaluations during training use EMA weights. The best model checkpoint is selected by FID computed from EMA-weight samples.
 
 ### 6.6 Divergence Monitoring
 
 An EMA-smoothed raw loss monitor tracks training stability:
-- EMA half-life: ~69 steps (decay=0.99)
-- Warnings at 3x and 5x the minimum EMA loss
+- EMA half-life: ~69 steps (decay 0.99)
+- Warnings at 3× and 5× the minimum EMA loss
 - Grace period of 1000 steps before monitoring begins
-- Warning-only (no automatic stopping) — early stopping is FID-based via EvaluationCallback
+- Warning-only (no automatic stopping) — early stopping is FID-based via EvaluationCallback with patience=10
 
 ---
 
@@ -480,95 +484,163 @@ An EMA-smoothed raw loss monitor tracks training stability:
 
 With x-prediction, 1-NFE sampling is a single forward pass:
 
-```python
-noise = torch.randn(B, 4, 48, 48, 48)    # Sample from prior
-r = torch.zeros(B)                         # Full interval
-t = torch.ones(B)
-z_0_hat = model(noise, r, t)              # Direct x-prediction output
-# Dual-head: output is (x_hat, v) — take first element
-```
+$$\varepsilon \sim \mathcal{N}(0, I), \qquad z_0 = f_\theta(\varepsilon,\; r{=}0,\; t{=}1)$$
 
 The v-head output is discarded at inference — only the u-head (main output) is used.
 
 ### 7.2 Multi-Step Euler Sampling
 
-For comparison, multi-step Euler sampling divides [1, 0] into uniform steps:
+For comparison, multi-step Euler sampling divides $[1, 0]$ into $K$ uniform steps:
 
-```
-For i in 0..n_steps-1:
-    t_curr = 1 - i/n_steps
-    t_next = 1 - (i+1)/n_steps
-    dt = t_curr - t_next
-    x_hat = model(z, r=t_next, t=t_curr)
-    u = (z - x_hat) / max(t_curr, 0.05)     # x-to-u conversion
-    z = z - dt * u
-```
+$$\text{For } i = 0, \ldots, K{-}1: \qquad t_i = 1 - \frac{i}{K}, \quad t_{i+1} = 1 - \frac{i+1}{K}, \quad \Delta t = t_i - t_{i+1}$$
 
-NFE levels tested: {1, 2, 5, 10}. MeanFlow models are trained for 1-step generation but can also be used multi-step by treating them as standard velocity fields.
+$$\hat{x} = f_\theta(z,\; r{=}t_{i+1},\; t{=}t_i), \qquad u = \frac{z - \hat{x}}{\max(t_i,\, 0.05)}, \qquad z \leftarrow z - \Delta t \cdot u$$
+
+NFE levels tested: $\{1, 2, 5, 10\}$. MeanFlow models are trained for 1-step generation but can also be used multi-step by treating them as standard velocity fields.
 
 ### 7.3 Full Generation Pipeline (Phase 5)
 
 The complete generation pipeline from noise to decoded MRI volume:
 
-```
 1. Pre-generate shared noise (for NFE-consistency analysis)
 2. For each NFE level:
-   a. Generate latents via one_step or euler sampling
-   b. Store in HDF5 archive (latents, seeds, timing)
-3. Denormalise: z_0 = z_hat * latent_std + latent_mean
-4. Decode: x_hat = VAE.decode(z_0)  [internally divides by scale_factor]
-5. Clamp to [0, 1]
+   - Generate latents via `sample_one_step` or `sample_euler`
+   - Store in HDF5 archive (latents, seeds, per-sample timing)
+3. Denormalise: $z_0 = \hat{z} \cdot \sigma_{\mathrm{latent}} + \mu_{\mathrm{latent}}$
+4. Decode: $\hat{x} = \mathrm{VAE.decode}(z_0)$ [internally divides by scale\_factor]
+5. Clamp to $[0, 1]$
 6. Store decoded volumes in HDF5
-```
 
-**Shared noise protocol:** The same noise tensor is used across all NFE levels for a given sample index, enabling direct visual and quantitative comparison of how additional sampling steps refine the output.
+**Shared noise protocol:** The same noise tensor $\varepsilon$ is used across all NFE levels for a given sample index, enabling direct visual and quantitative comparison of how additional sampling steps refine the output.
 
 ---
 
-## 8. Experimental Results and Ablations
+## 8. Experimental Results
 
 ### 8.1 Toy Validation (Phase 2): MeanFlow on Flat Torus
 
-Before scaling to brain MRI, MeanFlow was validated on a tractable manifold — a flat torus in R^4:
+Before scaling to brain MRI, MeanFlow was validated on a tractable manifold — a flat torus in $\mathbb{R}^4$:
 
 | Metric | Result | Target |
 |--------|--------|--------|
 | 1-NFE torus distance | 0.0892 | < 0.1 |
 | 5-step torus distance | 0.0271 | < 0.05 |
-| Angular KS p-value (theta1) | 0.374 | > 0.01 |
-| Angular KS p-value (theta2) | 0.575 | > 0.01 |
+| Angular KS $p$-value ($\theta_1$) | 0.374 | > 0.01 |
+| Angular KS $p$-value ($\theta_2$) | 0.575 | > 0.01 |
 | x-pred vs u-pred loss ratio | < 1.2 | < 1.5 |
 
 This confirmed: (i) the MeanFlow implementation correctly learns 1-step generation, (ii) the angular distribution of generated samples is statistically indistinguishable from the true distribution (KS test), and (iii) both x-prediction and u-prediction converge.
 
 ### 8.2 Main Training (Phase 4): Best Model
 
-The best model uses x-prediction + exact JVP + (t,h) conditioning + v-head (1 ResBlock) + L2 loss:
+The best model uses x-prediction + exact JVP + $(t, h)$ conditioning + v-head (1 ResBlock) + $L_2$ loss.
+
+**Configuration summary:**
 
 | Property | Value |
 |----------|-------|
-| Best epoch | 589 |
-| Configuration | `experiments/ablations/xpred_vs_upred/configs/xpred_exact_jvp.yaml` |
+| Config file | `experiments/ablations/xpred_vs_upred/configs/xpred_exact_jvp.yaml` |
 | Prediction type | x-prediction |
 | JVP strategy | Exact (`torch.func.jvp`) |
-| Conditioning | t_h |
-| v-head | 1 ResBlock |
-| Loss | L2 (p=2) with adaptive weighting |
+| Conditioning | $t\_h$ (condition on $t$ and $h = t - r$) |
+| v-head | 1 ResBlock (~228K params, <0.13% of total) |
+| Loss norm | $L_2$ ($p = 2$) with independent adaptive weighting |
+| Best FID epoch | **388** (step 16,338) |
+| Early-stopped at | Epoch 690 (patience=10, 46% of planned 1,500 epochs) |
 
-### 8.3 Key Ablation Insights
+### 8.3 FID Progression
 
-**x-pred vs u-pred:** The x-prediction configuration with exact JVP trained stably to epoch 589 (best raw loss checkpoint). The u-prediction + FD-JVP baseline collapsed around epoch 150. This supports the pMF manifold hypothesis extending to latent space with 3D UNets, though a controlled comparison with matched JVP strategies is needed for a definitive conclusion.
+FID is computed as a 2.5D metric using RadImageNet ResNet-50 features on central axial, coronal, and sagittal slices:
 
-**x-pred + FD-JVP instability:** This combination produces exponential growth of JVP norms (10,000x within 50 epochs). Root cause: the x-to-u conversion `u = (z_t - x_hat) / t` introduces a 1/t factor; finite difference of two O(1/t) terms divided by h=0.001 amplifies numerical error as `O(1/(t^2 * h))`. Exact JVP analytically differentiates through the 1/t factor, avoiding this issue.
+| Epoch | Step | $\mathrm{FID}_{\mathrm{avg}}$ | $\mathrm{FID}_{xy}$ | $\mathrm{FID}_{yz}$ | $\mathrm{FID}_{zx}$ | Notes |
+|-------|------|------|------|------|------|-------|
+| 9 | 420 | 46.76 | 45.12 | 46.68 | 48.47 | First evaluation |
+| 28 | 1,218 | 28.40 | 17.25 | 43.63 | 24.33 | Rapid initial drop |
+| 88 | 3,738 | 14.61 | 14.08 | 16.25 | 13.49 | Approaching plateau |
+| 178 | 7,518 | 14.06 | 13.79 | 15.46 | 12.92 | |
+| 268 | 11,298 | 12.94 | 12.77 | 14.06 | 11.98 | |
+| **388** | **16,338** | **11.67** | **11.85** | **12.09** | **11.07** | **Best FID** |
+| 628 | 26,418 | 11.92 | 12.03 | 12.33 | 11.40 | |
+| 688 | 28,938 | 11.88 | 12.14 | 12.08 | 11.42 | Final evaluation |
 
-**Conditioning mode:** `t_h` (condition on both t and h=t-r) was selected based on the original MeanFlow paper's Table 1c, which reports FID 61.06 for (t,h) vs 63.13 for h-only on ImageNet.
+The FID drops rapidly from 46.76 to ~14 in the first 88 epochs, then gradually improves to **11.67** at epoch 388, after which it plateaus. Training continued for 302 more epochs without improvement before early stopping triggered.
 
-**Training stability fixes (Phase 4c-4e):**
-- beta2: 0.999 -> 0.95 (faster momentum adaptation prevents stale gradient accumulation)
-- warmup: 5000 -> 0 (linear warmup destabilises MF loss by producing inconsistent gradient magnitudes during ramp-up)
-- norm_eps: 0.01 -> 1.0 (prevents runaway gradient amplification in adaptive weighting)
-- norm_p: 0.5 -> 1.0 (sub-linear normalisation causes gradient explosion)
-- data_proportion: stabilised at 0.5 (50/50 FM/MF split)
+### 8.4 Training Dynamics
+
+| Epoch | Raw Loss | $\cos(V, v_c)$ | $\cos(\hat{v}, v_c)$ | Rel. Error | $\|\nabla\|$ | LR |
+|-------|----------|------|------|------|------|------|
+| 0 | 2,788,299 | 0.083 | 0.170 | 1.353 | 1.384 | $1.0 \times 10^{-4}$ |
+| 50 | 5,316,270 | 0.240 | 0.388 | 1.759 | 0.953 | ${\sim}9.9 \times 10^{-5}$ |
+| 100 | 6,275,983 | 0.274 | 0.412 | 1.778 | 0.910 | ${\sim}9.7 \times 10^{-5}$ |
+| 388 | 4,724,751 | 0.295 | 0.429 | 1.645 | 1.180 | $8.5 \times 10^{-5}$ |
+| 689 | 4,327,238 | 0.307 | 0.436 | 1.516 | 0.610 | $5.6 \times 10^{-5}$ |
+
+**Key observations:**
+
+1. **Raw loss is not a good proxy for generation quality.** The raw loss is dominated by the MF term ($\mathcal{L}_{\mathrm{MF}} \approx 6.5 \times 10^6$ vs $\mathcal{L}_{\mathrm{FM}} \approx 7 \times 10^5$), and does not monotonically decrease. FID (computed from EMA-weight samples) is the correct early-stopping metric.
+
+2. **Cosine alignment improves steadily.** The compound velocity alignment $\cos(V, v_c)$ increases from 0.083 to 0.307, indicating the model increasingly satisfies the MeanFlow identity. The v-head alignment converges faster (0.170 → 0.436), confirming the v-head provides good tangents from early training.
+
+3. **Gradient norm decreases dramatically.** The gradient norm drops from 1.384 to 0.610, and the gradient clipping fraction drops from ~90% to ~5%, indicating stable training dynamics by epoch ~300.
+
+### 8.5 Generated Sample Statistics
+
+The model's output $\hat{x}$ statistics evolve during training:
+
+| Epoch | $\mathbb{E}[\hat{x}]$ | $\mathrm{std}[\hat{x}]$ | $\min[\hat{x}]$ | $\max[\hat{x}]$ |
+|-------|------|------|------|------|
+| 0 | $+0.004$ | $0.243$ | $-2.06$ | $3.41$ |
+| 100 | $-0.001$ | $0.737$ | $-5.88$ | $8.56$ |
+| 388 | $-0.001$ | $0.753$ | $-5.84$ | $8.69$ |
+| 689 | $-0.001$ | $0.781$ | $-6.22$ | $9.38$ |
+
+The standard deviation stabilises around 0.75–0.78, approximately 75% of the true latent std (~0.97–1.02). This **variance under-estimation** is the primary quality bottleneck: generated samples have slightly less contrast than real ones. The means and ranges are consistent with the true latent distribution.
+
+### 8.6 NFE Quality Analysis
+
+Visual inspection of decoded samples at different NFE levels reveals a clear quality hierarchy:
+
+| NFE | Visual Quality | Key Features |
+|-----|----------------|--------------|
+| 1 | Recognisable brain anatomy, blurry | Global structure correct, low contrast, sulci indistinct |
+| 2 | Substantially sharper | Cortical sulci visible, improved grey-white contrast |
+| 5 | Sharp, anatomically plausible | Clear grey-white matter contrast, realistic cortical folding |
+| 10 | Marginally crisper than NFE=5 | Diminishing returns beyond 5 steps |
+
+**NFE-consistency metrics** (shared noise, converged model):
+- Cosine similarity: NFE=1 vs NFE=2: ~0.96; NFE=1 vs NFE=5: ~0.91; NFE=1 vs NFE=10: ~0.90
+- MSE between 1-step and multi-step decreases over training for all NFE levels
+
+The 1-NFE output captures global anatomy correctly but lacks high-frequency detail — a known limitation of MeanFlow. NFE=2 provides a substantial quality improvement at only 2× cost, suggesting a practical 2-step generation mode for quality-sensitive applications.
+
+### 8.7 Spectral Analysis
+
+The radially-averaged power spectrum of generated latents evolves from flat (noise-like at epoch ~100) to the characteristic $1/f$ brain spectrum by epoch 600. All 4 channels show proper low-frequency dominance with high-frequency rolloff, confirming the model learns the correct spectral structure of brain MRI.
+
+### 8.8 SWD (Sliced Wasserstein Distance)
+
+| Metric | Epoch 9 | Epoch 689 |
+|--------|---------|-----------|
+| SWD | 1.779 (best) | 2.555 |
+
+Notably, SWD improves rapidly in early training but then **diverges from FID** — SWD increases monotonically after epoch ~50 while FID continues to decrease. This indicates SWD is **not a reliable proxy** for perceptual quality in this setting, likely because it measures distributional distances in latent space that do not correlate with perceptual quality in pixel space.
+
+### 8.9 Key Ablation Insights
+
+**x-pred vs u-pred:** The x-prediction configuration with exact JVP trained stably through 690 epochs (best FID at 388). This supports the pMF manifold hypothesis extending to latent space with 3D UNets: $d_{\mathrm{input}} / d_{\mathrm{bottleneck}} \approx 4$, firmly in the x-prediction regime.
+
+**x-pred + FD-JVP instability:** This combination produces exponential growth of JVP norms (10,000× within 50 epochs). Root cause:
+
+$$u = \frac{z_t - \hat{x}}{t} \implies \frac{du}{dt}\bigg|_{\mathrm{FD}} \approx \frac{u(t{+}h) - u(t)}{h} \sim \frac{O(1/t)}{h} = O\!\left(\frac{1}{t^2 h}\right)$$
+
+**Conditioning mode:** $(t, h)$ conditioning was selected based on the MeanFlow paper Table 1c: FID 61.06 for $(t, h)$ vs 63.13 for $h$-only on ImageNet.
+
+**Training stability fixes (Phase 4c–4e):**
+- $\beta_2$: 0.999 → 0.95 (faster momentum adaptation prevents stale gradient accumulation)
+- Warmup: 5000 → 0 (linear warmup destabilises MF loss by producing inconsistent gradient magnitudes)
+- $\varepsilon_{\mathrm{norm}}$: 0.01 → 1.0 (prevents runaway gradient amplification in adaptive weighting)
+- $p_{\mathrm{norm}}$: 0.5 → 1.0 (sub-linear normalisation causes gradient explosion)
+- $\mathrm{data\_proportion}$: stabilised at 0.5 (50/50 FM/MF split)
 
 ---
 
@@ -580,18 +652,17 @@ The best model uses x-prediction + exact JVP + (t,h) conditioning + v-head (1 Re
 |--------|-------------|----------------|
 | 2.5D FID | FID on central axial/coronal/sagittal slices using RadImageNet ResNet-50 | Custom; follows MOTFM protocol |
 | 3D FID | FID on volumetric features from Med3D ResNet-50 | Custom; `src/neuromf/metrics/fid_3d.py` |
-| MMD | Maximum Mean Discrepancy in Med3D feature space | Gaussian kernel, `src/neuromf/metrics/mmd.py` |
-| Coverage | Fraction of real samples with a close synthetic neighbour | Feature-space NN, `src/neuromf/metrics/coverage_density.py` |
+| MMD | Maximum Mean Discrepancy in Med3D feature space | Gaussian kernel |
+| Coverage | Fraction of real samples with a close synthetic neighbour | Feature-space NN |
 | Density | Fraction of synthetic samples near real manifold | Complementary to coverage |
-| MS-SSIM | 3-level Multi-Scale SSIM (3D) | MONAI SSIMMetric, `src/neuromf/metrics/ms_ssim_3d.py` |
+| MS-SSIM | 3-level Multi-Scale SSIM (3D) | MONAI `SSIMMetric` |
 | PSNR | Peak Signal-to-Noise Ratio | Standard formula with actual data range |
 
 ### 9.2 Spectral Analysis
 
 High-frequency energy ratio via 3D FFT:
-```
-rho = sum_{|k| > k0} |F(x)|^2 / sum_k |F(x)|^2
-```
+
+$$\rho = \frac{\sum_{|\mathbf{k}| > k_0} |\mathcal{F}(x)(\mathbf{k})|^2}{\sum_{\mathbf{k}} |\mathcal{F}(x)(\mathbf{k})|^2}$$
 
 Reported for real, VAE-reconstructed, and generated volumes to disentangle VAE smoothing from generative model quality.
 
@@ -604,8 +675,8 @@ SynthSeg (Billot et al., 2023) segmentation on both real and synthetic volumes, 
 
 ### 9.4 NFE Consistency Analysis
 
-Generated samples at NFE = {1, 2, 5, 10} using shared noise, compared via:
-- Per-sample L2 distance between NFE=1 and NFE=K (convergence measure)
+Generated samples at NFE $\in \{1, 2, 5, 10\}$ using shared noise, compared via:
+- Per-sample $L_2$ distance between NFE=1 and NFE=$K$ (convergence measure)
 - FID at each NFE level (quality vs compute trade-off)
 
 ---
@@ -629,15 +700,15 @@ Generated samples at NFE = {1, 2, 5, 10} using shared noise, compared via:
 ```
 neuromf/
   src/neuromf/
-    callbacks/         # PL callbacks: diagnostics, evaluation, sample_collector, performance
+    callbacks/         # PL callbacks: diagnostics, evaluation, sample_collector
     data/              # Datasets: latent_dataset, latent_hdf5, mri_preprocessing, fomo60k
     errors/            # Custom exceptions
-    generation/        # Phase 5: H5Manager, LatentGenerator, VolumeDecoder
+    generation/        # H5Manager, LatentGenerator, VolumeDecoder
     losses/            # lp_loss, meanflow_jvp, combined_loss
-    metrics/           # fid, fid_3d, mmd, ms_ssim_3d, spectral, coverage_density, ...
+    metrics/           # fid, fid_3d, mmd, ms_ssim_3d, spectral, coverage_density
     models/            # latent_meanflow (PL module), toy_mlp, lora, rectflow_baseline
     sampling/          # one_step, multi_step (Euler)
-    utils/             # ema, time_sampler, latent_stats, pretrained_loading, ...
+    utils/             # ema, time_sampler, latent_stats, pretrained_loading
     wrappers/          # maisi_vae, maisi_unet, jvp_strategies, meanflow_loss
   configs/             # YAML configs (base, train_meanflow, generate, picasso overlays)
   experiments/
@@ -650,7 +721,7 @@ neuromf/
 
 ### 10.3 Gated Phase System
 
-The project is implemented in 9 gated phases (0-8). Phase N+1 cannot begin until Phase N's critical tests all pass.
+The project is implemented in 9 gated phases (0–8). Phase $N{+}1$ cannot begin until Phase $N$'s critical tests all pass.
 
 | Phase | Title | Status | Tests |
 |-------|-------|--------|-------|
@@ -668,7 +739,7 @@ The project is implemented in 9 gated phases (0-8). Phase N+1 cannot begin until
 
 | Resource | Local | Picasso |
 |----------|-------|---------|
-| GPU | RTX 4060 8GB | 4 nodes x 8x A100-40GB |
+| GPU | RTX 4060 8 GB | 4 nodes × 8× A100-40 GB |
 | Use case | Development, testing, analysis | Training, encoding, evaluation |
 | SLURM | N/A | `--constraint=dgx` |
 | Conda env | `neuromf` | `neuromf` |
@@ -679,23 +750,23 @@ The project is implemented in 9 gated phases (0-8). Phase N+1 cannot begin until
 
 ### Contribution 1: First MeanFlow for 3D Medical Image Synthesis
 
-We bring the MeanFlow framework — previously applied only to 2D natural images — to 3D volumetric medical imaging. The model achieves 1-NFE generation of 192^3 brain MRI volumes in the latent space of a frozen MAISI VAE. This represents a **50-1000x reduction in sampling cost** compared to existing 3D medical generative models (DDPM: 1000 steps; flow matching: 10-50 steps; rectified flow: 5-50 steps).
+We bring the MeanFlow framework — previously applied only to 2D natural images — to 3D volumetric medical imaging. The model achieves 1-NFE generation of $192^3$ brain MRI volumes in the latent space of a frozen MAISI VAE. This represents a **50–1000× reduction in sampling cost** compared to existing 3D medical generative models (DDPM: 1000 steps; flow matching: 10–50 steps; rectified flow: 5–50 steps). Our best model achieves a 2.5D FID of **11.67** using EMA weights, trained in ~51 hours on 6× A100 GPUs.
 
-### Contribution 2: Per-Channel Lp Loss in Latent MeanFlow
+### Contribution 2: Per-Channel $L_p$ Loss in Latent MeanFlow
 
-We extend the SLIM-Diff per-channel Lp loss from pixel-space DDPM to latent-space MeanFlow. This provides a principled framework for channel-specific loss geometry that will be ablated over p in {1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0}, investigating whether the optimal exponent from pixel space transfers through the VAE nonlinearity.
+We extend the SLIM-Diff per-channel $L_p$ loss from pixel-space DDPM to latent-space MeanFlow. This provides a principled framework for channel-specific loss geometry that will be ablated over $p \in \{1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0\}$, investigating whether the optimal exponent from pixel space transfers through the VAE nonlinearity.
 
 ### Contribution 3: x-Prediction vs u-Prediction Ablation in Latent 3D UNets
 
-We provide the first investigation of the x-prediction vs u-prediction dichotomy (established by pMF for 2D ViTs) in latent space with 3D UNets. Initial results support x-prediction superiority, consistent with the manifold hypothesis, but the VAE's pre-compression may attenuate the gap. This is a novel empirical contribution regardless of outcome.
+We provide the first investigation of the x-prediction vs u-prediction dichotomy (established by pMF for 2D ViTs) in latent space with 3D UNets. Our results support x-prediction superiority, consistent with the manifold hypothesis ($d_{\mathrm{input}} / d_{\mathrm{bottleneck}} \approx 4$). We also document the critical incompatibility: **x-prediction + FD-JVP is numerically unstable** due to the $1/t$ singularity in the x-to-u conversion.
 
 ### Contribution 4: iMF Dual-Head in Medical Context
 
-We adapt the iMF dual-head architecture (shared backbone + u-head + v-head) for 3D medical image synthesis. The v-head provides directly-supervised JVP tangents, solving the MeanFlow loss divergence problem that occurs in early training. Our implementation is the first application of this architecture outside the original iMF/pMF natural image setting.
+We adapt the iMF dual-head architecture (shared backbone + u-head + v-head) for 3D medical image synthesis. The v-head provides directly-supervised JVP tangents, solving the MeanFlow loss divergence problem. Our implementation is the first application of this architecture outside the original iMF/pMF natural image setting. The v-head adds only ~228K parameters (<0.13% of total) and is disabled at inference.
 
 ### Contribution 5 (Planned): LoRA Fine-Tuning for Joint Image-Mask Synthesis
 
-Phase 7 will demonstrate LoRA fine-tuning of the pre-trained MeanFlow model for joint synthesis of FLAIR MRI and FCD segmentation masks, combining 1-step generation with per-channel Lp loss in a clinically relevant data-scarce setting (~50-100 FCD cases).
+Phase 7 will demonstrate LoRA fine-tuning of the pre-trained MeanFlow model for joint synthesis of FLAIR MRI and FCD segmentation masks, combining 1-step generation with per-channel $L_p$ loss in a clinically relevant data-scarce setting (~50–100 FCD cases).
 
 ---
 
@@ -703,28 +774,38 @@ Phase 7 will demonstrate LoRA fine-tuning of the pre-trained MeanFlow model for 
 
 ### 12.1 Current State (as of 2026-02-26)
 
-- **Phases 0-4:** Complete. Best model trained (x-pred + exact JVP, epoch 589).
+- **Phases 0–4:** Complete. Best model trained (x-pred + exact JVP, best FID 11.67 at epoch 388, early-stopped at epoch 690).
 - **Phase 5:** Code complete, 11/11 local tests pass. Awaiting Picasso execution for:
-  - Latent generation at NFE={1,2,5,10}
+  - Latent generation at NFE $\in \{1, 2, 5, 10\}$
   - VAE decoding of generated latents
-  - Quantitative evaluation (FID, MMD, MS-SSIM, spectral, morphological)
-- **Phases 6-8:** Planned.
+  - Full quantitative evaluation (FID, MMD, MS-SSIM, spectral, morphological)
+- **Phases 6–8:** Planned.
 
-### 12.2 Immediate Next Steps
+### 12.2 Key Findings So Far
 
-1. **Run Phase 5 on Picasso** — generate samples and compute metrics
+1. **Early stopping was effective:** Best FID at epoch 388, used only 46% of planned 1,500 epochs. Total training: 51.4 hours.
+2. **1-NFE quality gap is significant:** NFE=1 outputs are blurry; NFE $\geq$ 2 is substantially sharper. This is a known MeanFlow limitation.
+3. **Variance under-estimation:** Generated latent std ~0.78 vs true ~0.97–1.02. This 20–25% gap is the primary quality bottleneck.
+4. **v-head converges fast:** $\cos(\hat{v}, v_c)$ reaches 0.39 by epoch 50 (85% of final 0.44), validating the dual-head design.
+5. **SWD is anti-correlated with FID** beyond early training — not a reliable proxy for perceptual quality.
+6. **Gradient clipping fraction drops 90% → 5%**, confirming stable training dynamics by epoch ~300.
+
+### 12.3 Immediate Next Steps
+
+1. **Run Phase 5 on Picasso** — generate samples and compute full metrics
 2. **Phase 6 ablations:**
    - x-pred vs u-pred (controlled: same JVP strategy, multiple seeds)
-   - Lp sweep: p in {1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0}
-   - NFE trade-off: quality vs steps at {1, 2, 5, 10, 25, 50}
+   - $L_p$ sweep: $p \in \{1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0\}$
+   - NFE trade-off: quality vs steps at $\{1, 2, 5, 10, 25, 50\}$
 3. **Phase 7:** LoRA fine-tuning for FCD joint synthesis
 4. **Phase 8:** Publication-ready figures and tables
 
-### 12.3 Open Questions
+### 12.4 Open Questions
 
-- Does the Lp exponent effect from pixel space transfer to latent space?
+- Does the $L_p$ exponent effect from pixel space transfer to latent space?
 - How much does the VAE smoothing artefact degrade MeanFlow-generated volumes compared to multi-step methods?
-- Can LoRA fine-tuning on ~50-100 FCD cases produce anatomically plausible lesion synthesis?
+- Can LoRA fine-tuning on ~50–100 FCD cases produce anatomically plausible lesion synthesis?
+- Can the variance under-estimation (~75% of true std) be mitigated by post-hoc rescaling or loss modifications?
 
 ---
 
