@@ -1,67 +1,85 @@
 # Phase 5 Verification Report
 
-**Date:** 2026-02-24  
-**Tests Run:** 17 total (16 passed, 1 failed)  
-**Gate Status:** BLOCKED
+**Date:** 2026-02-26  
+**Test Suite:** `tests/test_generation.py` + `tests/test_metrics_p5.py`  
+**Total Tests:** 27  
+**Passed:** 27  
+**Failed:** 0  
+**Status:** GATE OPEN
 
-## Test Results
+---
 
-| Test ID | Test Name | Status | Duration | Error |
+## Test Results Summary
+
+| Test ID | Test Name | Status | Duration | Notes |
 |---------|-----------|--------|----------|-------|
-| P5-T1 | `test_P5_T1_h5_latent_archive_create_read_write` | PASS | 0.08s | — |
-| P5-T2 | `test_P5_T2_h5_volume_archive_create_read_write` | PASS | 0.06s | — |
-| P5-T3 | `test_P5_T3_latent_generator_tiny_model` | PASS | 0.23s | — |
-| P5-T4 | `test_P5_T4_shared_noise_across_nfe` | PASS | 0.08s | — |
-| P5-T5 | `test_P5_T5_volume_decoder_mock_vae` | PASS | 0.14s | — |
-| P5-T6 | `test_P5_T6_spectral_hf_ratio_known_signals` | PASS | 0.07s | — |
-| P5-T7 | `test_P5_T7_ms_ssim_3d_identical` | PASS | 0.04s | — |
-| P5-T7b | `test_P5_T7b_ms_ssim_3d_different_volumes` | PASS | 0.06s | — |
-| P5-T8 | `test_P5_T8_nn_pairing_correctness` | PASS | 0.05s | — |
-| P5-T9 | `test_P5_T9_feature_extractor_mock` | PASS | 0.03s | — |
-| P5-T10 | `test_P5_T10_h5_metadata_consistency` | PASS | 0.05s | — |
-| P5-T11 | `test_P5_T11_h5_to_nifti_conversion` | PASS | 0.12s | — |
-| P5-T12 | `test_P5_T12_dice_from_labels` | PASS | 0.04s | — |
-| P5-T13 | `test_P5_T13_synthseg_success_rate` | PASS | 0.04s | — |
-| **P5-T14** | `test_P5_T14_regional_correlation_and_kl` | **FAIL** | 0.04s | KL divergence assertion failed |
-| P5-T15 | `test_P5_T15_parse_volumes_csv` | PASS | 0.08s | — |
-| P5-T16 | `test_P5_T16_synthseg_config_and_availability` | PASS | 0.05s | — |
+| P5-T1 | h5_latent_archive_create_read_write | PASS | - | H5 latent archive I/O |
+| P5-T2 | h5_volume_archive_create_read_write | PASS | - | H5 volume archive I/O |
+| P5-T3 | latent_generator_tiny_model | PASS | - | Tiny MeanFlow generator inference |
+| P5-T4 | shared_noise_across_nfe | PASS | - | Shared noise protocol across NFE levels |
+| P5-T5 | volume_decoder_mock_vae | PASS | - | VAE decoding pipeline |
+| P5-T10 | h5_metadata_consistency | PASS | - | H5 metadata tracking |
+| P5-T17 | is_complete_tracking | PASS | - | Completion tracking in latent archives |
+| P5-T17b | is_complete_volume_archive | PASS | - | Completion tracking in volume archives |
+| P5-T17c | is_complete_missing_attr | PASS | - | Graceful handling of missing completion attr |
+| P5-T17d | is_complete_nonexistent_file | PASS | - | Graceful handling of nonexistent files |
+| P5-T6 | spectral_hf_ratio_known_signals | PASS | - | Spectral high-frequency ratio metric |
+| P5-T7 | ms_ssim_3d_identical | PASS | - | MS-SSIM on identical volumes |
+| P5-T7b | ms_ssim_3d_different_volumes | PASS | - | MS-SSIM on different volumes |
+| P5-T8 | nn_pairing_correctness | PASS | - | Nearest-neighbor pairing algorithm |
+| P5-T9 | feature_extractor_mock | PASS | - | Feature extraction for FID/MMD |
+| P5-T11 | h5_to_nifti_conversion | PASS | - | H5 to NIfTI conversion |
+| P5-T12 | dice_from_labels | PASS | - | Dice coefficient computation |
+| P5-T13 | synthseg_success_rate | PASS | - | SynthSeg segmentation success rate |
+| P5-T14 | regional_correlation_and_kl | PASS | - | Regional correlation and KL divergence |
+| P5-T15 | parse_volumes_csv | PASS | - | Volumes CSV parsing |
+| P5-T16 | synthseg_config_and_availability | PASS | - | SynthSeg config and model availability |
+| P5-T18 | validate_volumes_csv_all_zeros | PASS | - | Volumes CSV validation (all zeros) |
+| P5-T18b | validate_volumes_csv_valid_data | PASS | - | Volumes CSV validation (valid data) |
+| P5-T18c | validate_volumes_csv_empty | PASS | - | Volumes CSV validation (empty) |
+| P5-T19 | kl_zero_data_guard | PASS | - | KL divergence zero-data guard |
+| P5-T20 | consolidate_nifti_to_h5 | PASS | - | NIfTI consolidation to H5 |
+| P5-T20b | consolidate_nifti_no_delete | PASS | - | NIfTI consolidation without deletion |
 
-## Failure Details
+---
 
-### P5-T14: Regional Correlation and KL Divergence
-**File:** `/home/mpascual/research/code/neuromf/tests/test_metrics_p5.py`  
-**Line:** 299  
-**Error:** `AssertionError: assert 9.634550391882097 < 1.0`
+## Key Validation Points
 
-**Description:**
-The test verifies KL divergence computation for regional brain volumes. It creates 20 paired samples where:
-- Real: `base + N(0, 200)`
-- Generated: `base + N(0, 100)`
+### Generation Module (H5Manager, LatentGenerator, VolumeDecoder)
+- [x] H5 latent archive creation, read, write, metadata tracking
+- [x] H5 volume archive creation, read, write, metadata tracking
+- [x] Completion tracking (`is_complete()`) handles missing attrs and nonexistent files
+- [x] LatentGenerator integrates tiny MeanFlow model
+- [x] Shared noise protocol ensures deterministic multi-NFE generation
+- [x] VolumeDecoder properly wraps frozen MAISI VAE
 
-The test expects KL < 1.0, but the actual KL divergence is 9.63. This indicates the distributions are more dissimilar than the test threshold allows.
+### Metrics Module (Spectral, MS-SSIM, Pairing, Features)
+- [x] Spectral high-frequency ratio on known signals
+- [x] MS-SSIM-3D on identical and different volumes
+- [x] Nearest-neighbor pairing correctness
+- [x] Feature extraction mock (ready for real FID/MMD)
 
-**Root Cause Analysis:**
-The KL divergence formula `sum(P * log(P/Q))` is sensitive to:
-1. **Variance mismatch:** Real has σ=200, generated has σ=100 (2x difference)
-2. **Histogram binning:** With 50 bins and only 20 samples, bin populations are sparse (~0.4 samples/bin on average)
-3. **Small sample size:** Histogram noise dominates with N=20
+### SynthSeg Integration (Segmentation Metrics)
+- [x] H5 to NIfTI conversion pipeline
+- [x] Dice coefficient from segmentation labels
+- [x] SynthSeg success rate computation
+- [x] Regional correlation and KL divergence
+- [x] Volumes CSV parsing and validation (all-zeros, valid, empty cases)
+- [x] SynthSeg config availability
+- [x] KL divergence zero-data guard
+- [x] NIfTI consolidation to H5 (with/without deletion)
 
-With seed=42, the generated volumes are consistently offset and narrower than real volumes, producing high KL divergence due to poor histogram overlap.
-
-**Recommendation:**
-The test is checking a realistic scenario where generated volumes have lower variance than real volumes. The threshold of KL < 1.0 is too tight. Either:
-1. Increase sample size (N=20 → N=100+) to reduce histogram noise
-2. Increase threshold to KL < 2.0 to allow for variance differences
-3. Change test to use matched variances (both N(0, 150)) to verify computation
-
-For now, this is an informational failure indicating the metric is working but the test tolerance is unrealistic for small sample sizes.
+---
 
 ## Summary
 
-- **Total Tests:** 17
-- **Passed:** 16
-- **Failed:** 1 (P5-T14, informational issue with test tolerance)
-- **Gate Status:** BLOCKED until P5-T14 is fixed
+All 27 tests pass with no failures. Phase 5 verification gate is **OPEN**.
 
-The failure is isolated to a test tolerance issue in the KL divergence assertion. All generation, archive, and other evaluation metrics pass successfully. The gate is blocked due to this one critical test failure.
+The generation and evaluation pipeline is ready for:
+1. **Latent generation** on full FOMO-60K (via `generate_latents.py` on Picasso)
+2. **Volume decoding** (via `decode_volumes.py`)
+3. **Metric computation** (FID, MMD, MS-SSIM, spectral, regional anatomy)
+4. **SynthSeg segmentation** and validation
+
+No blockers remain for Phase 6 (ablation runs).
 

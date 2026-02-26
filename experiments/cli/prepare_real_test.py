@@ -152,9 +152,12 @@ def main() -> None:
 
     # Decode test latents -> volumes
     vol_path = output_dir / "real_test.h5"
-    if vol_path.exists():
-        logger.info("Real test volumes already exist: %s", vol_path)
+    if vol_path.exists() and H5Manager.is_complete(vol_path):
+        logger.info("Real test volumes already complete: %s", vol_path)
     else:
+        if vol_path.exists():
+            logger.warning("Incomplete archive found, recreating: %s", vol_path)
+            vol_path.unlink()
         vol_config = H5VolumeConfig(n_samples=n_test)
         vol_meta = {
             "source": "test_split",

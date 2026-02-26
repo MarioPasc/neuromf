@@ -15,6 +15,7 @@
 # Stage 1: Generate latents at all NFE levels (1, 2, 5, 10, 25, 50)
 # Stage 2: Prepare real test volumes
 # Stage 3: Decode volumes at selected NFE levels (1, 10, 50)
+# Stage 4: Visualization sanity-check figures (CPU-only)
 #
 # Expected env vars (exported by generate.sh):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME
@@ -140,6 +141,24 @@ python experiments/cli/decode_volumes.py \
     --nfe 1 10 50
 
 echo "Stage 3 complete."
+
+# ========================================================================
+# STAGE 4: VISUALIZATION (CPU-only, reads ~12 slices — runs in seconds)
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "STAGE 4: VISUALIZATION"
+echo "=========================================="
+
+GEN_DIR="${RESULTS_DST}/phase_5/generation"
+
+python experiments/cli/visualize_generation.py \
+    --generation-dir "${GEN_DIR}" \
+    --output-dir "${GEN_DIR}/figures" \
+    --n-subjects 3 \
+    --nfe 1 10 50
+
+echo "Stage 4 complete."
 
 # ========================================================================
 # POST-FLIGHT

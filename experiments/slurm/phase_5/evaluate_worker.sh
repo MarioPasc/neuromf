@@ -160,6 +160,22 @@ python experiments/cli/compute_metrics.py \
 echo "Metrics computation complete."
 
 # ========================================================================
+# NIFTI CONSOLIDATION CHECK
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "NIFTI → HDF5 CONSOLIDATION"
+echo "=========================================="
+echo "Consolidated NIfTI → HDF5, cleaned up temporary files"
+if [ -d "${METRICS_DIR}/synthseg" ]; then
+    du -sh "${METRICS_DIR}/synthseg/"
+    echo "HDF5 archives:"
+    ls -lh "${METRICS_DIR}/synthseg/"*.h5 2>/dev/null || echo "  (no .h5 files yet)"
+    echo "Remaining NIfTI dirs:"
+    find "${METRICS_DIR}/synthseg/" -maxdepth 1 -type d -name "*nifti*" -o -name "*labels*" 2>/dev/null | head -10 || echo "  (none — all consolidated)"
+fi
+
+# ========================================================================
 # POST-FLIGHT
 # ========================================================================
 echo ""

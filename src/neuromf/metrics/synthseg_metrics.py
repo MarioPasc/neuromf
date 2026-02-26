@@ -254,6 +254,39 @@ def parse_volumes_csv(csv_path: Path) -> dict[str, dict[str, float]]:
     return volumes
 
 
+def validate_volumes_csv(
+    volumes: dict[str, dict[str, float]],
+) -> tuple[bool, str]:
+    """Check if SynthSeg produced meaningful results (not all zeros).
+
+    Args:
+        volumes: Parsed CSV dict from ``parse_volumes_csv()``.
+
+    Returns:
+        Tuple of ``(is_valid, message)``.  ``is_valid`` is False if ALL
+        subjects have ALL regions equal to 0.0.
+    """
+    if not volumes:
+        return False, "Empty volumes CSV — no subjects found"
+
+    all_zero = True
+    for subject, regions in volumes.items():
+        for region, val in regions.items():
+            if abs(val) > 1e-10:
+                all_zero = False
+                break
+        if not all_zero:
+            break
+
+    if all_zero:
+        n_subjects = len(volumes)
+        return False, (
+            f"All {n_subjects} subjects have all-zero regional volumes — likely blank input data"
+        )
+
+    return True, "OK"
+
+
 def compute_success_rate(
     input_dir: Path,
     output_dir: Path,
@@ -424,6 +457,9 @@ def compute_regional_kl(
             continue
 
         all_vals = real_vals + gen_vals
+        if abs(max(all_vals) - min(all_vals)) < 1e-10:
+            results[region] = float("nan")
+            continue
         bins = np.linspace(min(all_vals), max(all_vals), n_bins + 1)
 
         real_hist, _ = np.histogram(real_vals, bins=bins, density=True)
@@ -439,6 +475,78 @@ def compute_regional_kl(
         results[region] = kl
 
     return results
+
+
+def consolidate_nifti_to_h5(
+    nifti_dir: Path,
+    output_h5: Path,
+    delete_nifti: bool = False,
+) -> Path:
+    """Pack NIfTI label maps (or volumes) into a single HDF5 archive.
+
+    Consolidates many small NIfTI files into one compressed HDF5 to reduce
+    inode usage on HPC filesystems.
+
+    Args:
+        nifti_dir: Directory containing ``.nii.gz`` files.
+        output_h5: Output HDF5 path.
+        delete_nifti: If True, delete ``nifti_dir`` after successful consolidation.
+
+    Returns:
+        Path to the created HDF5 file.
+    """
+    nifti_files = sorted(nifti_dir.glob("*.nii.gz"))
+    if not nifti_files:
+        logger.warning("No NIfTI files found in %s — skipping consolidation", nifti_dir)
+        return output_h5
+
+    output_h5.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read first file to determine shape/dtype
+    first_data = np.asarray(nib.load(str(nifti_files[0])).dataobj)
+    vol_shape = first_data.shape
+    # Use int16 for label maps (integer data), float32 for volumes
+    is_integer = np.issubdtype(first_data.dtype, np.integer)
+    store_dtype = np.int16 if is_integer else np.float32
+
+    n = len(nifti_files)
+    filenames = [f.name for f in nifti_files]
+
+    with h5py.File(str(output_h5), "w") as f:
+        ds = f.create_dataset(
+            "data",
+            shape=(n, *vol_shape),
+            dtype=store_dtype,
+            chunks=(1, *vol_shape),
+            compression="gzip",
+            compression_opts=4,
+        )
+
+        # Store first volume (already loaded)
+        ds[0] = first_data.astype(store_dtype)
+
+        for i in range(1, n):
+            data = np.asarray(nib.load(str(nifti_files[i])).dataobj)
+            ds[i] = data.astype(store_dtype)
+
+        # Store filenames for traceability
+        dt = h5py.string_dtype()
+        f.create_dataset("filenames", data=filenames, dtype=dt)
+        f.attrs["n_files"] = n
+        f.attrs["source_dir"] = str(nifti_dir)
+
+    logger.info(
+        "Consolidated %d NIfTI files from %s → %s",
+        n,
+        nifti_dir.name,
+        output_h5.name,
+    )
+
+    if delete_nifti:
+        shutil.rmtree(nifti_dir)
+        logger.info("Deleted NIfTI directory: %s", nifti_dir)
+
+    return output_h5
 
 
 def run_synthseg_evaluation(
@@ -530,6 +638,17 @@ def run_synthseg_evaluation(
     real_vols = parse_volumes_csv(real_vol_csv)
     gen_vols = parse_volumes_csv(gen_vol_csv)
 
+    # Validate CSV outputs (catch blank-data failures)
+    real_valid, real_msg = validate_volumes_csv(real_vols)
+    if not real_valid:
+        logger.error("Real volumes CSV validation FAILED: %s", real_msg)
+        results["validation"] = f"FAILED (real): {real_msg}"
+
+    gen_valid, gen_msg = validate_volumes_csv(gen_vols)
+    if not gen_valid:
+        logger.error("Generated volumes CSV validation FAILED: %s", gen_msg)
+        results["validation"] = results.get("validation", "") + f"FAILED (gen): {gen_msg}"
+
     # Regional volume correlation (paired via NN)
     results["regional_volume_correlation"] = compute_regional_correlation(
         real_vols,
@@ -585,5 +704,19 @@ def run_synthseg_evaluation(
         results["synthseg_dice"]["mean"],
         results["synthseg_dice"]["std"],
     )
+
+    # Consolidate NIfTI files → HDF5 to reduce inode usage on HPC
+    for nifti_dir, h5_name in [
+        (real_nifti_dir, "real_nifti.h5"),
+        (gen_nifti_dir, f"gen_nifti_nfe{nfe:03d}.h5"),
+        (real_labels_dir, "real_labels.h5"),
+        (gen_labels_dir, f"gen_labels_nfe{nfe:03d}.h5"),
+    ]:
+        if nifti_dir.is_dir() and any(nifti_dir.glob("*.nii.gz")):
+            consolidate_nifti_to_h5(
+                nifti_dir,
+                synthseg_dir / h5_name,
+                delete_nifti=True,
+            )
 
     return results

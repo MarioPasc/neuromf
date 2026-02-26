@@ -126,6 +126,13 @@ def _load_config(args: argparse.Namespace) -> OmegaConf:
     return config
 
 
+def _is_archive_complete(path: Path) -> bool:
+    """Check if an HDF5 archive has all expected samples written."""
+    from neuromf.generation.h5_manager import H5Manager
+
+    return H5Manager.is_complete(path)
+
+
 def _build_model(config: OmegaConf, device: torch.device) -> MAISIUNetWrapper:
     """Build the UNet model from config."""
     from neuromf.wrappers.maisi_unet import MAISIUNetConfig
@@ -238,9 +245,12 @@ def main() -> None:
     # Generate for each NFE level with the same noise
     for nfe in nfe_levels:
         out_path = output_dir / f"nfe_{nfe:03d}.h5"
-        if out_path.exists():
-            logger.info("Skipping NFE=%d (already exists: %s)", nfe, out_path)
+        if out_path.exists() and _is_archive_complete(out_path):
+            logger.info("Skipping NFE=%d (already complete: %s)", nfe, out_path)
             continue
+        elif out_path.exists():
+            logger.warning("Incomplete archive for NFE=%d, recreating: %s", nfe, out_path)
+            out_path.unlink()
 
         generator.generate(
             n_samples=n_samples,

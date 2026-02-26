@@ -86,6 +86,8 @@ class H5Manager:
             elif value is not None:
                 f.attrs[key] = value
 
+        f.attrs["n_written"] = 0
+
         logger.info(
             "Created latent archive %s: %d samples, shape=%s, dtype=%s",
             path.name,
@@ -135,6 +137,8 @@ class H5Manager:
             elif value is not None:
                 f.attrs[key] = value
 
+        f.attrs["n_written"] = 0
+
         logger.info(
             "Created volume archive %s: %d samples, shape=%s",
             path.name,
@@ -165,6 +169,7 @@ class H5Manager:
         h5file["latents"][start_idx:end_idx] = latents.cpu().numpy()
         h5file["noise_seeds"][start_idx:end_idx] = seeds
         h5file["timing_ms"][start_idx:end_idx] = timing_ms
+        h5file.attrs["n_written"] = int(h5file.attrs.get("n_written", 0)) + B
 
     @staticmethod
     def write_volume_batch(
@@ -189,6 +194,30 @@ class H5Manager:
             vols_np = vols_np[:, 0]
         h5file["volumes"][start_idx:end_idx] = vols_np
         h5file["decode_timing_ms"][start_idx:end_idx] = timing_ms
+        h5file.attrs["n_written"] = int(h5file.attrs.get("n_written", 0)) + B
+
+    @staticmethod
+    def is_complete(path: Path) -> bool:
+        """Check if an archive has all expected samples written.
+
+        Archives created before ``n_written`` tracking was added will lack
+        the attribute and are treated as incomplete (returns False).
+
+        Args:
+            path: Path to an HDF5 archive (latent or volume).
+
+        Returns:
+            True if ``n_written >= dataset leading dim``.
+        """
+        try:
+            with h5py.File(str(path), "r") as f:
+                n_written = int(f.attrs.get("n_written", 0))
+                for key in ("volumes", "latents"):
+                    if key in f:
+                        return n_written >= f[key].shape[0]
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def read_latent(path: Path, index: int) -> Tensor:

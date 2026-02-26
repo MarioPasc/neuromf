@@ -22,6 +22,7 @@ import torch
 from omegaconf import OmegaConf
 from rich.logging import RichHandler
 
+from neuromf.generation.h5_manager import H5Manager
 from neuromf.generation.volume_decoder import VolumeDecoder
 from neuromf.wrappers.maisi_vae import MAISIVAEConfig, MAISIVAEWrapper
 
@@ -157,9 +158,12 @@ def main() -> None:
             continue
 
         vol_path = output_dir / f"nfe_{nfe:03d}.h5"
-        if vol_path.exists():
-            logger.info("Skipping NFE=%d (already exists: %s)", nfe, vol_path)
+        if vol_path.exists() and H5Manager.is_complete(vol_path):
+            logger.info("Skipping NFE=%d (already complete: %s)", nfe, vol_path)
             continue
+        elif vol_path.exists():
+            logger.warning("Incomplete archive for NFE=%d, recreating: %s", nfe, vol_path)
+            vol_path.unlink()
 
         decoder.decode(latent_path, vol_path, batch_size=batch_size)
 

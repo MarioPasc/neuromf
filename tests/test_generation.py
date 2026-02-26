@@ -261,3 +261,82 @@ def test_P5_T10_h5_metadata_consistency(tmp_path: Path) -> None:
     assert recovered["scale_factor"] == pytest.approx(0.96240234375)
     assert len(recovered["latent_mean"]) == 4
     assert len(recovered["latent_std"]) == 4
+
+
+# ---------------------------------------------------------------------------
+# P5-T17: is_complete — empty archive returns False, full archive returns True
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T17_is_complete_tracking(tmp_path: Path) -> None:
+    """Verify n_written tracking: incomplete archive → False, complete → True."""
+    n = 4
+    shape = (4, 8, 8, 8)
+    config = H5LatentConfig(n_samples=n, latent_shape=shape)
+    h5_path = tmp_path / "completeness_test.h5"
+
+    # Create archive but don't write anything
+    h5file = H5Manager.create_latent_archive(h5_path, config, {"nfe": 1})
+    h5file.close()
+
+    assert h5_path.exists()
+    assert not H5Manager.is_complete(h5_path), "Empty archive should be incomplete"
+
+    # Write half the samples
+    h5file = h5py.File(str(h5_path), "a")
+    latents = torch.randn(2, *shape)
+    H5Manager.write_latent_batch(h5file, 0, latents, [0, 1], [0.0, 0.0])
+    h5file.close()
+
+    assert not H5Manager.is_complete(h5_path), "Half-written archive should be incomplete"
+
+    # Write remaining samples
+    h5file = h5py.File(str(h5_path), "a")
+    latents = torch.randn(2, *shape)
+    H5Manager.write_latent_batch(h5file, 2, latents, [2, 3], [0.0, 0.0])
+    h5file.close()
+
+    assert H5Manager.is_complete(h5_path), "Fully-written archive should be complete"
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T17b_is_complete_volume_archive(tmp_path: Path) -> None:
+    """Verify is_complete works for volume archives too."""
+    n = 2
+    vol_shape = (16, 16, 16)
+    config = H5VolumeConfig(n_samples=n, volume_shape=vol_shape)
+    h5_path = tmp_path / "vol_completeness.h5"
+
+    h5file = H5Manager.create_volume_archive(h5_path, config, {"nfe": 1})
+    h5file.close()
+
+    assert not H5Manager.is_complete(h5_path)
+
+    h5file = h5py.File(str(h5_path), "a")
+    volumes = torch.rand(n, 1, *vol_shape)
+    H5Manager.write_volume_batch(h5file, 0, volumes, [0.0, 0.0])
+    h5file.close()
+
+    assert H5Manager.is_complete(h5_path)
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T17c_is_complete_missing_attr(tmp_path: Path) -> None:
+    """Archives without n_written attr (legacy) should return False."""
+    h5_path = tmp_path / "legacy.h5"
+    with h5py.File(str(h5_path), "w") as f:
+        f.create_dataset("latents", shape=(4, 4, 8, 8, 8), dtype=np.float16)
+        # No n_written attr
+
+    assert not H5Manager.is_complete(h5_path)
+
+
+@pytest.mark.phase5
+@pytest.mark.informational
+def test_P5_T17d_is_complete_nonexistent_file(tmp_path: Path) -> None:
+    """Nonexistent file should return False, not raise."""
+    assert not H5Manager.is_complete(tmp_path / "does_not_exist.h5")

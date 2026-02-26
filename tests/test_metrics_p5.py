@@ -25,8 +25,13 @@ from neuromf.metrics.synthseg_metrics import (
     compute_regional_correlation,
     compute_regional_kl,
     compute_success_rate,
+    consolidate_nifti_to_h5,
     parse_volumes_csv,
+    validate_volumes_csv,
 )
+
+# Keep linter from removing unused imports used in tests below
+_ = (validate_volumes_csv, consolidate_nifti_to_h5)
 
 # ---------------------------------------------------------------------------
 # P5-T6: Spectral HF energy ratio — known signals
@@ -343,3 +348,122 @@ def test_P5_T16_synthseg_config_and_availability() -> None:
     # A binary that definitely exists
     config_ls = SynthSegConfig(command=["ls"])
     assert check_synthseg_available(config_ls)
+
+
+# ---------------------------------------------------------------------------
+# P5-T18: validate_volumes_csv — all-zero detection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T18_validate_volumes_csv_all_zeros() -> None:
+    """All-zero CSV should be flagged as invalid."""
+    volumes = {
+        "vol_0000.nii.gz": {"Left-Hippocampus": 0.0, "Right-Hippocampus": 0.0},
+        "vol_0001.nii.gz": {"Left-Hippocampus": 0.0, "Right-Hippocampus": 0.0},
+    }
+    valid, msg = validate_volumes_csv(volumes)
+    assert not valid
+    assert "all-zero" in msg.lower()
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T18b_validate_volumes_csv_valid_data() -> None:
+    """Non-zero CSV should pass validation."""
+    volumes = {
+        "vol_0000.nii.gz": {"Left-Hippocampus": 3200.5, "Right-Hippocampus": 3100.0},
+        "vol_0001.nii.gz": {"Left-Hippocampus": 3300.1, "Right-Hippocampus": 0.0},
+    }
+    valid, msg = validate_volumes_csv(volumes)
+    assert valid
+    assert msg == "OK"
+
+
+@pytest.mark.phase5
+@pytest.mark.informational
+def test_P5_T18c_validate_volumes_csv_empty() -> None:
+    """Empty CSV should be flagged as invalid."""
+    valid, msg = validate_volumes_csv({})
+    assert not valid
+    assert "empty" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# P5-T19: KL divergence zero-data guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T19_kl_zero_data_guard() -> None:
+    """All-zero regional volumes should produce NaN KL, not crash."""
+    real_volumes = {f"r_{i}": {"Left-Hippocampus": 0.0} for i in range(10)}
+    gen_volumes = {f"g_{i}": {"Left-Hippocampus": 0.0} for i in range(10)}
+
+    kl = compute_regional_kl(real_volumes, gen_volumes, regions=["Left-Hippocampus"])
+    assert "Left-Hippocampus" in kl
+    assert np.isnan(kl["Left-Hippocampus"]), "Zero-range data should produce NaN KL"
+
+
+# ---------------------------------------------------------------------------
+# P5-T20: NIfTI → HDF5 consolidation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase5
+@pytest.mark.critical
+def test_P5_T20_consolidate_nifti_to_h5(tmp_path: Path) -> None:
+    """Consolidate NIfTI files to HDF5, verify contents, and delete originals."""
+    import h5py
+
+    nifti_dir = tmp_path / "labels"
+    nifti_dir.mkdir()
+
+    shape = (16, 16, 16)
+    affine = np.eye(4)
+    n = 3
+
+    # Create mock NIfTI label maps
+    for i in range(n):
+        labels = np.zeros(shape, dtype=np.int32)
+        labels[i : i + 4, :, :] = 17
+        nib.save(nib.Nifti1Image(labels, affine), str(nifti_dir / f"vol_{i:04d}.nii.gz"))
+
+    output_h5 = tmp_path / "labels.h5"
+    consolidate_nifti_to_h5(nifti_dir, output_h5, delete_nifti=True)
+
+    # Verify HDF5 contents
+    assert output_h5.exists()
+    with h5py.File(str(output_h5), "r") as f:
+        assert f["data"].shape == (n, *shape)
+        assert f["data"].dtype == np.int16  # integer label maps
+        assert len(f["filenames"]) == n
+        assert f.attrs["n_files"] == n
+
+        # Verify data round-trip for first volume
+        expected = np.zeros(shape, dtype=np.int16)
+        expected[0:4, :, :] = 17
+        np.testing.assert_array_equal(f["data"][0], expected)
+
+    # Verify NIfTI directory was deleted
+    assert not nifti_dir.exists()
+
+
+@pytest.mark.phase5
+@pytest.mark.informational
+def test_P5_T20b_consolidate_nifti_no_delete(tmp_path: Path) -> None:
+    """Consolidate without deleting originals."""
+    nifti_dir = tmp_path / "vols"
+    nifti_dir.mkdir()
+
+    shape = (8, 8, 8)
+    data = np.random.rand(*shape).astype(np.float32)
+    nib.save(nib.Nifti1Image(data, np.eye(4)), str(nifti_dir / "vol_0000.nii.gz"))
+
+    output_h5 = tmp_path / "vols.h5"
+    consolidate_nifti_to_h5(nifti_dir, output_h5, delete_nifti=False)
+
+    assert output_h5.exists()
+    assert nifti_dir.exists()  # Should NOT be deleted
