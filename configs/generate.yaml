@@ -59,6 +59,15 @@ synthseg:
     - "Left-Putamen"
     - "Left-Cerebellum-Cortex"
 
+# MRI preprocessing (for prepare_real_test.py — must match Phase 1 encoding)
+data:
+  target_shape: [192, 192, 192]
+  target_spacing: [1.0, 1.0, 1.0]
+  intensity_lower_percentile: 0.0
+  intensity_upper_percentile: 99.5
+  intensity_b_min: 0.0
+  intensity_b_max: 1.0
+
 timing:
   n_warmup: 10
   n_measured: 90
