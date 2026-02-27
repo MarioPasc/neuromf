@@ -43,7 +43,8 @@ class FeatureExtractor:
         if backend == "med3d":
             from neuromf.metrics.fid_3d import load_fid3d_feature_net
 
-            self.model = load_fid3d_feature_net(device=device)
+            wp = str(weights_path) if weights_path else None
+            self.model = load_fid3d_feature_net(device=device, weights_path=wp)
         elif backend == "radimagenet":
             from neuromf.metrics.fid import load_radimagenet_resnet50
 

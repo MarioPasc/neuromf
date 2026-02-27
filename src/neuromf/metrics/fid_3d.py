@@ -57,6 +57,7 @@ FID3D_FEATURE_DIM = 512
 
 def load_fid3d_feature_net(
     device: torch.device | str = "cpu",
+    weights_path: str | None = None,
 ) -> nn.Module:
     """Load R3D-18 as a 3D feature extractor (512-d output).
 
@@ -64,24 +65,34 @@ def load_fid3d_feature_net(
     weights. The final FC layer is replaced with ``Identity()`` to expose
     the 512-d feature representation.
 
-    No external weights file is needed — torchvision downloads the
-    checkpoint automatically on first use.
-
     Args:
         device: Device to load the model onto.
+        weights_path: Optional path to a local ``.pth`` file with R3D-18
+            weights (for offline compute nodes). If ``None`` or empty,
+            torchvision downloads the checkpoint automatically.
 
     Returns:
         R3D-18 model in eval mode with 512-d output.
     """
     import torchvision
+    from pathlib import Path
 
-    model = torchvision.models.video.r3d_18(
-        weights=torchvision.models.video.R3D_18_Weights.DEFAULT,
-    )
+    if weights_path and Path(weights_path).is_file():
+        # Offline mode: build model without pretrained weights, load from file
+        model = torchvision.models.video.r3d_18(weights=None)
+        state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(state_dict)
+        logger.info("Loaded R3D-18 weights from %s", weights_path)
+    else:
+        model = torchvision.models.video.r3d_18(
+            weights=torchvision.models.video.R3D_18_Weights.DEFAULT,
+        )
+        logger.info("Loaded R3D-18 weights via torchvision (Kinetics-400)")
+
     model.fc = nn.Identity()
     model = model.to(device)
     model.eval()
-    logger.info("Loaded R3D-18 feature extractor (Kinetics-400, 512-d)")
+    logger.info("R3D-18 feature extractor ready (512-d, device=%s)", device)
     return model
 
 
