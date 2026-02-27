@@ -15,6 +15,8 @@ generation:
 features:
   med3d:
     enabled: true
+    # R3D-18 (Kinetics-400) replaces Med3D ResNet-50 (feature collapse).
+    # torchvision auto-downloads weights; explicit path for offline nodes.
     weights_path: ""
     batch_size: 1
   radimagenet:

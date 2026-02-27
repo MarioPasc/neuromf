@@ -151,8 +151,8 @@ def _compute_distributional_metrics(
         fid_val = compute_fid_3d(real_feats, gen_feats)
         results["fid_3d"] = {
             "value": fid_val,
-            "feature_extractor": "Med3D ResNet-50",
-            "feature_dim": 2048,
+            "feature_extractor": "R3D-18 (Kinetics-400, MOTFM protocol)",
+            "feature_dim": 512,
         }
         logger.info("  3D-FID: %.4f", fid_val)
 

@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
-from models.embedder import PatchEmbedder, TimestepEmbedder, LabelEmbedder
+from models.embedder import TimestepEmbedder, LabelEmbedder, BottleneckPatchEmbedder
 from models.torch_models import TorchLinear, RMSNorm, SwiGLUMlp
 
 
@@ -70,7 +70,7 @@ class TransformerBlock(nn.Module):
 
     hidden_size: int
     num_heads: int
-    mlp_ratio: float = 4.0
+    mlp_ratio: float = 8 / 3
 
     weight_init: str = "scaled_variance"
     weight_init_constant: float = 1.0
@@ -131,18 +131,17 @@ class FinalLayer(nn.Module):
 #################################################################################
 
 
-class MiT(nn.Module):
+class pmfDiT(nn.Module):
     """
-    MeanFlow improved Transformer (MiT).
     A shared backbone processes the first (depth - aux_head_depth) layers.
     Two heads of equal depth (aux_head_depth) branch off afterwards.
     """
 
-    input_size: int = 32
-    patch_size: int = 2
-    in_channels: int = 4
+    input_size: int = 256
+    patch_size: int = 16
+    in_channels: int = 3
     hidden_size: int = 768
-    depth: int = 12
+    depth: int = 16
     num_heads: int = 12
     mlp_ratio: float = 8 / 3
     num_classes: int = 1000
@@ -162,7 +161,7 @@ class MiT(nn.Module):
 
     def setup(self):
         """
-        Set up the MiT model components.
+        Set up the pmfDiT model components.
          - Patch embedder for input images.
          - Embedders for time, omega, cfg intervals, and class labels.
          - Learnable tokens for conditioning.
@@ -172,9 +171,10 @@ class MiT(nn.Module):
 
         self.out_channels = self.in_channels
 
-        self.x_embedder = PatchEmbedder(
+        self.x_embedder = BottleneckPatchEmbedder(
             self.input_size,
             self.patch_size,
+            128 if self.hidden_size <= 1024 else 256, # pca channels. 256 for H/G
             self.in_channels,
             self.hidden_size,
             bias=True,
@@ -199,27 +199,27 @@ class MiT(nn.Module):
         self.time_tokens = self.param(
             "time_tokens",
             token_initializer,
-            (self.num_time_tokens, self.hidden_size),
+            (1, self.num_time_tokens, self.hidden_size),
         )
         self.class_tokens = self.param(
             "class_tokens",
             token_initializer,
-            (self.num_class_tokens, self.hidden_size),
+            (1, self.num_class_tokens, self.hidden_size),
         )
         self.omega_tokens = self.param(
             "omega_tokens",
             token_initializer,
-            (self.num_cfg_tokens, self.hidden_size),
+            (1, self.num_cfg_tokens, self.hidden_size),
         )
         self.t_min_tokens = self.param(
             "t_min_tokens",
             token_initializer,
-            (self.num_interval_tokens, self.hidden_size),
+            (1, self.num_interval_tokens, self.hidden_size),
         )
         self.t_max_tokens = self.param(
             "t_max_tokens",
             token_initializer,
-            (self.num_interval_tokens, self.hidden_size),
+            (1, self.num_interval_tokens, self.hidden_size),
         )
 
         total_tokens = (
@@ -236,7 +236,15 @@ class MiT(nn.Module):
             + self.num_time_tokens
         )
         self.head_dim = self.hidden_size // self.num_heads
-        self.rope_freqs = precompute_rope_freqs(self.head_dim, total_tokens)
+
+        self.rope_freqs = precompute_rope_freqs_2d(
+            self.head_dim, self.x_embedder.num_patches
+        )
+        self.pos_embed = self.param(
+            "pos_embed",
+            nn.initializers.normal(stddev=0.02),
+            (1, total_tokens, self.hidden_size),
+        )
 
         head_depth = self.aux_head_depth
         shared_depth = self.depth - head_depth
@@ -265,7 +273,7 @@ class MiT(nn.Module):
         )
         self.v_final_layer = FinalLayer(
             self.hidden_size, self.patch_size, self.out_channels
-        )
+        ) if not self.eval else lambda x: jnp.zeros((x.shape[0], x.shape[1], self.patch_size * self.patch_size * self.out_channels))
 
     def unpatchify(self, x):
         c = self.out_channels
@@ -278,7 +286,7 @@ class MiT(nn.Module):
         images = x.reshape((x.shape[0], h * p, w * p, c))
         return images
 
-    def _build_sequence(self, x, h, w, t_min, t_max, y):
+    def _build_sequence(self, x, t, h, w, t_min, t_max, y):
         """
         Build the input token sequence for the transformer.
         1. Embed the input image patches.
@@ -291,7 +299,7 @@ class MiT(nn.Module):
             w: CFG scale
             t_min, t_max: CFG interval
             y: Class labels
-
+        
         Returns:
             seq: Token sequence for the transformer
         """
@@ -321,11 +329,13 @@ class MiT(nn.Module):
             axis=1,
         )
 
+        seq = seq + self.pos_embed
+
         return seq
 
     def __call__(self, x, t, h, w, t_min, t_max, y):
         """
-        Forward pass of the MiT model.
+        Forward pass of the pmfDiT model.
         Returns the predicted u and v components.
 
         Args:
@@ -342,7 +352,7 @@ class MiT(nn.Module):
 
         # We don't explicitly condition on time t, only on h = t - r
         # following https://arxiv.org/abs/2502.13129
-        seq = self._build_sequence(x, h, w, t_min, t_max, y)
+        seq = self._build_sequence(x, t, h, w, t_min, t_max, y)
 
         for block in self.shared_blocks:
             seq = block(seq, self.rope_freqs)
@@ -360,6 +370,11 @@ class MiT(nn.Module):
         u = self.unpatchify(self.u_final_layer(u_tokens))
         v = self.unpatchify(self.v_final_layer(v_tokens))
 
+        t = t.reshape((-1, 1, 1, 1))
+
+        u = (x - u) / jnp.clip(t, 0.05, 1.0)
+        v = (x - v) / jnp.clip(t, 0.05, 1.0)
+
         return u, v
 
 
@@ -368,12 +383,16 @@ class MiT(nn.Module):
 #################################################################################
 
 
-def precompute_rope_freqs(dim: int, seq_len: int, theta: float = 10000.0):
+def precompute_rope_freqs_2d(dim: int, seq_len: int, theta: float = 10000.0):
+    dim = dim // 2 # for 2d rotary embeddings
+    T = int(seq_len ** 0.5)
     freqs = 1.0 / (theta ** (jnp.arange(0, dim, 2, dtype=jnp.float32) / dim))
-    positions = jnp.arange(seq_len, dtype=jnp.float32)
-    freqs_cis = jnp.outer(positions, freqs)
-    real = jnp.cos(freqs_cis)
-    imag = jnp.sin(freqs_cis)
+    positions = jnp.arange(T, dtype=jnp.float32)
+    freqs_h = jnp.einsum('i,j->ij', positions, freqs)
+    freqs_w = jnp.einsum('i,j->ij', positions, freqs)
+    freqs = jnp.concatenate([jnp.tile(freqs_h[:, None, :], (1, T, 1)), jnp.tile(freqs_w[None, :, :], (T, 1, 1))], axis=-1)  # (T, T, 2D)
+    real = jnp.cos(freqs).reshape(seq_len, dim)
+    imag = jnp.sin(freqs).reshape(seq_len, dim)
     return jax.lax.complex(real, imag)
 
 
@@ -381,48 +400,73 @@ def apply_rotary_pos_emb(x, freqs_cis):
     x_complex = x.astype(jnp.float32).view(jnp.complex64)
     x_complex = x_complex.reshape(x.shape[:-1] + (-1,))
     freqs_cis = unsqueeze(unsqueeze(freqs_cis, 0), 2)
-    x_rotated = x_complex * freqs_cis
+    T = freqs_cis.shape[1]
+    x_rotated = x_complex.at[:, -T:, :].multiply(freqs_cis)
     x_out = x_rotated.astype(x_complex.dtype).view(x.dtype)
     return x_out.reshape(x.shape)
 
 
 #################################################################################
-#                                iMF DiT Configs                                #
+#                                   pMF Configs                                 #
 #################################################################################
 
-
-MiT_B_2 = partial(
-    MiT,
-    depth=12,
+pmfDiT_B_16 = partial(
+    pmfDiT,
+    input_size=256,
+    depth=16,
     hidden_size=768,
-    patch_size=2,
+    patch_size=16,
     num_heads=12,
     aux_head_depth=8,
 )
 
-MiT_M_2 = partial(
-    MiT,
-    depth=24,
+
+pmfDiT_B_32 = partial(
+    pmfDiT,
+    input_size=512,
+    depth=16,
     hidden_size=768,
-    patch_size=2,
+    patch_size=32,
     num_heads=12,
     aux_head_depth=8,
 )
 
-MiT_L_2 = partial(
-    MiT,
+pmfDiT_L_16 = partial(
+    pmfDiT,
+    input_size=256,
     depth=32,
     hidden_size=1024,
-    patch_size=2,
+    patch_size=16,
     num_heads=16,
     aux_head_depth=8,
 )
 
-MiT_XL_2 = partial(
-    MiT,
-    depth=48,
+pmfDiT_L_32 = partial(
+    pmfDiT,
+    input_size=512,
+    depth=32,
     hidden_size=1024,
-    patch_size=2,
+    patch_size=32,
+    num_heads=16,
+    aux_head_depth=8,
+)
+
+pmfDiT_H_16 = partial(
+    pmfDiT,
+    input_size=256,
+    depth=48,
+    hidden_size=1280,
+    patch_size=16,
+    num_heads=16,
+    aux_head_depth=8,
+)
+
+pmfDiT_H_32 = partial(
+    pmfDiT,
+    input_size=512,
+    depth=48,
+    hidden_size=1280,
+    patch_size=32,
     num_heads=16,
     aux_head_depth=8,
 )

@@ -8,7 +8,7 @@ latents through frozen MAISI VAE, extracts features, and computes FID.
 Two modes are supported:
 
 - ``"2d5"`` (default): RadImageNet ResNet-50 on 3 orthogonal 2D planes.
-- ``"3d"``: Med3D ResNet-50 on full 3D volumes (matches MOTFM/HA-GAN protocol).
+- ``"3d"``: R3D-18 on full 3D volumes (matches MOTFM evaluation protocol).
 
 Both tiers always run on the **first** validation epoch to establish a
 lower-bound baseline (random-model performance).
@@ -52,7 +52,7 @@ class EvaluationCallback(pl.Callback):
         center_slices_ratio: Fraction of center slices for 2.5D extraction.
         fid_weights_path: Path to RadImageNet ResNet-50 state dict (2d5 mode).
         fid_mode: ``"2d5"`` for RadImageNet 2.5D or ``"3d"`` for Med3D 3D.
-        fid_3d_weights_path: Path to Med3D ResNet-50 state dict (3d mode).
+        fid_3d_weights_path: Deprecated (R3D-18 uses torchvision built-in weights).
         vae_config: Dict of VAE config params (for lazy loading).
         prediction_type: ``"u"`` or ``"x"`` prediction mode.
         cache_dir: Directory for caching real FID features to disk.
@@ -445,8 +445,12 @@ class EvaluationCallback(pl.Callback):
         Returns:
             FID results dict, or None if weights/noise not available.
         """
-        if not self._active_weights_path or self._fid_noise is None:
-            logger.info("FID skipped: no weights path or noise")
+        # R3D-18 (3d mode) needs no external weights; 2d5 mode needs RadImageNet path
+        if self._fid_mode != "3d" and not self._active_weights_path:
+            logger.info("FID skipped: no weights path configured")
+            return None
+        if self._fid_noise is None:
+            logger.info("FID skipped: no noise tensor")
             return None
 
         device = pl_module.device
@@ -508,12 +512,10 @@ class EvaluationCallback(pl.Callback):
             return
 
         if self._fid_mode == "3d":
-            from neuromf.metrics.fid_3d import load_med3d_resnet50
+            from neuromf.metrics.fid_3d import load_fid3d_feature_net
 
-            self._feature_net = load_med3d_resnet50(self._fid_3d_weights_path)
-            self._feature_net = self._feature_net.to(device)
-            self._feature_net.eval()
-            logger.info("Loaded Med3D ResNet-50 for 3D-FID evaluation")
+            self._feature_net = load_fid3d_feature_net(device=device)
+            logger.info("Loaded R3D-18 for 3D-FID evaluation (MOTFM protocol)")
         else:
             from neuromf.metrics.fid import load_radimagenet_resnet50
 
@@ -640,25 +642,30 @@ class EvaluationCallback(pl.Callback):
     ) -> Tensor:
         """Decode latents through VAE and extract 3D features.
 
-        Processes one volume at a time to limit peak memory.
+        Decodes one volume at a time (VAE memory limit), then extracts
+        R3D-18 features in a single ``extract_3d_features`` call so that
+        per-set min-max normalisation is applied across all decoded
+        volumes jointly (matching the MOTFM protocol).
 
         Args:
             latents: Latent tensor ``(N, 4, 48, 48, 48)``.
             device: Compute device.
 
         Returns:
-            Feature tensor ``(N, 2048)``.
+            Feature tensor ``(N, 512)``.
         """
         from neuromf.metrics.fid_3d import extract_3d_features
 
         assert self._vae is not None
         assert self._feature_net is not None
 
-        all_feats: list[Tensor] = []
+        # Decode all latents first (one at a time for VAE memory)
+        decoded: list[Tensor] = []
         for i in range(latents.shape[0]):
             z_i = latents[i : i + 1].to(device)
             x_hat = self._vae.decode(z_i)
-            feats = extract_3d_features(x_hat, self._feature_net, normalize=True)
-            all_feats.append(feats)
+            decoded.append(x_hat.cpu())
 
-        return torch.cat(all_feats, dim=0)
+        # Stack and extract features with per-set normalisation
+        all_volumes = torch.cat(decoded, dim=0)  # (N, 1, D, H, W)
+        return extract_3d_features(all_volumes, self._feature_net, normalize=True)

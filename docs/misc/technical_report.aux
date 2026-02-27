@@ -1,0 +1,210 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{maisi_v2}
+\citation{motfm}
+\citation{medddpm}
+\citation{pmf}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Motivation and Problem Statement}{4}{section.1}\protected@file@percent }
+\newlabel{sec:motivation}{{1}{4}{Motivation and Problem Statement}{section.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Clinical Need}{4}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Gap in the Literature}{4}{subsection.1.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Comparison with related generative methods for brain MRI.\relax }}{4}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:literature}{{1}{4}{Comparison with related generative methods for brain MRI.\relax }{table.caption.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}Approach Overview}{4}{subsection.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Theoretical Foundations}{4}{section.2}\protected@file@percent }
+\newlabel{sec:theory}{{2}{4}{Theoretical Foundations}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Notation and Tensor Dimensions}{4}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:notation}{{2.1}{4}{Notation and Tensor Dimensions}{subsection.2.1}{}}
+\citation{lipman2023,liu2023}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Notation, symbols, and tensor dimensions. All latent-space tensors live in $\mathbb  {R}^{C \times D \times H \times W}$ with $C{=}4$, $D{=}H{=}W{=}48$. The total latent dimensionality is $d = C \cdot D \cdot H \cdot W = 4 \times 48^3 = 442{,}368$.\relax }}{5}{table.caption.2}\protected@file@percent }
+\newlabel{tab:notation}{{2}{5}{Notation, symbols, and tensor dimensions. All latent-space tensors live in $\mathbb {R}^{C \times D \times H \times W}$ with $C{=}4$, $D{=}H{=}W{=}48$. The total latent dimensionality is $d = C \cdot D \cdot H \cdot W = 4 \times 48^3 = 442{,}368$.\relax }{table.caption.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Operator Definitions}{5}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:operators}{{2.2}{5}{Operator Definitions}{subsection.2.2}{}}
+\newlabel{eq:sg_def}{{1}{5}{Operator Definitions}{equation.2.1}{}}
+\newlabel{eq:jvp_operator}{{2}{5}{Operator Definitions}{equation.2.2}{}}
+\citation{meanflow}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Flow Matching Preliminaries}{6}{subsection.2.3}\protected@file@percent }
+\newlabel{eq:interpolation}{{3}{6}{Flow Matching Preliminaries}{equation.2.3}{}}
+\newlabel{eq:cond_velocity}{{4}{6}{Flow Matching Preliminaries}{equation.2.4}{}}
+\newlabel{eq:fm_loss}{{5}{6}{Flow Matching Preliminaries}{equation.2.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}MeanFlow: Average Velocity for 1-Step Generation}{6}{subsection.2.4}\protected@file@percent }
+\newlabel{eq:avg_velocity}{{6}{6}{MeanFlow: Average Velocity for 1-Step Generation}{equation.2.6}{}}
+\newlabel{eq:one_nfe}{{7}{6}{MeanFlow: Average Velocity for 1-Step Generation}{equation.2.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}The MeanFlow Identity and Compound Velocity}{6}{subsection.2.5}\protected@file@percent }
+\newlabel{sec:compound_v}{{2.5}{6}{The MeanFlow Identity and Compound Velocity}{subsection.2.5}{}}
+\newlabel{eq:mf_identity}{{8}{6}{The MeanFlow Identity and Compound Velocity}{equation.2.8}{}}
+\citation{imf}
+\citation{imf}
+\newlabel{eq:jvp_def}{{9}{7}{The MeanFlow Identity and Compound Velocity}{equation.2.9}{}}
+\newlabel{eq:compound_V}{{10}{7}{The MeanFlow Identity and Compound Velocity}{equation.2.10}{}}
+\newlabel{eq:tangent_imf}{{11}{7}{The MeanFlow Identity and Compound Velocity}{equation.2.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Improved MeanFlow (iMF) and the Dual-Head Architecture}{7}{subsection.2.6}\protected@file@percent }
+\newlabel{sec:vhead}{{2.6}{7}{Improved MeanFlow (iMF) and the Dual-Head Architecture}{subsection.2.6}{}}
+\citation{pmf}
+\newlabel{eq:dual_heads}{{12}{8}{Improved MeanFlow (iMF) and the Dual-Head Architecture}{equation.2.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.7}x-Prediction Reparameterisation}{8}{subsection.2.7}\protected@file@percent }
+\newlabel{sec:xpred}{{2.7}{8}{x-Prediction Reparameterisation}{subsection.2.7}{}}
+\newlabel{eq:xpred}{{13}{8}{x-Prediction Reparameterisation}{equation.2.13}{}}
+\newlabel{eq:1nfe_xpred}{{15}{8}{x-Prediction Reparameterisation}{equation.2.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.8}Latent Space Formulation}{8}{subsection.2.8}\protected@file@percent }
+\citation{maisi}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Architecture Design}{9}{section.3}\protected@file@percent }
+\newlabel{sec:architecture}{{3}{9}{Architecture Design}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Frozen MAISI VAE (Encoder-Decoder)}{9}{subsection.3.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces MAISI VAE properties.\relax }}{9}{table.caption.3}\protected@file@percent }
+\newlabel{tab:vae}{{3}{9}{MAISI VAE properties.\relax }{table.caption.3}{}}
+\newlabel{eq:vae}{{16}{9}{Frozen MAISI VAE (Encoder-Decoder)}{equation.3.16}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Per-channel latent statistics ($n = 6{,}471$ encoded volumes).\relax }}{9}{table.caption.4}\protected@file@percent }
+\newlabel{tab:latent_stats}{{4}{9}{Per-channel latent statistics ($n = 6{,}471$ encoded volumes).\relax }{table.caption.4}{}}
+\citation{ddpm}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}MeanFlow UNet (Generative Model)}{10}{subsection.3.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces MeanFlow UNet properties and tensor shapes through the encoder-decoder path.\relax }}{10}{table.caption.5}\protected@file@percent }
+\newlabel{tab:unet}{{5}{10}{MeanFlow UNet properties and tensor shapes through the encoder-decoder path.\relax }{table.caption.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Dual-Time Conditioning}{10}{subsection.3.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Conditioning modes. Selected mode in \textbf  {bold}.\relax }}{10}{table.caption.6}\protected@file@percent }
+\newlabel{tab:conditioning}{{6}{10}{Conditioning modes. Selected mode in \textbf {bold}.\relax }{table.caption.6}{}}
+\newlabel{eq:sin_emb}{{17}{11}{Dual-Time Conditioning}{equation.3.17}{}}
+\newlabel{eq:time_mlp}{{18}{11}{Dual-Time Conditioning}{equation.3.18}{}}
+\newlabel{eq:conditioning}{{19}{11}{Dual-Time Conditioning}{equation.3.19}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}v-Head (Auxiliary Tangent Predictor)}{11}{subsection.3.4}\protected@file@percent }
+\newlabel{sec:vhead_arch}{{3.4}{11}{v-Head (Auxiliary Tangent Predictor)}{subsection.3.4}{}}
+\newlabel{eq:vhead_resblock}{{20}{11}{v-Head (Auxiliary Tangent Predictor)}{equation.3.20}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces v-Head properties.\relax }}{11}{table.caption.7}\protected@file@percent }
+\newlabel{tab:vhead}{{7}{11}{v-Head properties.\relax }{table.caption.7}{}}
+\citation{slimdiff}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Loss Function and Training Objective}{12}{section.4}\protected@file@percent }
+\newlabel{sec:loss}{{4}{12}{Loss Function and Training Objective}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Per-Channel $L_p$ Loss}{12}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:lp_loss}{{4.1}{12}{Per-Channel \texorpdfstring {$L_p$}{Lp} Loss}{subsection.4.1}{}}
+\newlabel{eq:lp_loss}{{21}{12}{Per-Channel \texorpdfstring {$L_p$}{Lp} Loss}{equation.4.21}{}}
+\newlabel{eq:lp_weighted}{{22}{12}{Per-Channel \texorpdfstring {$L_p$}{Lp} Loss}{equation.4.22}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Combined iMF Dual-Head Loss}{12}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:dual_loss}{{4.2}{12}{Combined iMF Dual-Head Loss}{subsection.4.2}{}}
+\newlabel{eq:total_loss}{{23}{12}{Combined iMF Dual-Head Loss}{equation.4.23}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Adaptive Weighting}{12}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:adaptive}{{4.3}{12}{Adaptive Weighting}{subsection.4.3}{}}
+\newlabel{eq:adaptive_weight}{{24}{12}{Adaptive Weighting}{equation.4.24}{}}
+\newlabel{eq:adaptive_weighted_loss}{{25}{12}{Adaptive Weighting}{equation.4.25}{}}
+\newlabel{eq:adaptive_simplified}{{26}{13}{Adaptive Weighting}{equation.4.26}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Loss decomposition at best FID (epoch\nobreakspace  {}388).\relax }}{13}{table.caption.8}\protected@file@percent }
+\newlabel{tab:loss_decomp}{{8}{13}{Loss decomposition at best FID (epoch~388).\relax }{table.caption.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}JVP Strategies}{13}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:jvp_strat}{{4.4}{13}{JVP Strategies}{subsection.4.4}{}}
+\newlabel{eq:exact_jvp}{{28}{13}{JVP Strategies}{equation.4.28}{}}
+\newlabel{eq:fd_jvp}{{29}{14}{JVP Strategies}{equation.4.29}{}}
+\newlabel{eq:fd_instability}{{30}{14}{JVP Strategies}{equation.4.30}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Data Pipeline}{14}{section.5}\protected@file@percent }
+\newlabel{sec:data}{{5}{14}{Data Pipeline}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Dataset}{14}{subsection.5.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Dataset composition from 8 FOMO-60K subsets.\relax }}{14}{table.caption.9}\protected@file@percent }
+\newlabel{tab:dataset}{{9}{14}{Dataset composition from 8 FOMO-60K subsets.\relax }{table.caption.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Preprocessing Pipeline}{15}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Latent Pre-Computation (Phase\nobreakspace  {}1)}{15}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Latent Augmentation}{15}{subsection.5.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Latent augmentation transforms.\relax }}{15}{table.caption.10}\protected@file@percent }
+\newlabel{tab:augmentation}{{10}{15}{Latent augmentation transforms.\relax }{table.caption.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Training Protocol}{15}{section.6}\protected@file@percent }
+\newlabel{sec:training}{{6}{15}{Training Protocol}{section.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Algorithm (One Training Step)}{15}{subsection.6.1}\protected@file@percent }
+\newlabel{sec:algorithm}{{6.1}{15}{Algorithm (One Training Step)}{subsection.6.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Time Sampling}{16}{subsection.6.2}\protected@file@percent }
+\newlabel{sec:time_sampling}{{6.2}{16}{Time Sampling}{subsection.6.2}{}}
+\newlabel{eq:time_sampling}{{31}{16}{Time Sampling}{equation.6.31}{}}
+\newlabel{eq:data_proportion}{{32}{16}{Time Sampling}{equation.6.32}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Optimiser and Schedule}{16}{subsection.6.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Optimiser hyperparameters.\relax }}{16}{table.caption.11}\protected@file@percent }
+\newlabel{tab:optimiser}{{11}{16}{Optimiser hyperparameters.\relax }{table.caption.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Compute budget and actual training cost.\relax }}{17}{table.caption.12}\protected@file@percent }
+\newlabel{tab:compute}{{12}{17}{Compute budget and actual training cost.\relax }{table.caption.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Compute Budget}{17}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}EMA (Exponential Moving Average)}{17}{subsection.6.5}\protected@file@percent }
+\newlabel{sec:ema}{{6.5}{17}{EMA (Exponential Moving Average)}{subsection.6.5}{}}
+\newlabel{eq:ema}{{33}{17}{EMA (Exponential Moving Average)}{equation.6.33}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Divergence Monitoring}{17}{subsection.6.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Sampling and Generation}{17}{section.7}\protected@file@percent }
+\newlabel{sec:sampling}{{7}{17}{Sampling and Generation}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}One-Step Sampling (1-NFE)}{17}{subsection.7.1}\protected@file@percent }
+\newlabel{eq:1nfe_sampling}{{34}{17}{One-Step Sampling (1-NFE)}{equation.7.34}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Multi-Step Euler Sampling}{18}{subsection.7.2}\protected@file@percent }
+\newlabel{eq:euler_times}{{35}{18}{Multi-Step Euler Sampling}{equation.7.35}{}}
+\newlabel{eq:euler_step}{{36}{18}{Multi-Step Euler Sampling}{equation.7.36}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Full Generation Pipeline (Phase\nobreakspace  {}5)}{18}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Experimental Results}{18}{section.8}\protected@file@percent }
+\newlabel{sec:results}{{8}{18}{Experimental Results}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Toy Validation (Phase\nobreakspace  {}2): MeanFlow on Flat Torus}{18}{subsection.8.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Phase\nobreakspace  {}2 toy validation results.\relax }}{18}{table.caption.13}\protected@file@percent }
+\newlabel{tab:torus}{{13}{18}{Phase~2 toy validation results.\relax }{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Main Training (Phase\nobreakspace  {}4): Best Model}{18}{subsection.8.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Best model configuration.\relax }}{19}{table.caption.14}\protected@file@percent }
+\newlabel{tab:best_model}{{14}{19}{Best model configuration.\relax }{table.caption.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}FID Progression}{19}{subsection.8.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces 2.5D FID progression during training (selected checkpoints).\relax }}{19}{table.caption.15}\protected@file@percent }
+\newlabel{tab:fid}{{15}{19}{2.5D FID progression during training (selected checkpoints).\relax }{table.caption.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Training Dynamics}{19}{subsection.8.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {16}{\ignorespaces Training dynamics at milestone epochs.\relax }}{19}{table.caption.16}\protected@file@percent }
+\newlabel{tab:dynamics}{{16}{19}{Training dynamics at milestone epochs.\relax }{table.caption.16}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5}Generated Sample Statistics}{20}{subsection.8.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {17}{\ignorespaces Statistics of generated $\hat  {x} \in \mathbb  {R}^{4 \times 48 \times 48 \times 48}$ at different training stages.\relax }}{20}{table.caption.17}\protected@file@percent }
+\newlabel{tab:xhat}{{17}{20}{Statistics of generated $\hat {x} \in \mathbb {R}^{4 \times 48 \times 48 \times 48}$ at different training stages.\relax }{table.caption.17}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.6}NFE Quality Analysis}{20}{subsection.8.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {18}{\ignorespaces Visual quality at different NFE levels.\relax }}{20}{table.caption.18}\protected@file@percent }
+\newlabel{tab:nfe_quality}{{18}{20}{Visual quality at different NFE levels.\relax }{table.caption.18}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.7}Spectral Analysis}{20}{subsection.8.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.8}SWD (Sliced Wasserstein Distance)}{20}{subsection.8.8}\protected@file@percent }
+\citation{synthseg}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.9}Key Ablation Insights}{21}{subsection.8.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation Protocol}{21}{section.9}\protected@file@percent }
+\newlabel{sec:evaluation}{{9}{21}{Evaluation Protocol}{section.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Image Quality Metrics}{21}{subsection.9.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {19}{\ignorespaces Evaluation metrics suite.\relax }}{21}{table.caption.19}\protected@file@percent }
+\newlabel{tab:metrics}{{19}{21}{Evaluation metrics suite.\relax }{table.caption.19}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Spectral Analysis}{21}{subsection.9.2}\protected@file@percent }
+\newlabel{eq:spectral}{{38}{21}{Spectral Analysis}{equation.9.38}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}Morphological Assessment}{22}{subsection.9.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.4}NFE Consistency Analysis}{22}{subsection.9.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}Implementation Details}{22}{section.10}\protected@file@percent }
+\newlabel{sec:implementation}{{10}{22}{Implementation Details}{section.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Software Stack}{22}{subsection.10.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Gated Phase System}{22}{subsection.10.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {20}{\ignorespaces Phase status.\relax }}{22}{table.caption.20}\protected@file@percent }
+\newlabel{tab:phases}{{20}{22}{Phase status.\relax }{table.caption.20}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}Compute Infrastructure}{22}{subsection.10.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}Novel Contributions}{22}{section.11}\protected@file@percent }
+\newlabel{sec:contributions}{{11}{22}{Novel Contributions}{section.11}{}}
+\citation{slimdiff}
+\bibcite{meanflow}{{1}{}{{}}{{}}}
+\bibcite{imf}{{2}{}{{}}{{}}}
+\@writefile{toc}{\contentsline {section}{\numberline {12}Current Status and Next Steps}{23}{section.12}\protected@file@percent }
+\newlabel{sec:status}{{12}{23}{Current Status and Next Steps}{section.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Current State (February 2026)}{23}{subsection.12.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.2}Key Findings}{23}{subsection.12.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.3}Open Questions}{23}{subsection.12.3}\protected@file@percent }
+\bibcite{pmf}{{3}{}{{}}{{}}}
+\bibcite{maisi}{{4}{}{{}}{{}}}
+\bibcite{maisi_v2}{{5}{}{{}}{{}}}
+\bibcite{slimdiff}{{6}{}{{}}{{}}}
+\bibcite{motfm}{{7}{}{{}}{{}}}
+\bibcite{medddpm}{{8}{}{{}}{{}}}
+\bibcite{lipman2023}{{9}{}{{}}{{}}}
+\bibcite{liu2023}{{10}{}{{}}{{}}}
+\bibcite{ldm}{{11}{}{{}}{{}}}
+\bibcite{lora}{{12}{}{{}}{{}}}
+\bibcite{synthseg}{{13}{}{{}}{{}}}
+\bibcite{ddpm}{{14}{}{{}}{{}}}
+\bibcite{brlp}{{15}{}{{}}{{}}}
+\providecommand\NAT@force@numbers{}\NAT@force@numbers
+\gdef \@abspage@last{24}

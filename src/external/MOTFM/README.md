@@ -22,10 +22,19 @@
 
 ## Requirements
 
-To install the required packages, run:
+- Python: **3.9 - 3.12**
+- Core pinned stack (from `pyproject.toml`):
+  - `torch==2.5.1`
+  - `flow_matching==1.0.10`
+  - `pytorch-lightning==2.5.6`
+  - `numpy==1.26.4`
+  - `monai_generative==0.2.3`
+
+To install from `pyproject.toml`, run:
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
+
 
 ---
 
@@ -85,6 +94,10 @@ To train the model, run:
 ```bash
 python trainer.py --config_path configs/default.yaml
 ```
+or (after installation):
+```bash
+motfm-train --config_path configs/default.yaml
+```
 
 - `--config_path`: Path to your YAML configuration file. Defaults to `configs/default.yaml` if not provided.
 
@@ -107,14 +120,13 @@ python inferer.py \
     --num_inference_steps 5 \
     --output_norm clip_0_1
 ```
-
-For the CAMUS 10-epoch example in this repo:
+or (after installation):
 ```bash
-python inferer.py \
-    --config_path configs/mask_class_conditioning_camus_10ep.yaml \
-    --model_path mask_class_conditioning_checkpoints/mask_class_conditioning_camus_10ep \
-    --num_samples 16 \
-    --num_inference_steps 10 \
+motfm-infer \
+    --config_path configs/default.yaml \
+    --model_path mask_class_conditioning_checkpoints/default \
+    --num_samples 200 \
+    --num_inference_steps 5 \
     --output_norm clip_0_1
 ```
 
@@ -122,12 +134,13 @@ python inferer.py \
 
 - **`--config_path`** (`str`, default: `configs/default.yaml`): Config file used for model/data setup.
 - **`--model_path`** (`str`, optional): Checkpoint `.ckpt` file or directory.
-- **`--num_samples`** (`int`, default: `10`): Number of samples to save.
+- **`--num_samples`** (`int`, optional): Number of samples to save. If omitted, saves all validation samples.
 - **`--num_inference_steps`** (`int`, default: `5`): Number of solver time points used during sampling.
 - **`--output_path`** (`str`, optional): Explicit output `.pkl` path.
 - **`--overwrite`** (`flag`): Overwrite an existing file at `--output_path`.
 - **`--output_norm`** (`str`, default: `clip_0_1`): One of `clip_0_1`, `per_sample_minmax`, `global_minmax`, `none`.
 - **`--allow_config_mismatch`** (`flag`): Allow loading a checkpoint whose saved critical model fields differ from current config.
+- **`--seed`** (`int`, optional): Override RNG seed for reproducible inference. Defaults to `train_args.seed` if provided.
 
 ### Checkpoint resolution behavior
 
@@ -159,11 +172,32 @@ Flash attention requires CUDA and will raise an error otherwise.
 
 ---
 
+## 3D Evaluation
 
-## 💥 News 💥
-- **`09.04.2025`** | Code is released!
-- **`29.03.2025`** | The paper is now available on Arxiv! 🥳
-- **`27.05.2025`** | The paper got accepted to MICCAI 2025! 🎉
+A dedicated script is available in `evaluation_3d/` to compute 3D metrics between two datasets:
+
+- **MMD**
+- **MS-SSIM**
+- **3D-FID** (R3D-18 features + MONAI FIDMetric)
+
+```bash
+python evaluation_3d/evaluate_3d.py \
+    --generated_path /path/to/generated.pkl \
+    --reference_path /path/to/reference.pkl \
+    --generated_split train \
+    --reference_split valid \
+    --num_samples 200
+```
+
+Use `--skip_fid` to skip 3D-FID when torchvision video weights are unavailable.
+
+---
+
+
+## News
+- **`2025-04-09`** | Code released.
+- **`2025-03-29`** | The paper became available on arXiv.
+- **`2025-05-27`** | The paper was accepted to MICCAI 2025.
 ---
 
 ## Citation

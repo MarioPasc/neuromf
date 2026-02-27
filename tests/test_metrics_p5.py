@@ -151,12 +151,13 @@ def test_P5_T9_feature_extractor_mock(tmp_path: Path) -> None:
     with h5py.File(str(vol_h5_path), "w") as f:
         f.create_dataset("volumes", data=np.random.rand(n, *vol_shape).astype(np.float32))
 
-    # Mock the Med3D loading and extraction
+    # Mock the R3D-18 loading and extraction (now returns 512-d features)
     mock_model = MagicMock()
     mock_model.parameters.return_value = iter([torch.zeros(1)])
 
-    def mock_extract_3d(vol, model, normalize=True):
-        return torch.randn(1, 2048)
+    def mock_extract_3d(volumes, model, normalize=True, batch_size=8):
+        B = volumes.shape[0]
+        return torch.randn(B, 512)
 
     with (
         patch("neuromf.metrics.feature_extractor.FeatureExtractor.__init__", return_value=None),
@@ -171,12 +172,12 @@ def test_P5_T9_feature_extractor_mock(tmp_path: Path) -> None:
         feat_path = tmp_path / "features.h5"
         features = extractor.extract_and_cache(vol_h5_path, feat_path)
 
-        assert features.shape == (n, 2048)
+        assert features.shape == (n, 512)
         assert feat_path.exists()
 
         # Verify load_cached works
         loaded = FeatureExtractor.load_cached(feat_path)
-        assert loaded.shape == (n, 2048)
+        assert loaded.shape == (n, 512)
         np.testing.assert_allclose(features.numpy(), loaded.numpy(), atol=1e-5)
 
 

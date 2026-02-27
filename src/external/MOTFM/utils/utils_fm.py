@@ -1,13 +1,17 @@
 import os
 import json
+
 import torch
 import matplotlib.pyplot as plt
 from torch import nn
 from generative.networks.nets import DiffusionModelUNet, ControlNet
 from flow_matching.solver import ODESolver
 
-from .general_utils import normalize_zero_to_one, save_image, save_image_3d
+from .general_utils import class_name_from_map, normalize_zero_to_one, save_image, save_image_3d
+from .motfm_logging import get_logger
 from tqdm import tqdm
+
+logger = get_logger(__name__)
 
 
 ###############################################################################
@@ -27,7 +31,6 @@ class MergedModel(nn.Module):
 
         # If controlnet is None, we won't do anything special in forward.
         self.has_controlnet = controlnet is not None
-        self.has_conditioning = unet.with_conditioning
 
     def forward(
         self,
@@ -61,7 +64,9 @@ class MergedModel(nn.Module):
 
         if self.has_controlnet:
             if masks is None:
-                raise KeyError("mask_conditioning is enabled but no `masks` were provided in the batch.")
+                raise KeyError(
+                    "mask_conditioning is enabled but no `masks` were provided in the batch."
+                )
             # cond is expected to be a ControlNet conditioning, e.g. mask
             down_block_res_samples, mid_block_res_sample = self.controlnet(
                 x=x, timesteps=t, controlnet_cond=masks, context=cond
@@ -119,10 +124,14 @@ def build_model(model_config: dict, device: torch.device = None) -> MergedModel:
     model = MergedModel(unet=unet, controlnet=controlnet, max_timestep=max_timestep)
 
     # Print number of trainable parameters.
+    logger.info(
+        f"Building model with mask_conditioning={mask_conditioning} and "
+        f"max_timestep={max_timestep}."
+    )
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model has {num_params} trainable parameters.")
+    logger.info(f"Model has {num_params} trainable parameters.")
     model_size_mb = num_params * 4 / (1024**2)
-    print(f"Model size: {model_size_mb:.2f} MB")
+    logger.info(f"Model size: {model_size_mb:.2f} MB")
 
     return model.to(device)
 
@@ -196,7 +205,7 @@ def plot_solver_steps(sol, im_batch, mask_batch, class_batch, class_map, outdir,
             axes[i][col].set_title("Real")
         if class_map and class_batch is not None:
             idx = class_batch[i].argmax().item()
-            cls = class_map[idx] if idx < len(class_map) else str(idx)
+            cls = class_name_from_map(class_map, idx)
             axes[i][col].text(
                 0.5,
                 -0.15,
@@ -227,6 +236,9 @@ def validate_and_save_samples(
     model.eval()
     outdir = os.path.join(checkpoint_dir, f"val_samples_epoch_{epoch}")
     os.makedirs(outdir, exist_ok=True)
+    logger.info(
+        f"Saving validation samples: epoch={epoch}, max_samples={max_samples}, output_dir={outdir}."
+    )
     count, step_plot_done = 0, False
     for batch in tqdm(val_loader, desc="Validating"):
         imgs = batch["images"].to(device)
@@ -280,13 +292,13 @@ def validate_and_save_samples(
                     save_image(cnd_img, os.path.join(sdir, "mask.png"))
             if class_map and "classes" in batch:
                 idx = batch["classes"][i].argmax().item()
-                with open(os.path.join(sdir, "class.json"), "w") as f:
+                with open(os.path.join(sdir, "class.json"), "w", encoding="utf-8") as f:
                     json.dump(
                         {
                             "class_index": idx,
-                            "class_name": class_map[idx] if idx < len(class_map) else str(idx),
+                            "class_name": class_name_from_map(class_map, idx),
                             "class_map": class_map,
-                            "class_coditioning": class_conditioning,
+                            "class_conditioning": class_conditioning,
                             "mask_conditioning": mask_conditioning,
                         },
                         f,
@@ -299,7 +311,7 @@ def validate_and_save_samples(
             step_plot_done = True
         if count >= max_samples:
             break
-    print(f"Validation samples saved in: {outdir}")
+    logger.info(f"Validation samples saved in: {outdir}")
 
 
 @torch.no_grad()

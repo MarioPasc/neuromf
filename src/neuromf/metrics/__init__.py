@@ -15,6 +15,7 @@ from neuromf.metrics.fid import (
 from neuromf.metrics.fid_3d import (
     compute_fid_3d,
     extract_3d_features,
+    load_fid3d_feature_net,
     load_med3d_resnet50,
 )
 from neuromf.metrics.mmd import compute_mmd
@@ -38,6 +39,7 @@ __all__ = [
     "load_radimagenet_resnet50",
     "compute_fid_3d",
     "extract_3d_features",
+    "load_fid3d_feature_net",
     "load_med3d_resnet50",
     "compute_ms_ssim_3d",
     "compute_nn_pairs",

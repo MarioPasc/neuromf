@@ -7,7 +7,9 @@ generation:
 
 features:
   med3d:
-    weights_path: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/med3d/resnet_50_23dataset.pth"
+    # R3D-18 (Kinetics-400) — replaces Med3D ResNet-50 (feature collapse).
+    # Copy r3d_18-b3b3357e.pth from local to this path before first run.
+    weights_path: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/r3d_18_fid3d/r3d_18-b3b3357e.pth"
   radimagenet:
     weights_path: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/radimagenet/RadImageNet-ResNet50_notop.pt"
 

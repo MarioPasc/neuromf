@@ -65,7 +65,7 @@ mkdir -p "${RESULTS_DST}/phase_5/metrics/synthseg"
 SBATCH_ARGS=(
     --parsable
     --job-name="neuromf_p5_eval"
-    --time=0-12:00:00
+    --time=0-23:00:00
     --ntasks=1
     --cpus-per-task=16
     --mem=128G

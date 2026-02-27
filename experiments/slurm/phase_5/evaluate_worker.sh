@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J neuromf_p5_eval
-#SBATCH --time=0-12:00:00
+#SBATCH --time=0-23:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
@@ -12,7 +12,7 @@
 # =============================================================================
 # PHASE 5: EVALUATION WORKER
 #
-# Stage 1: Extract Med3D features (real + generated)
+# Stage 1: Extract R3D-18 features (real + generated) — MOTFM protocol
 # Stage 2: Compute metrics (FID, MMD, Coverage, Density, MS-SSIM, PSNR,
 #           spectral, SynthSeg morphological)
 #
@@ -92,15 +92,20 @@ echo "=========================================="
 echo "STAGE 1: FEATURE EXTRACTION"
 echo "=========================================="
 
-# Extract Med3D features for real test set and generated volumes
+# Extract R3D-18 features (MOTFM protocol) for real test set and generated volumes
+# Note: R3D-18 replaces Med3D ResNet-50 (which had feature collapse).
+# The 'med3d' backend name is kept for backward compatibility but loads R3D-18.
 python -c "
+import time
 import torch
+import h5py
+import numpy as np
 from pathlib import Path
 from omegaconf import OmegaConf
 
 from neuromf.metrics.feature_extractor import FeatureExtractor
 
-# Load config to get weights path
+# ── Config ──
 configs_dir = Path('${CONFIGS_DIR}')
 layers = []
 base = configs_dir / 'base.yaml'
@@ -112,30 +117,101 @@ if gen_yaml.exists():
 config = OmegaConf.merge(*layers)
 OmegaConf.resolve(config)
 
-med3d_weights = config.features.med3d.weights_path
-print(f'Med3D weights: {med3d_weights}')
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-extractor = FeatureExtractor('med3d', med3d_weights, device)
 
-# Real features
+# ── Diagnostics: environment ──
+print()
+print('--- Feature Extraction Diagnostics ---')
+print(f'  Device:          {device}')
+if device.type == 'cuda':
+    print(f'  GPU:             {torch.cuda.get_device_name(device)}')
+    mem_gb = torch.cuda.get_device_properties(device).total_mem / 1e9
+    print(f'  GPU memory:      {mem_gb:.1f} GB')
+
+# ── Load feature extractor ──
+weights_path = config.features.med3d.get('weights_path', '')
+print(f'  Config weights:  {weights_path or \"(empty — torchvision auto-download)\"}')
+
+extractor = FeatureExtractor('med3d', weights_path, device)
+model = extractor.model
+
+# ── Diagnostics: model ──
+arch = type(model).__name__
+n_params = sum(p.numel() for p in model.parameters())
+feature_dim = None
+# Probe feature dim with a dummy forward pass
+with torch.no_grad():
+    dummy = torch.randn(1, 3, 16, 16, 16, device=device)
+    dummy_out = model(dummy)
+    feature_dim = dummy_out.shape[-1]
+
+print(f'  Architecture:    {arch}')
+print(f'  Parameters:      {n_params / 1e6:.2f}M')
+print(f'  Feature dim:     {feature_dim}')
+print(f'  Training mode:   {model.training}')
+
+# Check where torchvision cached the weights
+import torchvision
+cache_dir = Path(torch.hub.get_dir()) / 'checkpoints'
+r3d_files = sorted(cache_dir.glob('r3d_18*'))
+if r3d_files:
+    for f in r3d_files:
+        print(f'  Weights file:    {f} ({f.stat().st_size / 1e6:.1f} MB)')
+else:
+    print(f'  Weights file:    (not found in {cache_dir})')
+print('--- End Diagnostics ---')
+print()
+
+# ── Helper: log volume archive info ──
+def log_h5_info(path, label):
+    if not path.exists():
+        print(f'  [{label}] {path.name} — NOT FOUND')
+        return 0
+    with h5py.File(str(path), 'r') as f:
+        shape = f['volumes'].shape
+        dtype = f['volumes'].dtype
+        size_mb = path.stat().st_size / 1e6
+    print(f'  [{label}] {path.name}: {shape}, dtype={dtype}, {size_mb:.1f} MB')
+    return shape[0]
+
+# ── Extract features ──
 real_vol = Path('${GEN_DIR}/real_test.h5')
 real_feat = Path('${FEAT_DIR}/real_med3d.h5')
+
+print('Input volumes:')
+log_h5_info(real_vol, 'real')
+for nfe in [1, 10, 50]:
+    log_h5_info(Path(f'${GEN_DIR}/volumes/nfe_{nfe:03d}.h5'), f'nfe={nfe}')
+print()
+
+# Real features
 if not real_feat.exists():
-    extractor.extract_and_cache(real_vol, real_feat)
-    print('Real features extracted.')
+    t0 = time.time()
+    feats = extractor.extract_and_cache(real_vol, real_feat)
+    dt = time.time() - t0
+    print(f'Real features extracted: {feats.shape} in {dt:.1f}s')
 else:
-    print('Real features already cached.')
+    with h5py.File(str(real_feat), 'r') as f:
+        cached_shape = f['features'].shape
+        cached_backend = f.attrs.get('backend', 'unknown')
+    print(f'Real features already cached: {cached_shape}, backend={cached_backend}')
 
 # Generated features for each NFE
 for nfe in [1, 10, 50]:
     gen_vol = Path(f'${GEN_DIR}/volumes/nfe_{nfe:03d}.h5')
     gen_feat = Path(f'${FEAT_DIR}/gen_med3d_nfe{nfe:03d}.h5')
     if gen_vol.exists() and not gen_feat.exists():
-        extractor.extract_and_cache(gen_vol, gen_feat)
-        print(f'NFE={nfe} features extracted.')
+        t0 = time.time()
+        feats = extractor.extract_and_cache(gen_vol, gen_feat)
+        dt = time.time() - t0
+        print(f'NFE={nfe} features extracted: {feats.shape} in {dt:.1f}s')
+    elif gen_feat.exists():
+        with h5py.File(str(gen_feat), 'r') as f:
+            cached_shape = f['features'].shape
+            cached_backend = f.attrs.get('backend', 'unknown')
+        print(f'NFE={nfe} features already cached: {cached_shape}, backend={cached_backend}')
     else:
-        print(f'NFE={nfe} features already cached or volume missing.')
+        print(f'NFE={nfe} volume missing — skipping.')
 "
 
 echo "Feature extraction complete."

@@ -2,12 +2,56 @@ import os
 import yaml
 import torch
 import pickle
-import warnings
-from typing import Dict, Optional, Tuple, Union
+import random
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
+
+import numpy as np
 
 import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader, Dataset
+from .motfm_logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def set_global_seed(seed: int) -> None:
+    """Set Python/NumPy/PyTorch random seeds for reproducible runs."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def class_label_from_map(
+    class_map: Optional[Union[Mapping[int, Any], Sequence[Any]]],
+    idx: int,
+    *,
+    default: Any = None,
+) -> Any:
+    """
+    Resolve a class label by index from either dict-like or sequence-like maps.
+
+    Returns ``default`` if no mapping is provided. Returns ``idx`` when mapping exists
+    but the index is out of range or missing.
+    """
+    if class_map is None:
+        return default
+    if isinstance(class_map, Mapping):
+        return class_map.get(idx, idx)
+    if isinstance(class_map, Sequence) and not isinstance(class_map, (str, bytes)):
+        return class_map[idx] if 0 <= idx < len(class_map) else idx
+    return idx
+
+
+def class_name_from_map(
+    class_map: Optional[Union[Mapping[int, Any], Sequence[Any]]],
+    idx: int,
+) -> str:
+    """Resolve class label as a display-safe string."""
+    label = class_label_from_map(class_map, idx, default=idx)
+    return str(idx if label is None else label)
 
 
 ###############################################################################
@@ -19,6 +63,7 @@ def load_config(config_path: str = "config.yaml"):
     """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
+    logger.info(f"Loaded config file: {config_path}")
     return config
 
 
@@ -45,13 +90,6 @@ def normalize_zero_to_one(tensor: torch.Tensor):
     t_max = tensor.max()
     denom = (t_max - t_min).clamp_min(1e-6)
     return (tensor - t_min) / denom
-
-
-def normalize_minusone_to_one(tensor: torch.Tensor):
-    """
-    Normalizes a tensor to the range [-1, 1].
-    """
-    return 2 * normalize_zero_to_one(tensor) - 1
 
 
 def _normalize_minmax(
@@ -184,13 +222,8 @@ def apply_normalization(
         return _normalize_zscore(x, scope=scope, eps=eps, clip_percentiles=clip_percentiles)
 
     if mode == "auto":
-        try:
-            x_min = float(x.min())
-            x_max = float(x.max())
-        except Exception:
-            return _normalize_minmax(
-                x, out_range=out_range, scope=scope, eps=eps, clip_percentiles=clip_percentiles
-            )
+        x_min = float(torch.amin(x).item())
+        x_max = float(torch.amax(x).item())
 
         out_min, out_max = out_range
         # Fast path: already approximately in range.
@@ -217,7 +250,6 @@ def load_and_prepare_data(
     pickle_path: str,
     split: str = "train",
     convert_classes_to_onehot: bool = False,
-    is_ddpm: bool = False,
     *,
     image_norm: Union[str, Dict] = "minmax_0_1",
     mask_norm: Union[str, Dict] = "minmax_0_1",
@@ -233,13 +265,9 @@ def load_and_prepare_data(
     Loads data from a pickle file containing a dict with:
       data_dict[split] -> list of dicts with keys ["image", "mask", "class", "name"]
 
-    If 'use_masks_as_condition' is True, returns (X, Y=mask).
-    Otherwise, returns (X, None).
-
-    Returns:
-      X: [N, C, H, W] float tensor
-      Y or None: [N, C, H, W], if use_masks_as_condition is True
-      (H, W): dimensions
+    Returns a dictionary containing at least:
+      - "images": [N, C, ...] float tensor
+      - optionally "masks", "classes", and "class_map" when available.
     """
     # Load the pickle file
     with open(pickle_path, "rb") as f:
@@ -274,7 +302,10 @@ def load_and_prepare_data(
         return x
 
     # Assemble tensors while preserving channels.
-    imgs = [_ensure_channel_first(torch.as_tensor(e["image"], dtype=torch.float32), name="image") for e in data_split]
+    imgs = [
+        _ensure_channel_first(torch.as_tensor(e["image"], dtype=torch.float32), name="image")
+        for e in data_split
+    ]
     Images = torch.stack(imgs, dim=0)  # [N, C, ...]
     if isinstance(image_norm, dict):
         image_mode = str(image_norm.get("mode", "minmax_0_1"))
@@ -303,8 +334,13 @@ def load_and_prepare_data(
     has_mask = any("mask" in e for e in data_split)
     if has_mask:
         if not all("mask" in e for e in data_split):
-            raise ValueError(f"Split '{split}' has inconsistent samples: some are missing the 'mask' key.")
-        mks = [_ensure_channel_first(torch.as_tensor(e["mask"], dtype=torch.float32), name="mask") for e in data_split]
+            raise ValueError(
+                f"Split '{split}' has inconsistent samples: some are missing the 'mask' key."
+            )
+        mks = [
+            _ensure_channel_first(torch.as_tensor(e["mask"], dtype=torch.float32), name="mask")
+            for e in data_split
+        ]
         Masks = torch.stack(mks, dim=0)  # [N, C, ...]
 
         if isinstance(mask_norm, dict):
@@ -331,7 +367,7 @@ def load_and_prepare_data(
         result["masks"] = Masks
     else:
         # Keep downstream code stable: only warn if masks are expected/used elsewhere.
-        warnings.warn(f"Split '{split}' has no 'mask' key; returning images only.")
+        logger.warning(f"Split '{split}' has no 'mask' key; returning images only.")
 
     has_class = any("class" in e for e in data_split)
     if has_class:
@@ -386,9 +422,10 @@ def load_and_prepare_data(
             except Exception:
                 result["classes"] = class_list
 
-    if is_ddpm:
-        result["images"] = normalize_minusone_to_one(result["images"])
-
+    logger.info(
+        f"Prepared split '{split}' with {len(data_split)} samples "
+        f"(masks={'masks' in result}, classes={'classes' in result})."
+    )
     return result
 
 
@@ -425,7 +462,7 @@ def create_dataloader(
         persistent_workers = num_workers > 0
 
     if sampler is not None and shuffle:
-        warnings.warn("Both sampler and shuffle were set; disabling shuffle in favor of sampler.")
+        logger.warning("Both sampler and shuffle were set; disabling shuffle in favor of sampler.")
         shuffle = False
 
     return DataLoader(
