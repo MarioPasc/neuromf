@@ -3,7 +3,7 @@
 #SBATCH --time=0-06:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=384G
+#SBATCH --mem=500G
 #SBATCH --partition=cpu
 #SBATCH --output=prepare_data_%j.out
 #SBATCH --error=prepare_data_%j.err

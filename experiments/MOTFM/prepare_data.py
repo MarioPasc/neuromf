@@ -24,13 +24,16 @@ Usage:
 
 from __future__ import annotations
 
+SCRIPT_VERSION = "2.0-h5backed"
+
 import argparse
 import gc
 import json
 import logging
+import os
 import pickle
+import resource
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -47,6 +50,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ── Memory diagnostics ──────────────────────────────────────────────────
+
+def _mem_rss_gb() -> float:
+    """Return current RSS in GB (Linux /proc/self/status)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024 / 1024  # kB → GB
+    except OSError:
+        pass
+    # Fallback: resource module (ru_maxrss is in KB on Linux)
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
+
+
+def _mem_available_gb() -> float:
+    """Return available system memory in GB."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024 / 1024  # kB → GB
+    except OSError:
+        pass
+    return -1.0
+
+
+def _log_memory(label: str) -> None:
+    """Log current RSS and available memory."""
+    rss = _mem_rss_gb()
+    avail = _mem_available_gb()
+    logger.info(
+        "[MEM] %-30s RSS=%.1f GB  Available=%.1f GB",
+        label,
+        rss,
+        avail,
+    )
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -114,6 +158,8 @@ def _load_config(args: argparse.Namespace) -> OmegaConf:
     return config
 
 
+# ── Phase 1: NIfTI → HDF5 (constant memory) ─────────────────────────────
+
 def _process_split_to_h5(
     entries: list[dict],
     transform: object,
@@ -138,9 +184,11 @@ def _process_split_to_h5(
 
     n = len(entries)
     logger.info("Phase 1 — Processing %s split: %d volumes → %s", split_name, n, h5_path)
+    _log_memory(f"phase1_{split_name}_start")
 
     names: list[str] = []
     n_written = 0
+    n_skipped = 0
     t0 = time.time()
 
     with h5py.File(str(h5_path), "a") as hf:
@@ -152,13 +200,18 @@ def _process_split_to_h5(
 
             if not Path(nifti_path).exists():
                 logger.warning("Missing NIfTI: %s — skipping", nifti_path)
+                n_skipped += 1
                 continue
 
             # Apply same preprocessing as Phase 1
             data = transform({"image": nifti_path})
             x = data["image"].clamp(0.0, 1.0).float().numpy()
 
-            # Create dataset on first successful volume (shape may vary across datasets)
+            # Explicitly free MONAI transform intermediates BEFORE HDF5 write
+            del data
+            gc.collect()
+
+            # Create dataset on first successful volume
             if dset is None:
                 shape = x.shape  # (1, D, H, W)
                 dset = hf.create_dataset(
@@ -169,43 +222,54 @@ def _process_split_to_h5(
                     chunks=(1, *shape),
                     compression="lzf",
                 )
+                logger.info(
+                    "Created HDF5 dataset '%s': shape=%s, chunks=%s",
+                    split_name,
+                    (n, *shape),
+                    (1, *shape),
+                )
 
             dset[n_written] = x
             names.append(subject_key)
             n_written += 1
 
-            # Explicitly free MONAI transform intermediates
-            del data, x
-            if (n_written) % 100 == 0:
-                gc.collect()
+            del x
 
             if (i + 1) % 50 == 0 or i == n - 1:
                 elapsed = time.time() - t0
                 rate = (i + 1) / elapsed if elapsed > 0 else 0
                 logger.info(
-                    "  %s: %d/%d processed (%d written, %.1f s, %.2f vol/s)",
+                    "  %s: %d/%d processed (%d written, %d skipped, "
+                    "%.1f s, %.2f vol/s)",
                     split_name,
                     i + 1,
                     n,
                     n_written,
+                    n_skipped,
                     elapsed,
                     rate,
                 )
+                _log_memory(f"phase1_{split_name}_{n_written}")
 
         # Resize dataset to actual number written (some may have been skipped)
         if dset is not None and n_written < n:
             dset.resize(n_written, axis=0)
 
+    elapsed = time.time() - t0
     logger.info(
-        "%s split: %d/%d volumes written to HDF5 in %.1f s",
+        "%s split: %d/%d written (%d skipped) to HDF5 in %.1f s",
         split_name,
         n_written,
         n,
-        time.time() - t0,
+        n_skipped,
+        elapsed,
     )
+    _log_memory(f"phase1_{split_name}_done")
     gc.collect()
     return names
 
+
+# ── Phase 2: HDF5 → Pickle ──────────────────────────────────────────────
 
 def _build_pickle_from_h5(
     h5_path: Path,
@@ -226,22 +290,40 @@ def _build_pickle_from_h5(
     with h5py.File(str(h5_path), "r") as hf:
         dset = hf[split_name]
         n = dset.shape[0]
-        logger.info("Phase 2 — Loading %s split: %d volumes from HDF5", split_name, n)
+        vol_mb = np.prod(dset.shape[1:]) * 4 / 1024 / 1024
+        total_gb = n * vol_mb / 1024
+        logger.info(
+            "Phase 2 — Loading %s: %d volumes (%.1f MB each, %.1f GB total)",
+            split_name,
+            n,
+            vol_mb,
+            total_gb,
+        )
+        _log_memory(f"phase2_{split_name}_start")
 
         for i in range(n):
-            x = torch.from_numpy(dset[i].astype(np.float32))
+            x = torch.from_numpy(np.array(dset[i], dtype=np.float32))
             name = names[i] if i < len(names) else f"unknown_{i}"
             samples.append({"image": x, "name": name})
 
-            if (i + 1) % 500 == 0:
+            if (i + 1) % 500 == 0 or i == n - 1:
                 logger.info("  %s: %d/%d loaded", split_name, i + 1, n)
+                _log_memory(f"phase2_{split_name}_{i+1}")
 
-    logger.info("  %s: %d samples loaded into memory", split_name, len(samples))
+    logger.info("  %s: %d samples in memory", split_name, len(samples))
+    _log_memory(f"phase2_{split_name}_done")
     return samples
 
 
+# ── Main ─────────────────────────────────────────────────────────────────
+
 def main() -> None:
     """Convert FOMO-60K NIfTI to MOTFM pickle format."""
+    logger.info("prepare_data.py version: %s", SCRIPT_VERSION)
+    logger.info("Python: %s", sys.version)
+    logger.info("PID: %d", os.getpid())
+    _log_memory("startup")
+
     args = parse_args()
     config = _load_config(args)
 
@@ -262,6 +344,7 @@ def main() -> None:
 
     # Build preprocessing transform (same as Phase 1)
     transform = build_mri_preprocessing_from_config(config)
+    _log_memory("after_transform_build")
 
     output_path = Path(args.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,6 +387,13 @@ def main() -> None:
     del transform
     gc.collect()
 
+    # Log temp HDF5 size
+    if temp_h5_path.exists():
+        h5_gb = temp_h5_path.stat().st_size / 1e9
+        logger.info("Temp HDF5 size: %.2f GB (%s)", h5_gb, temp_h5_path)
+
+    _log_memory("between_phases")
+
     # ── Phase 2: HDF5 → Pickle (peak memory = all volumes as float32) ──
     logger.info("=" * 60)
     logger.info("PHASE 2: HDF5 → Pickle")
@@ -312,6 +402,8 @@ def main() -> None:
     dataset: dict[str, list[dict]] = {}
     for motfm_key, names in split_names_map.items():
         dataset[motfm_key] = _build_pickle_from_h5(temp_h5_path, motfm_key, names)
+
+    _log_memory("before_pickle_dump")
 
     # Save pickle
     logger.info("Saving MOTFM dataset to: %s", output_path)
@@ -327,17 +419,21 @@ def main() -> None:
         len(dataset.get("valid", [])),
         time.time() - t0,
     )
+    _log_memory("after_pickle_dump")
 
-    # Clean up temp HDF5
+    # Free dataset before cleanup
     del dataset
     gc.collect()
+    _log_memory("after_free_dataset")
 
+    # Clean up temp HDF5
     if temp_h5_path.exists():
         temp_h5_path.unlink()
         logger.info("Cleaned up temp HDF5: %s", temp_h5_path)
 
-    # Verify pickle (load just metadata, not full data)
-    logger.info("Verifying pickle structure...")
+    # Verify pickle (lightweight — just check keys and first sample shape)
+    logger.info("Verifying pickle structure (header only)...")
+    _log_memory("before_verify")
     with open(output_path, "rb") as f:
         loaded = pickle.load(f)
 
@@ -347,9 +443,13 @@ def main() -> None:
             if n > 0:
                 sample = loaded[key][0]
                 shape = sample["image"].shape if hasattr(sample["image"], "shape") else "?"
-                logger.info("  %s: %d samples, first shape=%s", key, n, shape)
+                dtype = sample["image"].dtype if hasattr(sample["image"], "dtype") else "?"
+                logger.info("  %s: %d samples, shape=%s, dtype=%s", key, n, shape, dtype)
 
-    logger.info("Done.")
+    del loaded
+    gc.collect()
+    _log_memory("final")
+    logger.info("Done. version=%s", SCRIPT_VERSION)
 
 
 if __name__ == "__main__":
