@@ -7,7 +7,8 @@
 #
 # Usage (from login node):
 #   bash experiments/slurm/phase_5/evaluate.sh
-#   bash experiments/slurm/phase_5/evaluate.sh --depends-on 95484
+#   bash experiments/slurm/phase_5/evaluate.sh --motfm
+#   bash experiments/slurm/phase_5/evaluate.sh --motfm --depends-on 95484
 # =============================================================================
 
 set -euo pipefail
@@ -18,16 +19,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PARSE ARGUMENTS
 # ========================================================================
 DEPENDS_ON=""
+export ENABLE_MOTFM=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --motfm)
+            export ENABLE_MOTFM=1
+            shift
+            ;;
         --depends-on)
             DEPENDS_ON="$2"
             shift 2
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: bash experiments/slurm/phase_5/evaluate.sh [--depends-on JOB_ID]"
+            echo "Usage: bash experiments/slurm/phase_5/evaluate.sh [--motfm] [--depends-on JOB_ID]"
             exit 1
             ;;
     esac
@@ -58,6 +64,14 @@ echo ""
 mkdir -p "${RESULTS_DST}/phase_5/features"
 mkdir -p "${RESULTS_DST}/phase_5/metrics"
 mkdir -p "${RESULTS_DST}/phase_5/metrics/synthseg"
+
+if [ "${ENABLE_MOTFM}" -eq 1 ]; then
+    mkdir -p "${RESULTS_DST}/phase_5/features/motfm"
+    mkdir -p "${RESULTS_DST}/phase_5/metrics/motfm"
+    echo "MOTFM evaluation:  ENABLED"
+else
+    echo "MOTFM evaluation:  disabled (use --motfm to enable)"
+fi
 
 # ========================================================================
 # PRE-DOWNLOAD WEIGHTS (login node has internet, worker nodes do not)

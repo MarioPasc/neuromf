@@ -17,7 +17,7 @@
 #           spectral, SynthSeg morphological)
 #
 # Expected env vars (exported by evaluate.sh):
-#   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME
+#   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, ENABLE_MOTFM
 # =============================================================================
 
 set -euo pipefail
@@ -82,6 +82,23 @@ if [ -f "${GEN_DIR}/real_test.h5" ]; then
 else
     echo "[MISS] ${GEN_DIR}/real_test.h5 — run generate.sh first"
     exit 1
+fi
+
+if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
+    echo ""
+    echo "MOTFM evaluation: ENABLED"
+    for nfe in 1 10 50; do
+        f="${GEN_DIR}/volumes/motfm/nfe_$(printf '%03d' $nfe).h5"
+        if [ -f "$f" ]; then
+            echo "[OK]   $f"
+        else
+            echo "[MISS] $f — run generate.sh --motfm first"
+            exit 1
+        fi
+    done
+else
+    echo ""
+    echo "MOTFM evaluation: disabled (use --motfm to enable)"
 fi
 
 # ========================================================================
@@ -217,7 +234,7 @@ for nfe in [1, 10, 50]:
 echo "NeuroMF feature extraction complete."
 
 # ── MOTFM feature extraction (same extractor, same protocol) ──
-if [ -d "${GEN_DIR}/volumes/motfm" ]; then
+if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
     echo ""
     echo "--- MOTFM Feature Extraction ---"
 
@@ -286,7 +303,7 @@ python -u experiments/cli/compute_metrics.py \
 echo "NeuroMF metrics computation complete."
 
 # ── MOTFM metrics computation (same pipeline, different volumes dir) ──
-if [ -d "${GEN_DIR}/volumes/motfm" ]; then
+if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
     echo ""
     echo "--- MOTFM Metrics Computation ---"
 
@@ -294,17 +311,12 @@ if [ -d "${GEN_DIR}/volumes/motfm" ]; then
     MOTFM_FEAT_DIR="${FEAT_DIR}/motfm"
     mkdir -p "${MOTFM_METRICS_DIR}"
 
-    # Symlink shared real features into MOTFM features dir so
-    # compute_metrics.py finds real_med3d.h5 alongside gen features
-    if [ -f "${FEAT_DIR}/real_med3d.h5" ] && [ ! -e "${MOTFM_FEAT_DIR}/real_med3d.h5" ]; then
-        ln -s "${FEAT_DIR}/real_med3d.h5" "${MOTFM_FEAT_DIR}/real_med3d.h5"
-    fi
-
     python -u experiments/cli/compute_metrics.py \
         --config "${CONFIGS_DIR}/generate.yaml" \
         --configs-dir "${CONFIGS_DIR}" \
         --volumes-dir "${GEN_DIR}/volumes/motfm" \
-        --real-features-dir "${MOTFM_FEAT_DIR}" \
+        --real-features-dir "${FEAT_DIR}" \
+        --gen-features-dir "${MOTFM_FEAT_DIR}" \
         --real-volumes-h5 "${GEN_DIR}/real_test.h5" \
         --nfe 1 10 50 \
         --output-dir "${MOTFM_METRICS_DIR}"
@@ -350,7 +362,7 @@ for f in "${METRICS_DIR}"/*.json; do
 done
 
 # MOTFM outputs
-if [ -d "${FEAT_DIR}/motfm" ]; then
+if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
     for f in "${FEAT_DIR}/motfm"/*.h5; do
         if [ -f "$f" ]; then
             SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
@@ -358,7 +370,7 @@ if [ -d "${FEAT_DIR}/motfm" ]; then
         fi
     done
 fi
-if [ -d "${METRICS_DIR}/motfm" ]; then
+if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
     for f in "${METRICS_DIR}/motfm"/*.json; do
         if [ -f "$f" ]; then
             echo "[OK]   motfm/$(basename $f)"

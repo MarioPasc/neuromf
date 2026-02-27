@@ -4,6 +4,10 @@
 Uses the SAME train/val/test split as Phase 1 (split_manifest.json, seed=42,
 85/10/5%) and the SAME preprocessing pipeline (build_mri_preprocessing_from_config).
 
+Two-phase processing to avoid OOM on large datasets:
+  Phase 1: Process NIfTI volumes one-by-one → write to temporary HDF5 (constant memory)
+  Phase 2: Load from HDF5 → build pickle (peak memory = all volumes in float32)
+
 Output pickle format (expected by MOTFM's FlowMatchingDataModule):
     {
         "train": [{"image": Tensor[1, 192, 192, 192], "name": str}, ...],
@@ -21,13 +25,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import logging
 import pickle
 import sys
+import tempfile
 import time
 from pathlib import Path
 
+import h5py
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 
@@ -106,71 +114,129 @@ def _load_config(args: argparse.Namespace) -> OmegaConf:
     return config
 
 
-def _process_split(
+def _process_split_to_h5(
     entries: list[dict],
     transform: object,
+    h5_path: Path,
     split_name: str,
     max_volumes: int | None = None,
-) -> list[dict]:
-    """Process a split's entries into MOTFM format.
+) -> list[str]:
+    """Process a split's NIfTI volumes and write to HDF5 (constant memory).
 
     Args:
         entries: Split manifest entries with "source_path" and "subject_key".
         transform: MONAI preprocessing transform.
+        h5_path: Path to temporary HDF5 file.
         split_name: Split name for logging.
         max_volumes: Optional volume limit.
 
     Returns:
-        List of dicts with "image" (Tensor[1, 192, 192, 192]) and "name" (str).
+        List of subject names (parallel to HDF5 dataset rows).
     """
     if max_volumes is not None:
         entries = entries[:max_volumes]
 
     n = len(entries)
-    logger.info("Processing %s split: %d volumes", split_name, n)
+    logger.info("Phase 1 — Processing %s split: %d volumes → %s", split_name, n, h5_path)
 
-    samples = []
+    names: list[str] = []
+    n_written = 0
     t0 = time.time()
 
-    for i, entry in enumerate(entries):
-        nifti_path = entry["source_path"]
-        subject_key = entry.get("subject_key", f"unknown_{i}")
+    with h5py.File(str(h5_path), "a") as hf:
+        dset = None
 
-        if not Path(nifti_path).exists():
-            logger.warning("Missing NIfTI: %s — skipping", nifti_path)
-            continue
+        for i, entry in enumerate(entries):
+            nifti_path = entry["source_path"]
+            subject_key = entry.get("subject_key", f"unknown_{i}")
 
-        # Apply same preprocessing as Phase 1
-        data = transform({"image": nifti_path})
-        x = data["image"]  # Tensor[1, H, W, D] from MONAI
+            if not Path(nifti_path).exists():
+                logger.warning("Missing NIfTI: %s — skipping", nifti_path)
+                continue
 
-        # Clamp to [0, 1]
-        x = x.clamp(0.0, 1.0).float()
+            # Apply same preprocessing as Phase 1
+            data = transform({"image": nifti_path})
+            x = data["image"].clamp(0.0, 1.0).float().numpy()
 
-        samples.append({
-            "image": x,  # Tensor[1, 192, 192, 192]
-            "name": subject_key,
-        })
+            # Create dataset on first successful volume (shape may vary across datasets)
+            if dset is None:
+                shape = x.shape  # (1, D, H, W)
+                dset = hf.create_dataset(
+                    split_name,
+                    shape=(n, *shape),
+                    maxshape=(n, *shape),
+                    dtype="float32",
+                    chunks=(1, *shape),
+                    compression="lzf",
+                )
 
-        if (i + 1) % 50 == 0 or i == n - 1:
-            elapsed = time.time() - t0
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            logger.info(
-                "  %s: %d/%d processed (%.1f s, %.2f vol/s)",
-                split_name,
-                i + 1,
-                n,
-                elapsed,
-                rate,
-            )
+            dset[n_written] = x
+            names.append(subject_key)
+            n_written += 1
+
+            # Explicitly free MONAI transform intermediates
+            del data, x
+            if (n_written) % 100 == 0:
+                gc.collect()
+
+            if (i + 1) % 50 == 0 or i == n - 1:
+                elapsed = time.time() - t0
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                logger.info(
+                    "  %s: %d/%d processed (%d written, %.1f s, %.2f vol/s)",
+                    split_name,
+                    i + 1,
+                    n,
+                    n_written,
+                    elapsed,
+                    rate,
+                )
+
+        # Resize dataset to actual number written (some may have been skipped)
+        if dset is not None and n_written < n:
+            dset.resize(n_written, axis=0)
 
     logger.info(
-        "%s split: %d/%d volumes processed in %.1f s",
+        "%s split: %d/%d volumes written to HDF5 in %.1f s",
         split_name,
-        len(samples),
+        n_written,
         n,
         time.time() - t0,
     )
+    gc.collect()
+    return names
+
+
+def _build_pickle_from_h5(
+    h5_path: Path,
+    split_name: str,
+    names: list[str],
+) -> list[dict]:
+    """Load volumes from HDF5 and build MOTFM-format sample list.
+
+    Args:
+        h5_path: Path to temporary HDF5 file.
+        split_name: Dataset name in HDF5 file.
+        names: Parallel list of subject names.
+
+    Returns:
+        List of dicts with "image" (Tensor) and "name" (str).
+    """
+    samples: list[dict] = []
+    with h5py.File(str(h5_path), "r") as hf:
+        dset = hf[split_name]
+        n = dset.shape[0]
+        logger.info("Phase 2 — Loading %s split: %d volumes from HDF5", split_name, n)
+
+        for i in range(n):
+            x = torch.from_numpy(dset[i].astype(np.float32))
+            name = names[i] if i < len(names) else f"unknown_{i}"
+            samples.append({"image": x, "name": name})
+
+            if (i + 1) % 500 == 0:
+                logger.info("  %s: %d/%d loaded", split_name, i + 1, n)
+
+    logger.info("  %s: %d samples loaded into memory", split_name, len(samples))
     return samples
 
 
@@ -197,15 +263,25 @@ def main() -> None:
     # Build preprocessing transform (same as Phase 1)
     transform = build_mri_preprocessing_from_config(config)
 
-    # Process train and val splits
-    # MOTFM expects keys "train" and "valid"
-    dataset = {}
+    output_path = Path(args.output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    per_split_limit = None
-    if args.max_volumes is not None:
-        total_entries = sum(len(s.get("entries", [])) for s in splits.values())
-        # Distribute limit proportionally
-        per_split_limit = args.max_volumes
+    per_split_limit = args.max_volumes
+
+    # Use temp HDF5 in same directory as output (avoid cross-filesystem issues)
+    temp_h5_path = output_path.parent / f".{output_path.stem}_temp.h5"
+
+    # Clean up any previous temp file
+    if temp_h5_path.exists():
+        temp_h5_path.unlink()
+        logger.info("Removed stale temp file: %s", temp_h5_path)
+
+    split_names_map: dict[str, list[str]] = {}
+
+    # ── Phase 1: Process NIfTI → HDF5 (constant memory) ──
+    logger.info("=" * 60)
+    logger.info("PHASE 1: NIfTI → HDF5 (disk-backed, constant memory)")
+    logger.info("=" * 60)
 
     for manifest_key, motfm_key in [("train", "train"), ("val", "valid")]:
         split_data = splits.get(manifest_key, {})
@@ -215,18 +291,29 @@ def main() -> None:
             logger.warning("No entries for split '%s' — skipping", manifest_key)
             continue
 
-        samples = _process_split(
+        names = _process_split_to_h5(
             entries=entries,
             transform=transform,
-            split_name=manifest_key,
+            h5_path=temp_h5_path,
+            split_name=motfm_key,
             max_volumes=per_split_limit,
         )
-        dataset[motfm_key] = samples
+        split_names_map[motfm_key] = names
+
+    # Free transform to reclaim memory before Phase 2
+    del transform
+    gc.collect()
+
+    # ── Phase 2: HDF5 → Pickle (peak memory = all volumes as float32) ──
+    logger.info("=" * 60)
+    logger.info("PHASE 2: HDF5 → Pickle")
+    logger.info("=" * 60)
+
+    dataset: dict[str, list[dict]] = {}
+    for motfm_key, names in split_names_map.items():
+        dataset[motfm_key] = _build_pickle_from_h5(temp_h5_path, motfm_key, names)
 
     # Save pickle
-    output_path = Path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     logger.info("Saving MOTFM dataset to: %s", output_path)
     t0 = time.time()
     with open(output_path, "wb") as f:
@@ -241,8 +328,16 @@ def main() -> None:
         time.time() - t0,
     )
 
-    # Verify
-    logger.info("Verifying pickle...")
+    # Clean up temp HDF5
+    del dataset
+    gc.collect()
+
+    if temp_h5_path.exists():
+        temp_h5_path.unlink()
+        logger.info("Cleaned up temp HDF5: %s", temp_h5_path)
+
+    # Verify pickle (load just metadata, not full data)
+    logger.info("Verifying pickle structure...")
     with open(output_path, "rb") as f:
         loaded = pickle.load(f)
 
@@ -253,6 +348,8 @@ def main() -> None:
                 sample = loaded[key][0]
                 shape = sample["image"].shape if hasattr(sample["image"], "shape") else "?"
                 logger.info("  %s: %d samples, first shape=%s", key, n, shape)
+
+    logger.info("Done.")
 
 
 if __name__ == "__main__":

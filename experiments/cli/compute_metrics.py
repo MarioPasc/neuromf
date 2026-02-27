@@ -11,6 +11,14 @@ Usage:
         --real-features-dir /path/to/features/ \
         --nfe 1 10 50
 
+    # MOTFM evaluation (gen features in separate dir, real features shared):
+    python experiments/cli/compute_metrics.py \
+        --config configs/generate.yaml \
+        --volumes-dir /path/to/volumes/motfm/ \
+        --real-features-dir /path/to/features/ \
+        --gen-features-dir /path/to/features/motfm/ \
+        --nfe 1 10 50
+
     # Skip SynthSeg for faster iteration:
     python experiments/cli/compute_metrics.py \
         --config configs/generate.yaml \
@@ -77,7 +85,14 @@ def parse_args() -> argparse.Namespace:
         "--real-features-dir",
         type=str,
         required=True,
-        help="Directory containing real feature HDF5 caches.",
+        help="Directory containing real feature HDF5 caches (real_med3d.h5).",
+    )
+    parser.add_argument(
+        "--gen-features-dir",
+        type=str,
+        default=None,
+        help="Directory containing generated feature HDF5 caches (gen_med3d_nfeXXX.h5). "
+        "Defaults to --real-features-dir if not specified.",
     )
     parser.add_argument(
         "--real-volumes-h5",
@@ -257,14 +272,15 @@ def main() -> None:
     metrics_cfg = config.metrics
 
     volumes_dir = Path(args.volumes_dir)
-    features_dir = Path(args.real_features_dir)
+    real_features_dir = Path(args.real_features_dir)
+    gen_features_dir = Path(args.gen_features_dir) if args.gen_features_dir else real_features_dir
     output_dir = Path(
         args.output_dir or str(config.paths.get("metrics_dir", volumes_dir.parent / "metrics"))
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load real features
-    real_med3d_path = features_dir / "real_med3d.h5"
+    real_med3d_path = real_features_dir / "real_med3d.h5"
     if not real_med3d_path.exists():
         logger.error("Real Med3D features not found: %s", real_med3d_path)
         sys.exit(1)
@@ -275,7 +291,7 @@ def main() -> None:
         logger.info("=== Computing metrics for NFE=%d ===", nfe)
 
         gen_vol_path = volumes_dir / f"nfe_{nfe:03d}.h5"
-        gen_feat_path = features_dir / f"gen_med3d_nfe{nfe:03d}.h5"
+        gen_feat_path = gen_features_dir / f"gen_med3d_nfe{nfe:03d}.h5"
 
         if not gen_feat_path.exists():
             logger.warning("Generated features not found: %s (skipping)", gen_feat_path)
