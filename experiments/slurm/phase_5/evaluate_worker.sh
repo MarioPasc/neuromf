@@ -95,7 +95,7 @@ echo "=========================================="
 # Extract R3D-18 features (MOTFM protocol) for real test set and generated volumes
 # Note: R3D-18 replaces Med3D ResNet-50 (which had feature collapse).
 # The 'med3d' backend name is kept for backward compatibility but loads R3D-18.
-python -c "
+python -u -c "
 import time
 import torch
 import h5py
@@ -224,7 +224,7 @@ echo "=========================================="
 echo "STAGE 2: METRICS COMPUTATION"
 echo "=========================================="
 
-python experiments/cli/compute_metrics.py \
+python -u experiments/cli/compute_metrics.py \
     --config "${CONFIGS_DIR}/generate.yaml" \
     --configs-dir "${CONFIGS_DIR}" \
     --volumes-dir "${GEN_DIR}/volumes" \
