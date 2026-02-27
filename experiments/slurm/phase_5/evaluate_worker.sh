@@ -214,7 +214,57 @@ for nfe in [1, 10, 50]:
         print(f'NFE={nfe} volume missing — skipping.')
 "
 
-echo "Feature extraction complete."
+echo "NeuroMF feature extraction complete."
+
+# ── MOTFM feature extraction (same extractor, same protocol) ──
+if [ -d "${GEN_DIR}/volumes/motfm" ]; then
+    echo ""
+    echo "--- MOTFM Feature Extraction ---"
+
+    MOTFM_FEAT_DIR="${FEAT_DIR}/motfm"
+    mkdir -p "${MOTFM_FEAT_DIR}"
+
+    python -u -c "
+import time
+import torch
+import h5py
+from pathlib import Path
+from omegaconf import OmegaConf
+
+from neuromf.metrics.feature_extractor import FeatureExtractor
+
+configs_dir = Path('${CONFIGS_DIR}')
+layers = []
+base = configs_dir / 'base.yaml'
+if base.exists():
+    layers.append(OmegaConf.load(base))
+gen_yaml = configs_dir / 'generate.yaml'
+if gen_yaml.exists():
+    layers.append(OmegaConf.load(gen_yaml))
+config = OmegaConf.merge(*layers)
+OmegaConf.resolve(config)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+weights_path = config.features.med3d.get('weights_path', '')
+extractor = FeatureExtractor('med3d', weights_path, device)
+
+for nfe in [1, 10, 50]:
+    gen_vol = Path(f'${GEN_DIR}/volumes/motfm/nfe_{nfe:03d}.h5')
+    gen_feat = Path(f'${MOTFM_FEAT_DIR}/gen_med3d_nfe{nfe:03d}.h5')
+    if gen_vol.exists() and not gen_feat.exists():
+        t0 = time.time()
+        feats = extractor.extract_and_cache(gen_vol, gen_feat)
+        dt = time.time() - t0
+        print(f'MOTFM NFE={nfe} features extracted: {feats.shape} in {dt:.1f}s')
+    elif gen_feat.exists():
+        with h5py.File(str(gen_feat), 'r') as f:
+            cached_shape = f['features'].shape
+        print(f'MOTFM NFE={nfe} features already cached: {cached_shape}')
+    else:
+        print(f'MOTFM NFE={nfe} volume missing — skipping.')
+"
+    echo "MOTFM feature extraction complete."
+fi
 
 # ========================================================================
 # STAGE 2: METRICS COMPUTATION
@@ -233,7 +283,34 @@ python -u experiments/cli/compute_metrics.py \
     --nfe 1 10 50 \
     --output-dir "${METRICS_DIR}"
 
-echo "Metrics computation complete."
+echo "NeuroMF metrics computation complete."
+
+# ── MOTFM metrics computation (same pipeline, different volumes dir) ──
+if [ -d "${GEN_DIR}/volumes/motfm" ]; then
+    echo ""
+    echo "--- MOTFM Metrics Computation ---"
+
+    MOTFM_METRICS_DIR="${METRICS_DIR}/motfm"
+    MOTFM_FEAT_DIR="${FEAT_DIR}/motfm"
+    mkdir -p "${MOTFM_METRICS_DIR}"
+
+    # Symlink shared real features into MOTFM features dir so
+    # compute_metrics.py finds real_med3d.h5 alongside gen features
+    if [ -f "${FEAT_DIR}/real_med3d.h5" ] && [ ! -e "${MOTFM_FEAT_DIR}/real_med3d.h5" ]; then
+        ln -s "${FEAT_DIR}/real_med3d.h5" "${MOTFM_FEAT_DIR}/real_med3d.h5"
+    fi
+
+    python -u experiments/cli/compute_metrics.py \
+        --config "${CONFIGS_DIR}/generate.yaml" \
+        --configs-dir "${CONFIGS_DIR}" \
+        --volumes-dir "${GEN_DIR}/volumes/motfm" \
+        --real-features-dir "${MOTFM_FEAT_DIR}" \
+        --real-volumes-h5 "${GEN_DIR}/real_test.h5" \
+        --nfe 1 10 50 \
+        --output-dir "${MOTFM_METRICS_DIR}"
+
+    echo "MOTFM metrics computation complete."
+fi
 
 # ========================================================================
 # NIFTI CONSOLIDATION CHECK
@@ -271,6 +348,23 @@ for f in "${METRICS_DIR}"/*.json; do
         echo "[OK]   $(basename $f)"
     fi
 done
+
+# MOTFM outputs
+if [ -d "${FEAT_DIR}/motfm" ]; then
+    for f in "${FEAT_DIR}/motfm"/*.h5; do
+        if [ -f "$f" ]; then
+            SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+            echo "[OK]   motfm/$(basename $f) (${SIZE} bytes)"
+        fi
+    done
+fi
+if [ -d "${METRICS_DIR}/motfm" ]; then
+    for f in "${METRICS_DIR}/motfm"/*.json; do
+        if [ -f "$f" ]; then
+            echo "[OK]   motfm/$(basename $f)"
+        fi
+    done
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

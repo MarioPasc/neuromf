@@ -7,11 +7,35 @@
 #
 # Usage (from login node):
 #   bash experiments/slurm/phase_5/generate.sh
+#   bash experiments/slurm/phase_5/generate.sh --motfm
+#   bash experiments/slurm/phase_5/generate.sh --motfm --depends-on <JOB_ID>
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ========================================================================
+# PARSE ARGS
+# ========================================================================
+ENABLE_MOTFM=0
+DEPENDS_ON=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --motfm)
+            ENABLE_MOTFM=1
+            shift
+            ;;
+        --depends-on)
+            DEPENDS_ON="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 echo "=========================================="
 echo "PHASE 5: GENERATION PIPELINE LAUNCHER"
@@ -29,6 +53,15 @@ export REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf"
 export CONFIGS_DIR="${REPO_SRC}/configs/picasso"
 export RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results"
 
+# MOTFM competitor comparison
+if [ "${ENABLE_MOTFM}" -eq 1 ]; then
+    export MOTFM_CHECKPOINT="${RESULTS_DST}/motfm/checkpoints/fomo60k_unconditional_3d/last.ckpt"
+    export MOTFM_CONFIG="${CONFIGS_DIR}/motfm/fomo60k_unconditional_3d.yaml"
+    echo "MOTFM enabled:"
+    echo "  Checkpoint:  ${MOTFM_CHECKPOINT}"
+    echo "  Config:      ${MOTFM_CONFIG}"
+fi
+
 echo "Configuration:"
 echo "  Repo:        ${REPO_SRC}"
 echo "  Configs:     ${CONFIGS_DIR}"
@@ -38,24 +71,33 @@ echo ""
 # Create output directories
 mkdir -p "${RESULTS_DST}/phase_5/generation/latents"
 mkdir -p "${RESULTS_DST}/phase_5/generation/volumes"
+mkdir -p "${RESULTS_DST}/phase_5/generation/volumes/motfm"
 mkdir -p "${RESULTS_DST}/phase_5/features"
 mkdir -p "${RESULTS_DST}/phase_5/metrics"
 
 # ========================================================================
 # SUBMIT JOB
 # ========================================================================
-JOB_ID=$(sbatch --parsable \
-    --job-name="neuromf_p5_gen" \
-    --time=1-00:00:00 \
-    --ntasks=1 \
-    --cpus-per-task=16 \
-    --mem=128G \
-    --constraint=dgx \
-    --gres=gpu:1 \
-    --output="${RESULTS_DST}/phase_5/generate_%j.out" \
-    --error="${RESULTS_DST}/phase_5/generate_%j.err" \
-    --export=ALL \
-    "${SCRIPT_DIR}/generate_worker.sh")
+SBATCH_ARGS=(
+    --parsable
+    --job-name="neuromf_p5_gen"
+    --time=1-00:00:00
+    --ntasks=1
+    --cpus-per-task=16
+    --mem=128G
+    --constraint=dgx
+    --gres=gpu:1
+    --output="${RESULTS_DST}/phase_5/generate_%j.out"
+    --error="${RESULTS_DST}/phase_5/generate_%j.err"
+    --export=ALL
+)
+
+if [ -n "${DEPENDS_ON}" ]; then
+    SBATCH_ARGS+=(--dependency="afterok:${DEPENDS_ON}")
+    echo "Dependency: afterok:${DEPENDS_ON}"
+fi
+
+JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/generate_worker.sh")
 
 echo "=========================================="
 echo "JOB SUBMITTED"

@@ -93,6 +93,11 @@ finetune = [
 baseline = [
     "torchcfm>=1.0",
 ]
+# MOTFM competitor comparison (pixel-space flow matching)
+motfm = [
+    "flow-matching>=1.0.10",
+    "monai-generative>=0.2.3",
+]
 preprocessing = [
     "brats==0.1.6",
     "brats[preprocessing]",

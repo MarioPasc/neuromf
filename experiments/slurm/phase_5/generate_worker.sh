@@ -164,6 +164,45 @@ python experiments/cli/visualize_generation.py \
 echo "Stage 4 complete."
 
 # ========================================================================
+# STAGE 5: MOTFM GENERATION (only if MOTFM_CHECKPOINT is set)
+# ========================================================================
+if [ -n "${MOTFM_CHECKPOINT:-}" ] && [ -n "${MOTFM_CONFIG:-}" ]; then
+    echo ""
+    echo "=========================================="
+    echo "STAGE 5: MOTFM GENERATION"
+    echo "=========================================="
+
+    if [ -f "${MOTFM_CHECKPOINT}" ]; then
+        echo "[OK]   MOTFM checkpoint: ${MOTFM_CHECKPOINT}"
+    else
+        echo "[MISS] MOTFM checkpoint not found: ${MOTFM_CHECKPOINT}"
+        echo "       Skipping MOTFM generation."
+    fi
+
+    if [ -f "${MOTFM_CHECKPOINT}" ]; then
+        # Add MOTFM code to PYTHONPATH (vendored + our wrappers)
+        export PYTHONPATH="${REPO_SRC}/src/external/MOTFM:${REPO_SRC}/experiments/MOTFM:${PYTHONPATH:-}"
+
+        MOTFM_VOL_DIR="${GEN_DIR}/volumes/motfm"
+        mkdir -p "${MOTFM_VOL_DIR}"
+
+        python -u experiments/MOTFM/generate_volumes.py \
+            --config "${MOTFM_CONFIG}" \
+            --checkpoint "${MOTFM_CHECKPOINT}" \
+            --nfe 1 10 50 \
+            --n-samples 2000 \
+            --batch-size 1 \
+            --output-dir "${MOTFM_VOL_DIR}" \
+            --seed 42
+
+        echo "Stage 5 complete."
+    fi
+else
+    echo ""
+    echo "(MOTFM generation skipped — MOTFM_CHECKPOINT not set. Use --motfm flag.)"
+fi
+
+# ========================================================================
 # POST-FLIGHT
 # ========================================================================
 echo ""
@@ -190,6 +229,19 @@ for nfe in 1 10 50; do
         echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (volume)"
     fi
 done
+
+# MOTFM volumes
+if [ -n "${MOTFM_CHECKPOINT:-}" ]; then
+    for nfe in 1 10 50; do
+        f="${RESULTS_DST}/phase_5/generation/volumes/motfm/nfe_$(printf '%03d' $nfe).h5"
+        if [ -f "$f" ]; then
+            SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+            echo "[OK]   motfm/nfe_$(printf '%03d' $nfe).h5 (${SIZE} bytes)"
+        else
+            echo "[MISS] motfm/nfe_$(printf '%03d' $nfe).h5"
+        fi
+    done
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

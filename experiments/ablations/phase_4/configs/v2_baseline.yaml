@@ -1,9 +1,0 @@
-# v2_baseline: Phase A only (no augmentation, no masking)
-# Isolates results to ablation-specific subdirectory.
-# Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
-
-paths:
-  checkpoints_dir: "${paths.results_root}/ablations/v2_baseline/checkpoints"
-  logs_dir: "${paths.results_root}/ablations/v2_baseline/logs"
-  samples_dir: "${paths.results_root}/ablations/v2_baseline/samples"
-  diagnostics_dir: "${paths.results_root}/ablations/v2_baseline/diagnostics"

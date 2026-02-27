@@ -1,0 +1,51 @@
+# MOTFM Training Config — FOMO-60K Unconditional 3D (192^3)
+#
+# Based on MOTFM's config_3D.yaml but unconditional (no masks, no classes).
+# For fair comparison with NeuroMF on the same dataset.
+#
+# Train: python -u src/external/MOTFM/trainer.py --config_path <this_file>
+
+model_args:
+  spatial_dims: 3
+  in_channels: 1
+  out_channels: 1
+  num_res_blocks: [2, 2, 2, 2]
+  num_channels: [32, 64, 128, 256]
+  attention_levels: [False, False, False, True]
+  norm_num_groups: 32
+  resblock_updown: True
+  num_head_channels: [32, 64, 128, 256]
+  transformer_num_layers: 6
+  use_flash_attention: true
+  with_conditioning: False
+  mask_conditioning: False
+
+data_args:
+  pickle_path: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/motfm/data/fomo60k_3d.pkl"
+  split_train: "train"
+  split_val: "valid"
+  image_norm: "minmax_0_1"
+  norm_scope: "global"
+
+train_args:
+  num_epochs: 200
+  batch_size: 1
+  lr: 0.0001
+  gradient_accumulation_steps: 8
+  grad_clip_norm: 1.0
+  device: "cuda"
+  checkpoint_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/motfm/checkpoints"
+  val_freq: 10
+  num_val_samples: 4
+  seed: 42
+  precision: "bf16-mixed"
+  accelerator: "gpu"
+  devices: "auto"
+  deterministic: False
+  log_every_n_steps: 50
+  num_sanity_val_steps: 0
+
+solver_args:
+  method: "euler"
+  step_size: 0.1
+  time_points: 10
