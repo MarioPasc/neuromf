@@ -60,6 +60,24 @@ mkdir -p "${RESULTS_DST}/phase_5/metrics"
 mkdir -p "${RESULTS_DST}/phase_5/metrics/synthseg"
 
 # ========================================================================
+# PRE-DOWNLOAD WEIGHTS (login node has internet, worker nodes do not)
+# ========================================================================
+R3D18_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/r3d_18_fid3d"
+R3D18_FILE="${R3D18_DIR}/r3d_18-b3b3357e.pth"
+R3D18_URL="https://download.pytorch.org/models/r3d_18-b3b3357e.pth"
+
+if [ -f "${R3D18_FILE}" ]; then
+    SIZE=$(stat -c%s "${R3D18_FILE}" 2>/dev/null || echo "?")
+    echo "R3D-18 weights: ${R3D18_FILE} (${SIZE} bytes) [cached]"
+else
+    echo "Downloading R3D-18 weights (login node → ${R3D18_FILE}) ..."
+    mkdir -p "${R3D18_DIR}"
+    wget -q --show-progress -O "${R3D18_FILE}" "${R3D18_URL}"
+    echo "R3D-18 weights downloaded: $(stat -c%s "${R3D18_FILE}") bytes"
+fi
+echo ""
+
+# ========================================================================
 # SUBMIT JOB
 # ========================================================================
 SBATCH_ARGS=(
