@@ -125,7 +125,7 @@ print('--- Feature Extraction Diagnostics ---')
 print(f'  Device:          {device}')
 if device.type == 'cuda':
     print(f'  GPU:             {torch.cuda.get_device_name(device)}')
-    mem_gb = torch.cuda.get_device_properties(device).total_mem / 1e9
+    mem_gb = torch.cuda.get_device_properties(device).total_memory / 1e9
     print(f'  GPU memory:      {mem_gb:.1f} GB')
 
 # ── Load feature extractor ──
