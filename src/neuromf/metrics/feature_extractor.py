@@ -113,24 +113,68 @@ class FeatureExtractor:
         self,
         volume_h5_path: Path,
         n_samples: int,
+        chunk_size: int = 16,
     ) -> Tensor:
-        """Load all volumes, then extract R3D-18 features with per-set normalisation."""
-        from neuromf.metrics.fid_3d import extract_3d_features
+        """Extract R3D-18 features with streaming per-set normalisation.
 
-        volumes: list[Tensor] = []
+        Avoids loading all volumes into memory at once (2000 × 192³ ≈ 53 GB).
+        Pass 1: stream through HDF5 to compute global min/max.
+        Pass 2: load chunks, apply normalisation, extract features.
+        """
+        from neuromf.metrics.fid_3d import _to_three_channels
+
+        # ── Pass 1: global min/max for per-set normalisation ──
+        logger.info("  Pass 1/2: computing global min/max ...")
+        global_min = float("inf")
+        global_max = float("-inf")
         with h5py.File(str(volume_h5_path), "r") as vf:
             for i in range(n_samples):
-                vol = torch.from_numpy(vf["volumes"][i].astype(np.float32))
-                if vol.ndim == 3:
-                    vol = vol.unsqueeze(0).unsqueeze(0)
-                elif vol.ndim == 4:
-                    vol = vol.unsqueeze(0)
-                volumes.append(vol)
-                if (i + 1) % 50 == 0 or i == n_samples - 1:
-                    logger.info("  Loaded %d / %d volumes", i + 1, n_samples)
+                vol = vf["volumes"][i]
+                v_min = float(np.nanmin(vol))
+                v_max = float(np.nanmax(vol))
+                if v_min < global_min:
+                    global_min = v_min
+                if v_max > global_max:
+                    global_max = v_max
+                if (i + 1) % 200 == 0 or i == n_samples - 1:
+                    logger.info("    Scanned %d / %d volumes", i + 1, n_samples)
 
-        all_volumes = torch.cat(volumes, dim=0)  # (N, 1, D, H, W)
-        return extract_3d_features(all_volumes, self.model, normalize=True)
+        denom = max(global_max - global_min, 1e-8)
+        logger.info(
+            "  Global range: [%.4f, %.4f], denom=%.4f",
+            global_min, global_max, denom,
+        )
+
+        # ── Pass 2: extract features in chunks ──
+        logger.info("  Pass 2/2: extracting features (chunk_size=%d) ...", chunk_size)
+        device = next(self.model.parameters()).device
+        all_feats: list[Tensor] = []
+
+        with h5py.File(str(volume_h5_path), "r") as vf:
+            for start in range(0, n_samples, chunk_size):
+                end = min(start + chunk_size, n_samples)
+                # Load chunk: (chunk, D, H, W) or (chunk, C, D, H, W)
+                chunk = torch.from_numpy(
+                    vf["volumes"][start:end].astype(np.float32)
+                )
+                if chunk.ndim == 4:
+                    chunk = chunk.unsqueeze(1)  # (B, D, H, W) -> (B, 1, D, H, W)
+
+                # Per-set normalisation with pre-computed global stats
+                chunk = (chunk - global_min) / denom
+                chunk = _to_three_channels(chunk)
+
+                # Forward pass (one volume at a time if needed for GPU mem)
+                with torch.no_grad():
+                    for j in range(chunk.shape[0]):
+                        vol_gpu = chunk[j : j + 1].to(device)
+                        feat = self.model(vol_gpu).detach().cpu()
+                        all_feats.append(feat)
+
+                if end % 100 == 0 or end == n_samples:
+                    logger.info("    Extracted %d / %d", end, n_samples)
+
+        return torch.cat(all_feats, dim=0)
 
     def _extract_radimagenet_features(
         self,
