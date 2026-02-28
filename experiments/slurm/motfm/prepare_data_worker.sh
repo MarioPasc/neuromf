@@ -82,13 +82,17 @@ echo "Memory available: $(free -h | awk '/^Mem:/{print \$2}')"
 # ========================================================================
 echo ""
 echo "=========================================="
-echo "CONVERTING FOMO-60K → MOTFM PICKLE"
+echo "CONVERTING FOMO-60K → MOTFM HDF5"
 echo "=========================================="
+
+# Output base path (no extension — prepare_data.py creates .h5 and optionally .pkl)
+MOTFM_OUTPUT_BASE="${MOTFM_OUTPUT%.pkl}"
+MOTFM_OUTPUT_BASE="${MOTFM_OUTPUT_BASE%.h5}"
 
 python -u experiments/MOTFM/prepare_data.py \
     --config "${CONFIGS_DIR}/generate.yaml" \
     --configs-dir "${CONFIGS_DIR}" \
-    --output-path "${MOTFM_OUTPUT}" \
+    --output-path "${MOTFM_OUTPUT_BASE}" \
     --split-manifest "${SPLIT_MANIFEST}"
 
 # ========================================================================
@@ -99,26 +103,24 @@ echo "=========================================="
 echo "OUTPUT VERIFICATION"
 echo "=========================================="
 
-if [ -f "${MOTFM_OUTPUT}" ]; then
-    SIZE=$(stat -c%s "${MOTFM_OUTPUT}" 2>/dev/null || echo "?")
+H5_OUTPUT="${MOTFM_OUTPUT_BASE}.h5"
+if [ -f "${H5_OUTPUT}" ]; then
+    SIZE=$(stat -c%s "${H5_OUTPUT}" 2>/dev/null || echo "?")
     SIZE_GB=$(echo "scale=2; ${SIZE} / 1073741824" | bc 2>/dev/null || echo "?")
-    echo "[OK]   ${MOTFM_OUTPUT} (${SIZE_GB} GB)"
+    echo "[OK]   ${H5_OUTPUT} (${SIZE_GB} GB)"
 
-    # Verify pickle structure
+    # Verify HDF5 structure
     python -c "
-import pickle
-with open('${MOTFM_OUTPUT}', 'rb') as f:
-    data = pickle.load(f)
-for key in sorted(data.keys()):
-    n = len(data[key])
-    if n > 0:
-        shape = data[key][0]['image'].shape
-        print(f'  {key}: {n} samples, shape={shape}')
-    else:
-        print(f'  {key}: 0 samples')
+import h5py
+with h5py.File('${H5_OUTPUT}', 'r') as f:
+    for key in sorted(f.keys()):
+        dset = f[key]
+        g_min = dset.attrs.get('global_min', '?')
+        g_max = dset.attrs.get('global_max', '?')
+        print(f'  /{key}: shape={dset.shape}, dtype={dset.dtype}, min={g_min}, max={g_max}')
 "
 else
-    echo "[MISS] Output pickle not found: ${MOTFM_OUTPUT}"
+    echo "[MISS] HDF5 output not found: ${H5_OUTPUT}"
     exit 1
 fi
 

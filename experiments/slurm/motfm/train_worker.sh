@@ -3,7 +3,7 @@
 #SBATCH --time=3-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=256G
+#SBATCH --mem=64G
 #SBATCH --constraint=dgx
 #SBATCH --gres=gpu:1
 #SBATCH --output=train_%j.out
@@ -48,8 +48,8 @@ else
   source activate "${CONDA_ENV_NAME}"
 fi
 
-# Add MOTFM to PYTHONPATH (required for trainer.py internal imports)
-export PYTHONPATH="${REPO_SRC}/src/external/MOTFM:${PYTHONPATH:-}"
+# Add MOTFM + experiments/MOTFM to PYTHONPATH
+export PYTHONPATH="${REPO_SRC}/src/external/MOTFM:${REPO_SRC}/experiments/MOTFM:${PYTHONPATH:-}"
 
 echo "=========================================="
 echo "ENVIRONMENT VERIFICATION"
@@ -98,10 +98,29 @@ fi
 
 # Quick import check
 python -c "
-from trainer import FlowMatchingLightningModule, FlowMatchingDataModule
+from trainer import FlowMatchingLightningModule
 from utils.utils_fm import build_model
-print('MOTFM trainer imports OK')
+from h5_dataset import H5VolumeDataset
+print('MOTFM + H5 dataset imports OK')
 "
+
+# Verify HDF5 data file
+H5_PATH=$(python -c "
+import yaml
+with open('${MOTFM_CONFIG}') as f:
+    cfg = yaml.safe_load(f)
+print(cfg['data_args'].get('h5_path', ''))
+")
+
+if [ -n "${H5_PATH}" ] && [ -f "${H5_PATH}" ]; then
+    SIZE=$(stat -c%s "${H5_PATH}" 2>/dev/null || echo "?")
+    SIZE_GB=$(echo "scale=2; ${SIZE} / 1073741824" | bc 2>/dev/null || echo "?")
+    echo "[OK]   HDF5 data: ${H5_PATH} (${SIZE_GB} GB)"
+else
+    echo "[MISS] HDF5 data not found: ${H5_PATH}"
+    echo "       Run prepare_data.py first."
+    exit 1
+fi
 
 # ========================================================================
 # TRAINING
@@ -111,8 +130,13 @@ echo "=========================================="
 echo "TRAINING MOTFM"
 echo "=========================================="
 echo "Config: ${MOTFM_CONFIG}"
+echo "Using memory-efficient H5-backed training wrapper (train_motfm.py)"
 
-python -u "${REPO_SRC}/src/external/MOTFM/trainer.py" \
+# Log system memory before training
+echo "System memory:"
+free -h
+
+python -u "${REPO_SRC}/experiments/MOTFM/train_motfm.py" \
     --config_path "${MOTFM_CONFIG}"
 
 # ========================================================================

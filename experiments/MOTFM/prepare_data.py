@@ -1,30 +1,31 @@
 #!/usr/bin/env python
-"""Convert FOMO-60K NIfTI volumes to MOTFM pickle format.
+"""Convert FOMO-60K NIfTI volumes to MOTFM training data.
 
 Uses the SAME train/val/test split as Phase 1 (split_manifest.json, seed=42,
 85/10/5%) and the SAME preprocessing pipeline (build_mri_preprocessing_from_config).
 
 Two-phase processing to avoid OOM on large datasets:
-  Phase 1: Process NIfTI volumes one-by-one → write to temporary HDF5 (constant memory)
-  Phase 2: Load from HDF5 → build pickle (peak memory = all volumes in float32)
+  Phase 1: Process NIfTI volumes one-by-one → write to HDF5 (constant memory)
+  Phase 2 (optional): Load from HDF5 → build pickle for MOTFM inference
 
-Output pickle format (expected by MOTFM's FlowMatchingDataModule):
-    {
-        "train": [{"image": Tensor[1, 192, 192, 192], "name": str}, ...],
-        "valid": [{"image": Tensor[1, 192, 192, 192], "name": str}, ...],
-    }
+Outputs:
+  - HDF5 file (always): ``<output>.h5`` with datasets ``/train`` and ``/valid``
+    Each has per-split normalization attributes (``global_min``, ``global_max``).
+    Used by ``train_motfm.py`` for memory-efficient lazy-loading training.
+  - Pickle file (with ``--pickle``): ``<output>.pkl`` in MOTFM's expected format
+    Used by MOTFM's own ``inferer.py`` for post-hoc inference.
 
 Usage:
     python experiments/MOTFM/prepare_data.py \
         --config configs/picasso/generate.yaml \
         --configs-dir configs/picasso \
-        --output-path /path/to/motfm/data/fomo60k_3d.pkl \
+        --output-path /path/to/motfm/data/fomo60k_3d \
         --split-manifest /path/to/latents/split_manifest.json
 """
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2.0-h5backed"
+SCRIPT_VERSION = "3.0-h5output"
 
 import argparse
 import gc
@@ -95,7 +96,7 @@ def _log_memory(label: str) -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert FOMO-60K NIfTI to MOTFM pickle format.",
+        description="Convert FOMO-60K NIfTI to MOTFM HDF5/pickle format.",
     )
     parser.add_argument(
         "--config",
@@ -114,7 +115,7 @@ def parse_args() -> argparse.Namespace:
         "--output-path",
         type=str,
         required=True,
-        help="Output .pkl path for MOTFM dataset.",
+        help="Output base path (without extension). Creates .h5 and optionally .pkl.",
     )
     parser.add_argument(
         "--split-manifest",
@@ -127,6 +128,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Limit total volumes (for testing).",
+    )
+    parser.add_argument(
+        "--pickle",
+        action="store_true",
+        default=False,
+        help="Also produce a .pkl file (high memory, needed for MOTFM inference only).",
     )
     return parser.parse_args()
 
@@ -317,8 +324,35 @@ def _build_pickle_from_h5(
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
+def _compute_and_store_norm_stats(h5_path: Path, split_name: str) -> tuple[float, float]:
+    """Compute global min/max for a split and store as HDF5 attributes."""
+    g_min = float("inf")
+    g_max = float("-inf")
+
+    with h5py.File(str(h5_path), "a") as hf:
+        dset = hf[split_name]
+        n = dset.shape[0]
+        for i in range(n):
+            chunk = dset[i]
+            g_min = min(g_min, float(np.min(chunk)))
+            g_max = max(g_max, float(np.max(chunk)))
+            if (i + 1) % 500 == 0 or i == n - 1:
+                logger.info("  %s norm scan: %d/%d", split_name, i + 1, n)
+
+        dset.attrs["global_min"] = g_min
+        dset.attrs["global_max"] = g_max
+
+    logger.info(
+        "  %s: global_min=%.6f, global_max=%.6f",
+        split_name,
+        g_min,
+        g_max,
+    )
+    return g_min, g_max
+
+
 def main() -> None:
-    """Convert FOMO-60K NIfTI to MOTFM pickle format."""
+    """Convert FOMO-60K NIfTI to MOTFM HDF5 (and optionally pickle)."""
     logger.info("prepare_data.py version: %s", SCRIPT_VERSION)
     logger.info("Python: %s", sys.version)
     logger.info("PID: %d", os.getpid())
@@ -346,18 +380,22 @@ def main() -> None:
     transform = build_mri_preprocessing_from_config(config)
     _log_memory("after_transform_build")
 
-    output_path = Path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Resolve output paths
+    output_base = Path(args.output_path)
+    # Strip any extension to get clean base path
+    if output_base.suffix in (".h5", ".pkl", ".hdf5"):
+        output_base = output_base.with_suffix("")
+    h5_output = output_base.with_suffix(".h5")
+    pkl_output = output_base.with_suffix(".pkl")
+
+    h5_output.parent.mkdir(parents=True, exist_ok=True)
 
     per_split_limit = args.max_volumes
 
-    # Use temp HDF5 in same directory as output (avoid cross-filesystem issues)
-    temp_h5_path = output_path.parent / f".{output_path.stem}_temp.h5"
-
-    # Clean up any previous temp file
-    if temp_h5_path.exists():
-        temp_h5_path.unlink()
-        logger.info("Removed stale temp file: %s", temp_h5_path)
+    # Clean up any previous HDF5 output
+    if h5_output.exists():
+        h5_output.unlink()
+        logger.info("Removed existing HDF5: %s", h5_output)
 
     split_names_map: dict[str, list[str]] = {}
 
@@ -377,77 +415,79 @@ def main() -> None:
         names = _process_split_to_h5(
             entries=entries,
             transform=transform,
-            h5_path=temp_h5_path,
+            h5_path=h5_output,
             split_name=motfm_key,
             max_volumes=per_split_limit,
         )
         split_names_map[motfm_key] = names
 
-    # Free transform to reclaim memory before Phase 2
+    # Free transform to reclaim memory
     del transform
     gc.collect()
+    _log_memory("after_phase1")
 
-    # Log temp HDF5 size
-    if temp_h5_path.exists():
-        h5_gb = temp_h5_path.stat().st_size / 1e9
-        logger.info("Temp HDF5 size: %.2f GB (%s)", h5_gb, temp_h5_path)
-
-    _log_memory("between_phases")
-
-    # ── Phase 2: HDF5 → Pickle (peak memory = all volumes as float32) ──
+    # ── Normalization stats: scan HDF5 to compute global min/max ──
     logger.info("=" * 60)
-    logger.info("PHASE 2: HDF5 → Pickle")
+    logger.info("COMPUTING NORMALIZATION STATS")
     logger.info("=" * 60)
 
-    dataset: dict[str, list[dict]] = {}
-    for motfm_key, names in split_names_map.items():
-        dataset[motfm_key] = _build_pickle_from_h5(temp_h5_path, motfm_key, names)
+    for motfm_key in split_names_map:
+        _compute_and_store_norm_stats(h5_output, motfm_key)
 
-    _log_memory("before_pickle_dump")
+    # Log final HDF5 info
+    h5_gb = h5_output.stat().st_size / 1e9
+    logger.info("HDF5 output: %s (%.2f GB)", h5_output, h5_gb)
+    _log_memory("after_norm_stats")
 
-    # Save pickle
-    logger.info("Saving MOTFM dataset to: %s", output_path)
-    t0 = time.time()
-    with open(output_path, "wb") as f:
-        pickle.dump(dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
+    # Verify HDF5 structure
+    with h5py.File(str(h5_output), "r") as hf:
+        for key in ["train", "valid"]:
+            if key in hf:
+                dset = hf[key]
+                g_min = dset.attrs.get("global_min", "?")
+                g_max = dset.attrs.get("global_max", "?")
+                logger.info(
+                    "  HDF5 /%s: shape=%s, dtype=%s, min=%.4f, max=%.4f",
+                    key,
+                    dset.shape,
+                    dset.dtype,
+                    g_min,
+                    g_max,
+                )
 
-    size_gb = output_path.stat().st_size / 1e9
-    logger.info(
-        "Dataset saved: %.2f GB, %d train + %d val volumes in %.1f s",
-        size_gb,
-        len(dataset.get("train", [])),
-        len(dataset.get("valid", [])),
-        time.time() - t0,
-    )
-    _log_memory("after_pickle_dump")
+    # ── Phase 2 (optional): HDF5 → Pickle ──
+    if args.pickle:
+        logger.info("=" * 60)
+        logger.info("PHASE 2: HDF5 → Pickle (--pickle flag set)")
+        logger.info("=" * 60)
+        _log_memory("phase2_start")
 
-    # Free dataset before cleanup
-    del dataset
-    gc.collect()
-    _log_memory("after_free_dataset")
+        dataset: dict[str, list[dict]] = {}
+        for motfm_key, names in split_names_map.items():
+            dataset[motfm_key] = _build_pickle_from_h5(h5_output, motfm_key, names)
 
-    # Clean up temp HDF5
-    if temp_h5_path.exists():
-        temp_h5_path.unlink()
-        logger.info("Cleaned up temp HDF5: %s", temp_h5_path)
+        _log_memory("before_pickle_dump")
 
-    # Verify pickle (lightweight — just check keys and first sample shape)
-    logger.info("Verifying pickle structure (header only)...")
-    _log_memory("before_verify")
-    with open(output_path, "rb") as f:
-        loaded = pickle.load(f)
+        logger.info("Saving pickle to: %s", pkl_output)
+        t0 = time.time()
+        with open(pkl_output, "wb") as f:
+            pickle.dump(dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    for key in ["train", "valid"]:
-        if key in loaded:
-            n = len(loaded[key])
-            if n > 0:
-                sample = loaded[key][0]
-                shape = sample["image"].shape if hasattr(sample["image"], "shape") else "?"
-                dtype = sample["image"].dtype if hasattr(sample["image"], "dtype") else "?"
-                logger.info("  %s: %d samples, shape=%s, dtype=%s", key, n, shape, dtype)
+        pkl_gb = pkl_output.stat().st_size / 1e9
+        logger.info(
+            "Pickle saved: %.2f GB, %d train + %d val in %.1f s",
+            pkl_gb,
+            len(dataset.get("train", [])),
+            len(dataset.get("valid", [])),
+            time.time() - t0,
+        )
 
-    del loaded
-    gc.collect()
+        del dataset
+        gc.collect()
+        _log_memory("after_pickle_dump")
+    else:
+        logger.info("Skipping pickle output (use --pickle to enable).")
+
     _log_memory("final")
     logger.info("Done. version=%s", SCRIPT_VERSION)
 

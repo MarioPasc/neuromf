@@ -29,14 +29,14 @@ export REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf"
 export CONFIGS_DIR="${REPO_SRC}/configs/picasso"
 export RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results"
 
-export MOTFM_OUTPUT="${RESULTS_DST}/motfm/data/fomo60k_3d.pkl"
+export MOTFM_OUTPUT="${RESULTS_DST}/motfm/data/fomo60k_3d"
 export SPLIT_MANIFEST="${RESULTS_DST}/latents/split_manifest.json"
 
 echo "Configuration:"
 echo "  Repo:            ${REPO_SRC}"
 echo "  Configs:         ${CONFIGS_DIR}"
 echo "  Results:         ${RESULTS_DST}"
-echo "  Output pickle:   ${MOTFM_OUTPUT}"
+echo "  Output base:     ${MOTFM_OUTPUT} (.h5)"
 echo "  Split manifest:  ${SPLIT_MANIFEST}"
 echo ""
 
