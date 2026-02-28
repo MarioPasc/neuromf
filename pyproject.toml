@@ -97,6 +97,7 @@ baseline = [
 motfm = [
     "flow-matching>=1.0.10",
     "monai-generative>=0.2.3",
+    "xformers>=0.0.20",
 ]
 preprocessing = [
     "brats==0.1.6",
