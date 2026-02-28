@@ -165,7 +165,7 @@ class LatentMeanFlow(pl.LightningModule):
     # Training
     # ------------------------------------------------------------------
 
-    def training_step(self, batch: dict[str, Tensor], batch_idx: int) -> Tensor:
+    def training_step(self, batch: dict[str, Tensor], batch_idx: int) -> Tensor | None:
         """Execute one training step (Algorithm 1).
 
         Args:
@@ -173,7 +173,8 @@ class LatentMeanFlow(pl.LightningModule):
             batch_idx: Batch index within the epoch.
 
         Returns:
-            Scalar loss tensor for backpropagation.
+            Scalar loss tensor for backpropagation, or None if loss is
+            non-finite (Lightning skips backward + optimizer).
         """
         z_0 = batch["z"]
         B = z_0.shape[0]
@@ -198,11 +199,11 @@ class LatentMeanFlow(pl.LightningModule):
         )
         loss = result["loss"]
 
-        # NaN guard: skip step if loss is non-finite
+        # NaN guard: return None so Lightning skips backward + optimizer entirely
         if not torch.isfinite(loss):
             logger.warning("Non-finite loss at step %d, skipping", self.global_step)
             self._step_diagnostics = None
-            return torch.tensor(0.0, device=self.device, requires_grad=True)
+            return None
 
         self.log("train/loss", loss, prog_bar=True, sync_dist=True)
 

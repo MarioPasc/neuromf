@@ -40,9 +40,10 @@ from experiments.analysis.data_loader import (
 )
 from experiments.analysis.figures import (
     BILATERAL_REGIONS,
+    _select_best_qc_indices,
     plot_bootstrap_fid,
     plot_coverage_density,
-    plot_feature_tsne,
+    plot_feature_pca,
     plot_metric_bars,
     plot_nfe_scaling,
     plot_qc_violin,
@@ -392,12 +393,25 @@ def main() -> None:
         logger.warning("No FID bootstrap data — skipping fig02")
         skipped.append("fig02_bootstrap_fid")
 
-    # Fig 03 — Feature t-SNE
-    if features:
-        plot_feature_tsne(features, analysis_dir, nfe_levels)
+    # Fig 03 — Feature PCA with density
+    if features and "real" in features:
+        pca_sets: list[dict[str, Any]] = []
+        pca_titles: list[str] = []
+        for nfe in nfe_levels:
+            gen_key = f"gen_{nfe}"
+            if gen_key in features:
+                pca_sets.append({
+                    "Real": features["real"],
+                    "NeuroiMF": features[gen_key],
+                })
+                pca_titles.append(f"NFE = {nfe}")
+        if pca_sets:
+            plot_feature_pca(pca_sets, pca_titles, analysis_dir)
+        else:
+            skipped.append("fig03_feature_pca")
     else:
         logger.warning("No features — skipping fig03")
-        skipped.append("fig03_feature_tsne")
+        skipped.append("fig03_feature_pca")
 
     # Fig 04 — Spectral Comparison
     plot_spectral_comparison(metrics, analysis_dir, nfe_levels)
@@ -428,13 +442,29 @@ def main() -> None:
         skipped.extend(["fig08_synthseg_overlay", "fig09_sample_grid"])
     else:
         logger.info("Step 7: Attempting qualitative figures...")
-        # Find representative volume indices for overlay
-        sample_indices = [0, 10, 50]
-        volumes = load_volumes(results_dir, nfe_levels, sample_indices)
-        labels = load_synthseg_labels(results_dir, nfe_levels, sample_indices)
+
+        # Select best-QC volume per NFE (maximises metrics = supports hypothesis)
+        best_indices = _select_best_qc_indices(synthseg_data, nfe_levels)
+        # Collect all unique vol IDs we need to load
+        all_vol_ids = sorted(set(best_indices.values()))
+        logger.info("Best-QC volume indices: %s", best_indices)
+
+        volumes = load_volumes(results_dir, nfe_levels, all_vol_ids)
+        labels = load_synthseg_labels(results_dir, nfe_levels, all_vol_ids)
 
         if volumes is not None and labels is not None:
-            plot_synthseg_overlay(volumes, labels, analysis_dir, nfe_levels)
+            # Build position-index map: vol_indices maps condition to the
+            # position within the loaded arrays (not the global vol ID).
+            vol_pos = {vid: pos for pos, vid in enumerate(all_vol_ids)}
+            overlay_indices = {
+                cond: vol_pos[vid]
+                for cond, vid in best_indices.items()
+                if vid in vol_pos
+            }
+            plot_synthseg_overlay(
+                volumes, labels, analysis_dir, nfe_levels,
+                vol_indices=overlay_indices,
+            )
         else:
             logger.warning("Volumes or labels unavailable — skipping fig08")
             skipped.append("fig08_synthseg_overlay")

@@ -559,12 +559,24 @@ def main() -> None:
         )
 
         fid_mode = str(eval_cfg.get("fid_mode", "2d5"))
+        fid_monitor = "val/fid_3d" if fid_mode == "3d" else "val/fid_avg"
+        fid_ckpt_cb = ModelCheckpoint(
+            dirpath=str(ckpt_dir),
+            monitor=fid_monitor,
+            mode="min",
+            save_top_k=1,
+            filename="best_fid_{epoch:03d}_{" + fid_monitor + ":.2f}",
+            save_last=False,
+        )
+        callbacks.append(fid_ckpt_cb)
+
         logger.info(
             "Evaluation enabled (SWD every val, %s-FID every %d val epochs, patience=%d)",
             fid_mode.upper(),
             eval_cfg.get("fid_every_n_val_epochs", 2),
             eval_cfg.get("early_stop_patience", 5),
         )
+        logger.info("FID checkpoint: monitor=%s (top 1)", fid_monitor)
 
     # ------------------------------------------------------------------
     # Logger

@@ -45,7 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SCRIPT_VERSION = "1.0-h5lazy"
+SCRIPT_VERSION = "2.0-h5lazy-gradckpt"
 
 
 # ── Memory diagnostics ──────────────────────────────────────────────────
@@ -82,6 +82,48 @@ def _log_memory(label: str) -> None:
         _mem_rss_gb(),
         _mem_available_gb(),
     )
+
+
+# ── Gradient checkpointing ───────────────────────────────────────────────
+
+def _enable_gradient_checkpointing(model: torch.nn.Module) -> int:
+    """Enable gradient checkpointing on DiffusionModelUNet blocks.
+
+    Monkey-patches the forward method of each down/mid/up block to use
+    ``torch.utils.checkpoint.checkpoint``, trading compute for VRAM.
+
+    Args:
+        model: The FlowMatchingLightningModule (model.model.unet is the UNet).
+
+    Returns:
+        Number of blocks wrapped.
+    """
+    import functools
+    from torch.utils.checkpoint import checkpoint as ckpt_fn
+
+    unet = model.model.unet  # MergedModel.unet → DiffusionModelUNet
+
+    def _wrap_block(block: torch.nn.Module) -> None:
+        original_forward = block.forward
+
+        @functools.wraps(original_forward)
+        def checkpointed_forward(*args, **kwargs):
+            return ckpt_fn(original_forward, *args, use_reentrant=False, **kwargs)
+
+        block.forward = checkpointed_forward
+
+    n_wrapped = 0
+    for block in unet.down_blocks:
+        _wrap_block(block)
+        n_wrapped += 1
+    if hasattr(unet, "middle_block") and unet.middle_block is not None:
+        _wrap_block(unet.middle_block)
+        n_wrapped += 1
+    for block in unet.up_blocks:
+        _wrap_block(block)
+        n_wrapped += 1
+
+    return n_wrapped
 
 
 # ── Ensure MOTFM is importable ──────────────────────────────────────────
@@ -287,6 +329,15 @@ def main() -> None:
     model = FlowMatchingLightningModule(config)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("Model: %d trainable params (%.1f MB)", n_params, n_params * 4 / 1e6)
+
+    # Enable gradient checkpointing to fit 192³ volumes on A100 40GB
+    n_wrapped = _enable_gradient_checkpointing(model)
+    logger.info("Gradient checkpointing enabled on %d UNet blocks", n_wrapped)
+
+    # Use TF32 for faster matmuls with lower memory fragmentation
+    torch.set_float32_matmul_precision("medium")
+    logger.info("float32_matmul_precision set to 'medium' (TF32)")
+
     _log_memory("after_model_build")
 
     # Data module (HDF5-backed, NOT pickle-based)

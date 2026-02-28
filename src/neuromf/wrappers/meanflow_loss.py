@@ -40,6 +40,17 @@ class MeanFlowPipelineConfig:
     spatial_mask_ratio: float = 0.0  # 0.0=disabled, 0.5=mask 50% spatial voxels
     use_v_head: bool = False
 
+    def __post_init__(self) -> None:
+        """Validate forbidden configuration combinations."""
+        if self.prediction_type == "x" and self.jvp_strategy == "finite_difference":
+            raise ValueError(
+                "x-prediction + finite_difference JVP is forbidden: the 1/t "
+                "singularity in x-pred is amplified by finite differences, "
+                "causing loss explosion. Use jvp_strategy='exact' with "
+                "prediction_type='x', or prediction_type='u' with "
+                "jvp_strategy='finite_difference'."
+            )
+
 
 class MeanFlowPipeline(nn.Module):
     """Full MeanFlow loss computation pipeline (iMF formulation).

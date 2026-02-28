@@ -107,6 +107,10 @@ class EvaluationCallback(pl.Callback):
         self._vae: nn.Module | None = None
         self._feature_net: nn.Module | None = None
 
+        # Latent denormalization stats (lazy-init from pl_module)
+        self._latent_mean: Tensor | None = None
+        self._latent_std: Tensor | None = None
+
         # FID tracking
         self._val_epoch_count: int = 0
         self._best_fid: float = float("inf")
@@ -455,9 +459,10 @@ class EvaluationCallback(pl.Callback):
 
         device = pl_module.device
 
-        # Lazy-load VAE and feature network
+        # Lazy-load VAE, feature network, and latent stats
         self._ensure_vae_loaded(device)
         self._ensure_feature_net_loaded(device)
+        self._ensure_latent_stats(pl_module)
 
         if self._vae is None or self._feature_net is None:
             return None
@@ -484,7 +489,7 @@ class EvaluationCallback(pl.Callback):
         pl_module: pl.LightningModule,
         device: torch.device,
     ) -> dict[str, float]:
-        """3D FID path: Med3D ResNet-50 features from full volumes."""
+        """3D FID path: R3D-18 features from full volumes."""
         from neuromf.metrics.fid_3d import compute_fid_3d
 
         real_feats = self._load_or_compute_real_features_3d(device)
@@ -514,7 +519,10 @@ class EvaluationCallback(pl.Callback):
         if self._fid_mode == "3d":
             from neuromf.metrics.fid_3d import load_fid3d_feature_net
 
-            self._feature_net = load_fid3d_feature_net(device=device)
+            self._feature_net = load_fid3d_feature_net(
+                device=device,
+                weights_path=self._fid_3d_weights_path or None,
+            )
             logger.info("Loaded R3D-18 for 3D-FID evaluation (MOTFM protocol)")
         else:
             from neuromf.metrics.fid import load_radimagenet_resnet50
@@ -523,6 +531,36 @@ class EvaluationCallback(pl.Callback):
             self._feature_net = self._feature_net.to(device)
             self._feature_net.eval()
             logger.info("Loaded RadImageNet ResNet-50 for 2.5D-FID evaluation")
+
+    def _ensure_latent_stats(self, pl_module: pl.LightningModule) -> None:
+        """Lazy-init latent denormalization stats from the Lightning module.
+
+        Args:
+            pl_module: Lightning module with ``latent_mean`` and ``latent_std`` buffers.
+        """
+        if self._latent_mean is not None:
+            return
+        self._latent_mean = pl_module.latent_mean.detach().clone()
+        self._latent_std = pl_module.latent_std.detach().clone()
+        logger.debug(
+            "Latent stats cached for denormalization: mean=%s, std=%s",
+            self._latent_mean.flatten().tolist(),
+            self._latent_std.flatten().tolist(),
+        )
+
+    def _denormalize_latent(self, z: Tensor) -> Tensor:
+        """Denormalize latents from standardised to original VAE space.
+
+        Args:
+            z: Normalised latent ``(B, C, D, H, W)``.
+
+        Returns:
+            Denormalised latent ``z_0 = z * std + mean``.
+        """
+        assert self._latent_mean is not None and self._latent_std is not None
+        mean = self._latent_mean.to(z.device)
+        std = self._latent_std.to(z.device)
+        return z * std + mean
 
     # ------------------------------------------------------------------
     # 2.5D feature extraction (existing path)
@@ -587,6 +625,7 @@ class EvaluationCallback(pl.Callback):
 
         for i in range(latents.shape[0]):
             z_i = latents[i : i + 1].to(device)
+            z_i = self._denormalize_latent(z_i)
             x_hat = self._vae.decode(z_i)
             xy, yz, zx = extract_2d5_features(
                 x_hat,
@@ -663,6 +702,7 @@ class EvaluationCallback(pl.Callback):
         decoded: list[Tensor] = []
         for i in range(latents.shape[0]):
             z_i = latents[i : i + 1].to(device)
+            z_i = self._denormalize_latent(z_i)
             x_hat = self._vae.decode(z_i)
             decoded.append(x_hat.cpu())
 

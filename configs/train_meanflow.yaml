@@ -152,7 +152,7 @@ evaluation:
   fid_every_n_val_epochs: 3
   center_slices_ratio: 0.6         # only used in 2d5 mode
   fid_weights_path: ""             # RadImageNet ResNet-50 (2d5 mode)
-  fid_3d_weights_path: ""          # Med3D ResNet-50 (3d mode)
+  fid_3d_weights_path: ""          # Deprecated (R3D-18 uses torchvision built-in weights)
   early_stop_patience: 10
   seed: 42
 

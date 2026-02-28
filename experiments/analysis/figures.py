@@ -211,64 +211,70 @@ def plot_bootstrap_fid(
     output_dir: Path,
     nfe_levels: list[int],
 ) -> None:
-    """Bootstrap FID distributions: histogram per NFE.
+    """Bootstrap FID distributions: overlaid KDE curves for all NFE levels.
 
     Args:
         bootstrap_fid: Dict mapping NFE to bootstrap result dict.
         output_dir: Analysis output directory.
         nfe_levels: NFE values to plot.
     """
+    from scipy.stats import gaussian_kde
+
     apply_ieee_style()
-    n_panels = len(nfe_levels)
-    fig, axes = plt.subplots(1, n_panels, figsize=get_figure_size("double", 0.3))
-    if n_panels == 1:
-        axes = [axes]
+    fig, ax = plt.subplots(figsize=get_figure_size("single", 0.8))
 
     npz_data: dict[str, np.ndarray] = {}
 
-    for i, nfe in enumerate(nfe_levels):
-        ax = axes[i]
+    for nfe in nfe_levels:
         if nfe not in bootstrap_fid:
-            ax.set_visible(False)
             continue
 
         bdata = bootstrap_fid[nfe]
         samples = bdata["samples"]
         npz_data[f"nfe{nfe}_samples"] = samples
+        color = NFE_COLORS.get(nfe, PAUL_TOL_BRIGHT["blue"])
 
-        ax.hist(
-            samples, bins=40, density=True,
-            color=NFE_COLORS.get(nfe, PAUL_TOL_BRIGHT["blue"]),
-            alpha=0.7, edgecolor="white", linewidth=0.3,
-        )
+        # KDE curve
+        kde = gaussian_kde(samples)
+        x_grid = np.linspace(samples.min() * 0.95, samples.max() * 1.05, 300)
+        density = kde(x_grid)
+        ax.fill_between(x_grid, density, alpha=0.25, color=color)
+        ax.plot(x_grid, density, color=color, lw=1.5, label=f"NFE={nfe}")
+
+        # Point estimate vertical line
         ax.axvline(
-            bdata["point_estimate"], color="black", ls="--", lw=1.2,
-            label=f"FID = {bdata['point_estimate']:.2f}",
-        )
-        ax.axvspan(
-            bdata["ci_lower"], bdata["ci_upper"],
-            alpha=0.15, color="grey", label="95% CI",
+            bdata["point_estimate"], color=color, ls="--", lw=1.0,
         )
 
-        # MOTFM reference
+        # CI annotation
+        ci_text = (
+            f"FID={bdata['point_estimate']:.1f} "
+            f"[{bdata['ci_lower']:.1f}, {bdata['ci_upper']:.1f}]"
+        )
+        # Place text at peak of KDE for this NFE
+        peak_x = x_grid[np.argmax(density)]
+        peak_y = density.max()
+        ax.annotate(
+            ci_text, xy=(peak_x, peak_y),
+            xytext=(0, 6), textcoords="offset points",
+            fontsize=6, ha="center", va="bottom", color=color,
+            fontweight="bold",
+        )
+
+        # MOTFM reference line
         motfm_fid = MOTFM_BASELINES.get(nfe, {}).get("fid_3d")
         if motfm_fid is not None:
             ax.axvline(
-                motfm_fid, color=METHOD_STYLES["MOTFM"]["color"],
-                ls="--", lw=1.0, label=f"MOTFM = {motfm_fid:.1f}",
+                motfm_fid, color=color, ls=":", lw=0.8, alpha=0.5,
             )
 
-        ax.set_xlabel("FID-3D")
-        ax.set_ylabel("Density" if i == 0 else "")
-        ax.set_title(f"NFE = {nfe}")
-        ax.legend(fontsize=6, loc="upper right")
-
-        # Text annotation
-        ci_text = f"[{bdata['ci_lower']:.1f}, {bdata['ci_upper']:.1f}]"
-        ax.text(
-            0.03, 0.85, ci_text, transform=ax.transAxes, fontsize=6,
-            verticalalignment="top",
-        )
+    ax.set_xlabel("FID-3D")
+    ax.legend(fontsize=7, loc="upper right")
+    ax.grid(axis="x", alpha=0.15)
+    # Remove y-axis entirely — density magnitude is not meaningful
+    ax.set_yticks([])
+    ax.set_ylabel("")
+    ax.spines["left"].set_visible(False)
 
     fig.tight_layout()
     np.savez(output_dir / "data" / "bootstrap_fid.npz", **npz_data)
@@ -287,7 +293,7 @@ def plot_feature_tsne(
     nfe_levels: list[int],
     n_subsample: int = 326,
 ) -> None:
-    """t-SNE of real vs generated features per NFE.
+    """t-SNE of real vs generated features per NFE with KDE density underlay.
 
     Args:
         features: Dict from load_features().
@@ -295,13 +301,18 @@ def plot_feature_tsne(
         nfe_levels: NFE values to plot.
         n_subsample: Number of generated samples to subsample per NFE.
     """
+    from scipy.stats import gaussian_kde
     from sklearn.manifold import TSNE
 
     apply_ieee_style()
     n_panels = len(nfe_levels)
-    fig, axes = plt.subplots(1, n_panels, figsize=get_figure_size("double", 0.38))
+    fig, axes = plt.subplots(
+        2, n_panels,
+        figsize=get_figure_size("double", 0.6),
+        gridspec_kw={"height_ratios": [3, 1]},
+    )
     if n_panels == 1:
-        axes = [axes]
+        axes = axes.reshape(2, 1)
 
     real_feats = features.get("real")
     if real_feats is None:
@@ -313,10 +324,12 @@ def plot_feature_tsne(
     npz_data: dict[str, np.ndarray] = {"real_features": real_np}
 
     for i, nfe in enumerate(nfe_levels):
-        ax = axes[i]
+        ax_scatter = axes[0, i]
+        ax_density = axes[1, i]
         gen_key = f"gen_{nfe}"
         if gen_key not in features:
-            ax.set_visible(False)
+            ax_scatter.set_visible(False)
+            ax_density.set_visible(False)
             continue
 
         gen_feats = features[gen_key]
@@ -340,28 +353,360 @@ def plot_feature_tsne(
         npz_data[f"nfe{nfe}_real_tsne"] = real_emb
         npz_data[f"nfe{nfe}_gen_tsne"] = gen_emb
 
-        ax.scatter(
+        # --- Scatter panel (top) ---
+        ax_scatter.scatter(
             real_emb[:, 0], real_emb[:, 1],
             c=PAUL_TOL_BRIGHT["blue"], s=8, alpha=0.5, label="Real",
-            edgecolors="none",
+            edgecolors="none", zorder=2,
         )
-        ax.scatter(
+        ax_scatter.scatter(
             gen_emb[:, 0], gen_emb[:, 1],
             c=PAUL_TOL_BRIGHT["red"], s=8, alpha=0.5, label="Generated",
-            edgecolors="none",
+            edgecolors="none", zorder=2,
         )
 
-        ax.set_title(f"NFE = {nfe}")
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.grid(False)
+        ax_scatter.set_title(f"NFE = {nfe}")
+        ax_scatter.set_xticks([])
+        ax_scatter.set_yticks([])
+        ax_scatter.grid(False)
         if i == 0:
-            ax.legend(fontsize=7, loc="best", markerscale=2)
+            ax_scatter.legend(fontsize=7, loc="best", markerscale=2)
+
+        # --- 1-D density panel (bottom): marginal along t-SNE dim 1 ---
+        x_all = embedded[:, 0]
+        x_min, x_max = x_all.min() - 2, x_all.max() + 2
+        x_grid = np.linspace(x_min, x_max, 200)
+
+        real_kde = gaussian_kde(real_emb[:, 0], bw_method=0.3)
+        gen_kde = gaussian_kde(gen_emb[:, 0], bw_method=0.3)
+
+        ax_density.fill_between(
+            x_grid, real_kde(x_grid),
+            alpha=0.35, color=PAUL_TOL_BRIGHT["blue"], label="Real",
+        )
+        ax_density.fill_between(
+            x_grid, gen_kde(x_grid),
+            alpha=0.35, color=PAUL_TOL_BRIGHT["red"], label="Generated",
+        )
+        ax_density.plot(x_grid, real_kde(x_grid), color=PAUL_TOL_BRIGHT["blue"], lw=0.8)
+        ax_density.plot(x_grid, gen_kde(x_grid), color=PAUL_TOL_BRIGHT["red"], lw=0.8)
+
+        ax_density.set_xlim(ax_scatter.get_xlim())
+        ax_density.set_yticks([])
+        ax_density.set_xlabel("t-SNE dim 1", fontsize=7)
+        ax_density.set_ylabel("Density" if i == 0 else "", fontsize=7)
+        ax_density.grid(False)
 
     fig.tight_layout()
     np.savez(output_dir / "data" / "feature_embeddings.npz", **npz_data)
     save_figure(fig, output_dir / "figures" / "fig03_feature_tsne")
     logger.info("Saved fig03_feature_tsne")
+
+
+# -----------------------------------------------------------------------
+# Fig 03b — Feature Space PCA (preferred over t-SNE)
+# -----------------------------------------------------------------------
+
+
+def _cmap_from_color(hex_color: str) -> "LinearSegmentedColormap":
+    """Create a white-to-color sequential colormap for KDE contours."""
+    from matplotlib.colors import LinearSegmentedColormap
+
+    return LinearSegmentedColormap.from_list("", ["white", hex_color], N=256)
+
+
+def _draw_confidence_ellipse(
+    ax: plt.Axes,
+    points: np.ndarray,
+    color: str,
+    n_std: float = 2.45,
+) -> None:
+    """Draw a 95% confidence ellipse from 2D point cloud.
+
+    Args:
+        ax: Matplotlib axes.
+        points: Array of shape (N, 2).
+        color: Edge color.
+        n_std: Number of std deviations. 2.45 corresponds to 95%
+            for a 2D Gaussian (sqrt of chi2(2) at p=0.05 ≈ 5.991).
+    """
+    from matplotlib.patches import Ellipse
+
+    cov = np.cov(points.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    eigenvalues = np.clip(eigenvalues, 0, None)
+    # Major eigenvector is the last one (eigh returns ascending order)
+    angle = np.degrees(np.arctan2(eigenvectors[1, 1], eigenvectors[0, 1]))
+    width = 2 * n_std * np.sqrt(eigenvalues[1])
+    height = 2 * n_std * np.sqrt(eigenvalues[0])
+    cx, cy = points.mean(axis=0)
+    ellipse = Ellipse(
+        (cx, cy), width, height, angle=angle,
+        facecolor="none", edgecolor=color, linestyle="--",
+        linewidth=1.0, zorder=3,
+    )
+    ax.add_patch(ellipse)
+
+
+def plot_feature_pca(
+    feature_sets: list[dict[str, np.ndarray]],
+    panel_titles: list[str],
+    output_dir: Path,
+    output_name: str = "fig03_feature_pca",
+    reference_label: str = "Real",
+    n_subsample: int = 500,
+) -> None:
+    """PCA projection with 2D KDE density, confidence ellipses, and marginals.
+
+    Fits PCA on the reference distribution so axes represent the principal
+    directions of real data. All other distributions are projected into
+    that space. Each panel shows a scatter with 2D KDE contours, 95%
+    confidence ellipses, a PC1 marginal (bottom), and a PC2 marginal (right).
+    Axes are shared across all panels.
+
+    Args:
+        feature_sets: List of dicts, one per panel. Each dict maps a label
+            (e.g. "Real", "NeuroiMF", "MOTFM") to a feature array (N, D).
+        panel_titles: Display title for each panel (e.g. "NFE = 1").
+        output_dir: Analysis output directory.
+        output_name: Output filename stem.
+        reference_label: Key for the reference distribution (PCA is fit on
+            this). Defaults to "Real".
+        n_subsample: Max points per label per panel (for visual clarity).
+    """
+    from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+    from scipy.stats import gaussian_kde
+    from sklearn.decomposition import PCA
+
+    apply_ieee_style()
+
+    n_panels = len(feature_sets)
+
+    # ------------------------------------------------------------------
+    # Fit PCA on reference distribution (defines the coordinate system)
+    # ------------------------------------------------------------------
+    ref_all = None
+    for fs in feature_sets:
+        if reference_label in fs:
+            ref = fs[reference_label]
+            ref_all = ref.numpy() if hasattr(ref, "numpy") else np.asarray(ref)
+            break
+
+    if ref_all is None:
+        logger.warning("No reference features ('%s') — skipping PCA", reference_label)
+        return
+
+    pca = PCA(n_components=2, random_state=42)
+    pca.fit(ref_all)
+    var_pct = pca.explained_variance_ratio_ * 100
+
+    # ------------------------------------------------------------------
+    # Color assignment: reference = blue, others from palette in order
+    # ------------------------------------------------------------------
+    non_ref_palette = [
+        PAUL_TOL_BRIGHT["red"],
+        PAUL_TOL_BRIGHT["green"],
+        PAUL_TOL_BRIGHT["yellow"],
+        PAUL_TOL_BRIGHT["purple"],
+        PAUL_TOL_BRIGHT["cyan"],
+    ]
+    all_non_ref = sorted(
+        {lbl for fs in feature_sets for lbl in fs if lbl != reference_label}
+    )
+    label_colors: dict[str, str] = {reference_label: PAUL_TOL_BRIGHT["blue"]}
+    for i, lbl in enumerate(all_non_ref):
+        label_colors[lbl] = non_ref_palette[i % len(non_ref_palette)]
+
+    npz_data: dict[str, np.ndarray] = {"variance_explained_pct": var_pct}
+    rng = np.random.RandomState(42)
+
+    # ------------------------------------------------------------------
+    # Pre-project all data to compute global axis limits
+    # ------------------------------------------------------------------
+    all_projected: list[dict[str, np.ndarray]] = []
+    for pi, fs in enumerate(feature_sets):
+        projected: dict[str, np.ndarray] = {}
+        for label, feats in fs.items():
+            arr = feats.numpy() if hasattr(feats, "numpy") else np.asarray(feats)
+            if arr.shape[0] > n_subsample:
+                idx = rng.choice(arr.shape[0], n_subsample, replace=False)
+                arr = arr[idx]
+            projected[label] = pca.transform(arr)
+            npz_key = f"p{pi}_{label.replace(' ', '_').lower()}"
+            npz_data[npz_key] = projected[label]
+        all_projected.append(projected)
+
+    # Global limits across all panels (shared axes)
+    all_pts = np.vstack(
+        [pts for proj in all_projected for pts in proj.values()]
+    )
+    pad_x = (all_pts[:, 0].max() - all_pts[:, 0].min()) * 0.12
+    pad_y = (all_pts[:, 1].max() - all_pts[:, 1].min()) * 0.12
+    x_lim = (all_pts[:, 0].min() - pad_x, all_pts[:, 0].max() + pad_x)
+    y_lim = (all_pts[:, 1].min() - pad_y, all_pts[:, 1].max() + pad_y)
+
+    # ------------------------------------------------------------------
+    # Build figure with nested gridspec: each panel = scatter + 2 marginals
+    # ------------------------------------------------------------------
+    fig = plt.figure(figsize=get_figure_size("double", 0.55))
+    outer_gs = GridSpec(
+        1, n_panels, figure=fig, wspace=0.35,
+    )
+
+    # Store axes for legend collection
+    legend_handles: dict[str, Any] = {}
+
+    for pi, (projected, title) in enumerate(
+        zip(all_projected, panel_titles)
+    ):
+        inner = GridSpecFromSubplotSpec(
+            2, 2, subplot_spec=outer_gs[pi],
+            height_ratios=[4, 1], width_ratios=[4, 1],
+            hspace=0.15, wspace=0.05,
+        )
+        ax_main = fig.add_subplot(inner[0, 0])
+        ax_bot = fig.add_subplot(inner[1, 0])
+        ax_right = fig.add_subplot(inner[0, 1])
+        # inner[1,1] is empty corner — don't create axes
+
+        # KDE grid
+        xx, yy = np.mgrid[
+            x_lim[0] : x_lim[1] : 150j,
+            y_lim[0] : y_lim[1] : 150j,
+        ]
+        grid = np.vstack([xx.ravel(), yy.ravel()])
+
+        # Plot order: reference underneath, then others
+        ordered = [reference_label] + [
+            l for l in projected if l != reference_label
+        ]
+
+        for label in ordered:
+            if label not in projected:
+                continue
+            pts = projected[label]
+            color = label_colors[label]
+
+            # 2D KDE filled contours
+            try:
+                kde2d = gaussian_kde(pts.T, bw_method=0.3)
+                zz = kde2d(grid).reshape(xx.shape)
+                cmap = _cmap_from_color(color)
+                ax_main.contourf(
+                    xx, yy, zz, levels=8, cmap=cmap, alpha=0.35, zorder=0,
+                )
+            except np.linalg.LinAlgError:
+                pass
+
+            # Scatter
+            h = ax_main.scatter(
+                pts[:, 0], pts[:, 1], c=color, s=5, alpha=0.35,
+                edgecolors="none", zorder=2,
+            )
+            if label not in legend_handles:
+                legend_handles[label] = h
+
+            # Centroid diamond
+            cx, cy = pts.mean(axis=0)
+            ax_main.scatter(
+                cx, cy, c=color, s=70, marker="D",
+                edgecolors="white", linewidths=0.8, zorder=5,
+            )
+
+            # 95% confidence ellipse
+            if pts.shape[0] > 3:
+                _draw_confidence_ellipse(ax_main, pts, color)
+
+            # PC1 marginal (bottom)
+            kde_x = gaussian_kde(pts[:, 0], bw_method=0.3)
+            xg = np.linspace(x_lim[0], x_lim[1], 200)
+            ax_bot.fill_between(xg, kde_x(xg), alpha=0.3, color=color)
+            ax_bot.plot(xg, kde_x(xg), color=color, lw=0.8)
+
+            # PC2 marginal (right) — rotated: y-values on y-axis, density on x
+            kde_y = gaussian_kde(pts[:, 1], bw_method=0.3)
+            yg = np.linspace(y_lim[0], y_lim[1], 200)
+            ax_right.fill_betweenx(yg, kde_y(yg), alpha=0.3, color=color)
+            ax_right.plot(kde_y(yg), yg, color=color, lw=0.8)
+
+        # Centroid distance annotation below model centroid
+        if reference_label in projected and len(projected) > 1:
+            ref_c = projected[reference_label].mean(axis=0)
+            for label in ordered:
+                if label == reference_label or label not in projected:
+                    continue
+                gen_c = projected[label].mean(axis=0)
+                dist = np.linalg.norm(ref_c - gen_c)
+
+                # Dashed line between centroids
+                ax_main.plot(
+                    [ref_c[0], gen_c[0]], [ref_c[1], gen_c[1]],
+                    ls=":", color="grey", lw=0.7, zorder=1,
+                )
+
+                # Place Δμ just below the model centroid
+                y_range = y_lim[1] - y_lim[0]
+                ax_main.annotate(
+                    f"$\\Delta_{{\\mu}}$={dist:.1f}",
+                    xy=(gen_c[0], gen_c[1] - 0.06 * y_range),
+                    fontsize=6, ha="center", va="top",
+                    bbox=dict(
+                        boxstyle="round,pad=0.2", fc="white",
+                        alpha=0.7, lw=0,
+                    ),
+                    zorder=6,
+                )
+
+        # --- Axis formatting ---
+        ax_main.set_xlim(x_lim)
+        ax_main.set_ylim(y_lim)
+        ax_main.set_xlabel(f"PC1 ({var_pct[0]:.1f}%)", fontsize=8)
+        ax_main.set_title(title)
+        ax_main.grid(True, alpha=0.12, zorder=0)
+
+        # Only leftmost panel gets y-label
+        if pi == 0:
+            ax_main.set_ylabel(f"PC2 ({var_pct[1]:.1f}%)", fontsize=8)
+        else:
+            ax_main.set_yticklabels([])
+
+        # Hide x tick labels on main (marginal below handles x ticks)
+        plt.setp(ax_main.get_xticklabels(), visible=False)
+
+        # Bottom marginal — no x-label (shared axis with scatter above)
+        ax_bot.set_xlim(x_lim)
+        ax_bot.set_yticks([])
+        ax_bot.grid(False)
+
+        # Right marginal
+        ax_right.set_ylim(y_lim)
+        ax_right.set_xticks([])
+        ax_right.set_yticklabels([])
+        ax_right.grid(False)
+
+    # ------------------------------------------------------------------
+    # Single legend outside, upper-center
+    # ------------------------------------------------------------------
+    ordered_labels = [reference_label] + [
+        l for l in legend_handles if l != reference_label
+    ]
+    fig.legend(
+        [legend_handles[l] for l in ordered_labels if l in legend_handles],
+        [f"{l} (n={all_projected[0][l].shape[0]})"
+         if l in all_projected[0] else l
+         for l in ordered_labels if l in legend_handles],
+        loc="upper center",
+        ncol=len(ordered_labels),
+        fontsize=7,
+        markerscale=3,
+        framealpha=0.8,
+        bbox_to_anchor=(0.5, 1.0),
+    )
+
+    fig.subplots_adjust(top=0.90)
+    np.savez(output_dir / "data" / "feature_embeddings.npz", **npz_data)
+    save_figure(fig, output_dir / "figures" / output_name)
+    logger.info("Saved %s", output_name)
 
 
 # -----------------------------------------------------------------------
@@ -575,15 +920,15 @@ def plot_coverage_density(
         cov = metrics[nfe]["distributional"]["coverage_k5"]["value"]
         den = metrics[nfe]["distributional"]["density_k5"]["value"]
 
-        # Get CI error bars if available
-        cov_err = [0, 0]
-        den_err = [0, 0]
+        # Get CI error bars if available (clamp to non-negative)
+        cov_err = [0.0, 0.0]
+        den_err = [0.0, 0.0]
         if "coverage" in bootstrap_results and nfe in bootstrap_results["coverage"]:
             bc = bootstrap_results["coverage"][nfe]
-            cov_err = [cov - bc["ci_lower"], bc["ci_upper"] - cov]
+            cov_err = [max(0.0, cov - bc["ci_lower"]), max(0.0, bc["ci_upper"] - cov)]
         if "density" in bootstrap_results and nfe in bootstrap_results["density"]:
             bd = bootstrap_results["density"][nfe]
-            den_err = [den - bd["ci_lower"], bd["ci_upper"] - den]
+            den_err = [max(0.0, den - bd["ci_lower"]), max(0.0, bd["ci_upper"] - den)]
 
         color = NFE_COLORS.get(nfe, PAUL_TOL_BRIGHT["blue"])
         ax.errorbar(
@@ -726,25 +1071,73 @@ def _label_to_rgb(label_vol: np.ndarray) -> np.ndarray:
     return rgb
 
 
+def _select_best_qc_indices(
+    synthseg_data: dict[str, Any],
+    nfe_levels: list[int],
+) -> dict[str, int]:
+    """Select the volume index with the highest mean QC score per condition.
+
+    Args:
+        synthseg_data: Dict from load_synthseg_data().
+        nfe_levels: NFE values.
+
+    Returns:
+        Dict mapping condition key ('real', 'gen_1', ...) to best vol index
+        (parsed from the 'subject' column, e.g. 'vol_0042' -> 42).
+    """
+    best: dict[str, int] = {}
+
+    for nfe in nfe_levels:
+        qc_df = synthseg_data.get(f"gen_qc_{nfe}")
+        if qc_df is None:
+            continue
+        # Mean QC across all region columns (exclude 'subject')
+        qc_cols = [c for c in qc_df.columns if c != "subject"]
+        qc_df = qc_df.copy()
+        qc_df["_mean_qc"] = qc_df[qc_cols].mean(axis=1)
+        best_row = qc_df.loc[qc_df["_mean_qc"].idxmax()]
+        vol_idx = int(best_row["subject"].replace("vol_", ""))
+        best[f"gen_{nfe}"] = vol_idx
+        logger.info(
+            "Best QC volume for NFE=%d: vol_%04d (mean QC=%.4f)",
+            nfe, vol_idx, best_row["_mean_qc"],
+        )
+
+    # For real, pick a representative (median QC) to look typical
+    # but if no real QC exists, fall back to index 0
+    best["real"] = 0
+    return best
+
+
 def plot_synthseg_overlay(
     volumes: dict[str, np.ndarray] | None,
     labels: dict[str, list[np.ndarray]] | None,
     output_dir: Path,
     nfe_levels: list[int],
-    vol_idx: int = 0,
+    vol_indices: dict[str, int] | None = None,
 ) -> None:
     """SynthSeg segmentation overlay: MRI + colored labels.
 
+    For each NFE column, shows the best-QC volume. The real column
+    shows a fixed reference volume.
+
     Args:
-        volumes: Dict from load_volumes() or None.
-        labels: Dict from load_synthseg_labels() or None.
+        volumes: Dict mapping condition to array of shape (N, 1, D, H, W)
+            or (N, D, H, W). Each condition may have different N.
+        labels: Dict mapping condition to list of 3D label arrays.
+            The i-th entry corresponds to the i-th loaded volume.
         output_dir: Analysis output directory.
         nfe_levels: NFE values to plot.
-        vol_idx: Index within the loaded volumes/labels lists.
+        vol_indices: Dict mapping condition to the position index within
+            the loaded volumes/labels arrays (not the global vol ID).
+            If None, uses index 0 for all.
     """
     if volumes is None or labels is None:
         logger.warning("Volumes or labels unavailable — skipping fig08")
         return
+
+    if vol_indices is None:
+        vol_indices = {}
 
     apply_ieee_style()
     conditions = ["real"] + [f"gen_{nfe}" for nfe in nfe_levels]
@@ -765,20 +1158,22 @@ def plot_synthseg_overlay(
                 axes[row, col].set_visible(False)
             continue
 
+        idx = vol_indices.get(cond, 0)
+
         vol = volumes[cond]
-        if vol.ndim == 4:
-            vol = vol[vol_idx, 0]
-        elif vol.ndim == 5:
-            vol = vol[vol_idx, 0]
+        if vol.ndim == 5:
+            vol = vol[idx, 0]
+        elif vol.ndim == 4:
+            vol = vol[idx, 0] if vol.shape[1] < vol.shape[-1] else vol[idx]
         elif vol.ndim == 3:
-            pass  # already 3D
+            pass  # single volume already
 
         lab_list = labels[cond]
-        if vol_idx >= len(lab_list):
+        if idx >= len(lab_list):
             for row in range(3):
                 axes[row, col].set_visible(False)
             continue
-        lab = lab_list[vol_idx]
+        lab = lab_list[idx]
 
         # Get center slices
         mid = [s // 2 for s in vol.shape]
@@ -791,7 +1186,8 @@ def plot_synthseg_overlay(
 
             # Grayscale underlay
             v_slice = slices_vol[row]
-            vmin, vmax = np.percentile(v_slice[v_slice > 0], [1, 99]) if v_slice.max() > 0 else (0, 1)
+            fg = v_slice[v_slice > 0]
+            vmin, vmax = (np.percentile(fg, [1, 99]) if fg.size > 0 else (0, 1))
             ax.imshow(v_slice.T, cmap="gray", vmin=vmin, vmax=vmax, origin="lower")
 
             # Label overlay
@@ -979,21 +1375,35 @@ def plot_metric_bars(
         ax.grid(axis="x", alpha=0.3)
         ax.invert_yaxis()
 
-        # Add Cohen's d annotations
+        # Add Cohen's d annotations between NeuroiMF and MOTFM bars
         if key in cohens_d_results:
             for nfe in compare_nfes:
-                if nfe in cohens_d_results[key]:
-                    cd = cohens_d_results[key][nfe]
-                    d_text = f"d={cd['d']:.2f} ({cd['interpretation']})"
-                    # Find NeuroiMF bar for this NFE
-                    for i, lbl in enumerate(bar_labels):
-                        if f"NeuroiMF\nNFE={nfe}" == lbl:
-                            ax.text(
-                                bar_values[i] + bar_errors[i] + 0.5,
-                                y_positions[i],
-                                d_text, fontsize=5, va="center",
-                            )
-                            break
+                if nfe not in cohens_d_results[key]:
+                    continue
+                cd = cohens_d_results[key][nfe]
+                d_text = f"d={cd['d']:.2f} ({cd['interpretation']})"
+                # Find NeuroiMF and MOTFM bars for this NFE
+                neuro_idx = None
+                motfm_idx = None
+                for i, lbl in enumerate(bar_labels):
+                    if lbl == f"NeuroiMF\nNFE={nfe}":
+                        neuro_idx = i
+                    elif lbl == f"MOTFM\nNFE={nfe}":
+                        motfm_idx = i
+                if neuro_idx is not None and motfm_idx is not None:
+                    # Place annotation between the two bars, inside plot
+                    mid_y = (y_positions[neuro_idx] + y_positions[motfm_idx]) / 2
+                    # Use a bracket-like annotation
+                    x_right = max(bar_values[neuro_idx], bar_values[motfm_idx])
+                    ax.annotate(
+                        d_text,
+                        xy=(x_right * 0.5, mid_y),
+                        fontsize=5.5, va="center", ha="center",
+                        bbox=dict(
+                            boxstyle="round,pad=0.15", fc="white",
+                            alpha=0.8, lw=0.3, ec="grey",
+                        ),
+                    )
 
     fig.tight_layout()
     save_figure(fig, output_dir / "figures" / "fig10_metric_bars")

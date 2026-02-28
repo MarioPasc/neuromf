@@ -50,8 +50,9 @@ diagnostics:
 evaluation:
   enabled: true
   fid_mode: "3d"                   # 3D-FID for MOTFM-comparable evaluation
+  fid_every_n_val_epochs: 1        # every val epoch (~10 training epochs); ~50s overhead
   fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
-  fid_3d_weights_path: "${paths.checkpoints_root}/fid_weights/resnet_50_23dataset.pth"
+  fid_3d_weights_path: "${paths.checkpoints_root}/r3d_18_fid3d/r3d_18-b3b3357e.pth"  # R3D-18 local weights (offline Picasso nodes)
 
 # --- VAE: A100 can decode without memory splits ---
 vae:

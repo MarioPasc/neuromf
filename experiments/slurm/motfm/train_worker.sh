@@ -78,33 +78,7 @@ else
     exit 1
 fi
 
-# Verify data pickle
-PICKLE_PATH=$(python -c "
-import yaml
-with open('${MOTFM_CONFIG}') as f:
-    cfg = yaml.safe_load(f)
-print(cfg['data_args']['pickle_path'])
-")
-
-if [ -f "${PICKLE_PATH}" ]; then
-    SIZE=$(stat -c%s "${PICKLE_PATH}" 2>/dev/null || echo "?")
-    SIZE_GB=$(echo "scale=2; ${SIZE} / 1073741824" | bc 2>/dev/null || echo "?")
-    echo "[OK]   Data pickle: ${PICKLE_PATH} (${SIZE_GB} GB)"
-else
-    echo "[MISS] Data pickle not found: ${PICKLE_PATH}"
-    echo "       Run prepare_data.sh first."
-    exit 1
-fi
-
-# Quick import check
-python -c "
-from trainer import FlowMatchingLightningModule
-from utils.utils_fm import build_model
-from h5_dataset import H5VolumeDataset
-print('MOTFM + H5 dataset imports OK')
-"
-
-# Verify HDF5 data file
+# Verify HDF5 data file (primary — required by train_motfm.py)
 H5_PATH=$(python -c "
 import yaml
 with open('${MOTFM_CONFIG}') as f:
@@ -118,8 +92,29 @@ if [ -n "${H5_PATH}" ] && [ -f "${H5_PATH}" ]; then
     echo "[OK]   HDF5 data: ${H5_PATH} (${SIZE_GB} GB)"
 else
     echo "[MISS] HDF5 data not found: ${H5_PATH}"
-    echo "       Run prepare_data.py first."
+    echo "       Run prepare_data.sh first."
     exit 1
+fi
+
+# Quick import check
+python -c "
+from trainer import FlowMatchingLightningModule
+from utils.utils_fm import build_model
+from h5_dataset import H5VolumeDataset
+print('MOTFM + H5 dataset imports OK')
+"
+
+# Pickle is optional — only needed for MOTFM's original trainer, not train_motfm.py
+PICKLE_PATH=$(python -c "
+import yaml
+with open('${MOTFM_CONFIG}') as f:
+    cfg = yaml.safe_load(f)
+print(cfg['data_args'].get('pickle_path', ''))
+")
+if [ -n "${PICKLE_PATH}" ] && [ -f "${PICKLE_PATH}" ]; then
+    echo "[INFO] Pickle also available: ${PICKLE_PATH} (not used by train_motfm.py)"
+else
+    echo "[INFO] No pickle file (not needed — using HDF5-backed lazy loading)"
 fi
 
 # ========================================================================
