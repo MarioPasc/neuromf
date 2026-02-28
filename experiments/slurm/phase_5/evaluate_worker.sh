@@ -10,14 +10,14 @@
 #SBATCH --error=evaluate_%j.err
 
 # =============================================================================
-# PHASE 5: EVALUATION WORKER
+# PHASE 5: EVALUATION WORKER (generic — works for NeuroiMF and MOTFM)
 #
 # Stage 1: Extract R3D-18 features (real + generated) — MOTFM protocol
 # Stage 2: Compute metrics (FID, MMD, Coverage, Density, MS-SSIM, PSNR,
 #           spectral, SynthSeg morphological)
 #
 # Expected env vars (exported by evaluate.sh):
-#   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, ENABLE_MOTFM
+#   REPO_SRC, CONFIGS_DIR, RUN_DIR, CONDA_ENV_NAME
 # =============================================================================
 
 set -euo pipefail
@@ -26,6 +26,7 @@ START_TIME=$(date +%s)
 echo "Phase 5 evaluation started at: $(date)"
 echo "Hostname: $(hostname)"
 echo "SLURM Job ID: ${SLURM_JOB_ID:-local}"
+echo "Run directory: ${RUN_DIR}"
 
 # ========================================================================
 # ENVIRONMENT SETUP
@@ -54,9 +55,9 @@ python -c "import torch; print('PyTorch', torch.__version__); print('CUDA:', tor
 
 cd "${REPO_SRC}"
 
-GEN_DIR="${RESULTS_DST}/phase_5/generation"
-FEAT_DIR="${RESULTS_DST}/phase_5/features"
-METRICS_DIR="${RESULTS_DST}/phase_5/metrics"
+GEN_DIR="${RUN_DIR}/generation"
+FEAT_DIR="${RUN_DIR}/features"
+METRICS_DIR="${RUN_DIR}/metrics"
 SYNTHSEG_DIR="${METRICS_DIR}/synthseg"
 
 # ========================================================================
@@ -84,23 +85,6 @@ else
     exit 1
 fi
 
-if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
-    echo ""
-    echo "MOTFM evaluation: ENABLED"
-    for nfe in 1 10 50; do
-        f="${GEN_DIR}/volumes/motfm/nfe_$(printf '%03d' $nfe).h5"
-        if [ -f "$f" ]; then
-            echo "[OK]   $f"
-        else
-            echo "[MISS] $f — run generate.sh --motfm first"
-            exit 1
-        fi
-    done
-else
-    echo ""
-    echo "MOTFM evaluation: disabled (use --motfm to enable)"
-fi
-
 # ========================================================================
 # STAGE 1: FEATURE EXTRACTION
 # ========================================================================
@@ -109,9 +93,6 @@ echo "=========================================="
 echo "STAGE 1: FEATURE EXTRACTION"
 echo "=========================================="
 
-# Extract R3D-18 features (MOTFM protocol) for real test set and generated volumes
-# Note: R3D-18 replaces Med3D ResNet-50 (which had feature collapse).
-# The 'med3d' backend name is kept for backward compatibility but loads R3D-18.
 python -u -c "
 import time
 import torch
@@ -136,13 +117,13 @@ OmegaConf.resolve(config)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# ── Diagnostics: environment ──
+# ── Diagnostics ──
 print()
 print('--- Feature Extraction Diagnostics ---')
 print(f'  Device:          {device}')
 if device.type == 'cuda':
     print(f'  GPU:             {torch.cuda.get_device_name(device)}')
-    mem_gb = torch.cuda.get_device_properties(device).total_memory / 1e9
+    mem_gb = torch.cuda.get_device_properties(device).total_mem / 1e9 if hasattr(torch.cuda.get_device_properties(device), 'total_mem') else torch.cuda.get_device_properties(device).total_memory / 1e9
     print(f'  GPU memory:      {mem_gb:.1f} GB')
 
 # ── Load feature extractor ──
@@ -152,11 +133,8 @@ print(f'  Config weights:  {weights_path or \"(empty — torchvision auto-downlo
 extractor = FeatureExtractor('med3d', weights_path, device)
 model = extractor.model
 
-# ── Diagnostics: model ──
 arch = type(model).__name__
 n_params = sum(p.numel() for p in model.parameters())
-feature_dim = None
-# Probe feature dim with a dummy forward pass
 with torch.no_grad():
     dummy = torch.randn(1, 3, 16, 16, 16, device=device)
     dummy_out = model(dummy)
@@ -165,17 +143,6 @@ with torch.no_grad():
 print(f'  Architecture:    {arch}')
 print(f'  Parameters:      {n_params / 1e6:.2f}M')
 print(f'  Feature dim:     {feature_dim}')
-print(f'  Training mode:   {model.training}')
-
-# Check where torchvision cached the weights
-import torchvision
-cache_dir = Path(torch.hub.get_dir()) / 'checkpoints'
-r3d_files = sorted(cache_dir.glob('r3d_18*'))
-if r3d_files:
-    for f in r3d_files:
-        print(f'  Weights file:    {f} ({f.stat().st_size / 1e6:.1f} MB)')
-else:
-    print(f'  Weights file:    (not found in {cache_dir})')
 print('--- End Diagnostics ---')
 print()
 
@@ -231,57 +198,7 @@ for nfe in [1, 10, 50]:
         print(f'NFE={nfe} volume missing — skipping.')
 "
 
-echo "NeuroMF feature extraction complete."
-
-# ── MOTFM feature extraction (same extractor, same protocol) ──
-if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
-    echo ""
-    echo "--- MOTFM Feature Extraction ---"
-
-    MOTFM_FEAT_DIR="${FEAT_DIR}/motfm"
-    mkdir -p "${MOTFM_FEAT_DIR}"
-
-    python -u -c "
-import time
-import torch
-import h5py
-from pathlib import Path
-from omegaconf import OmegaConf
-
-from neuromf.metrics.feature_extractor import FeatureExtractor
-
-configs_dir = Path('${CONFIGS_DIR}')
-layers = []
-base = configs_dir / 'base.yaml'
-if base.exists():
-    layers.append(OmegaConf.load(base))
-gen_yaml = configs_dir / 'generate.yaml'
-if gen_yaml.exists():
-    layers.append(OmegaConf.load(gen_yaml))
-config = OmegaConf.merge(*layers)
-OmegaConf.resolve(config)
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-weights_path = config.features.med3d.get('weights_path', '')
-extractor = FeatureExtractor('med3d', weights_path, device)
-
-for nfe in [1, 10, 50]:
-    gen_vol = Path(f'${GEN_DIR}/volumes/motfm/nfe_{nfe:03d}.h5')
-    gen_feat = Path(f'${MOTFM_FEAT_DIR}/gen_med3d_nfe{nfe:03d}.h5')
-    if gen_vol.exists() and not gen_feat.exists():
-        t0 = time.time()
-        feats = extractor.extract_and_cache(gen_vol, gen_feat)
-        dt = time.time() - t0
-        print(f'MOTFM NFE={nfe} features extracted: {feats.shape} in {dt:.1f}s')
-    elif gen_feat.exists():
-        with h5py.File(str(gen_feat), 'r') as f:
-            cached_shape = f['features'].shape
-        print(f'MOTFM NFE={nfe} features already cached: {cached_shape}')
-    else:
-        print(f'MOTFM NFE={nfe} volume missing — skipping.')
-"
-    echo "MOTFM feature extraction complete."
-fi
+echo "Feature extraction complete."
 
 # ========================================================================
 # STAGE 2: METRICS COMPUTATION
@@ -300,29 +217,7 @@ python -u experiments/cli/compute_metrics.py \
     --nfe 1 10 50 \
     --output-dir "${METRICS_DIR}"
 
-echo "NeuroMF metrics computation complete."
-
-# ── MOTFM metrics computation (same pipeline, different volumes dir) ──
-if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
-    echo ""
-    echo "--- MOTFM Metrics Computation ---"
-
-    MOTFM_METRICS_DIR="${METRICS_DIR}/motfm"
-    MOTFM_FEAT_DIR="${FEAT_DIR}/motfm"
-    mkdir -p "${MOTFM_METRICS_DIR}"
-
-    python -u experiments/cli/compute_metrics.py \
-        --config "${CONFIGS_DIR}/generate.yaml" \
-        --configs-dir "${CONFIGS_DIR}" \
-        --volumes-dir "${GEN_DIR}/volumes/motfm" \
-        --real-features-dir "${FEAT_DIR}" \
-        --gen-features-dir "${MOTFM_FEAT_DIR}" \
-        --real-volumes-h5 "${GEN_DIR}/real_test.h5" \
-        --nfe 1 10 50 \
-        --output-dir "${MOTFM_METRICS_DIR}"
-
-    echo "MOTFM metrics computation complete."
-fi
+echo "Metrics computation complete."
 
 # ========================================================================
 # NIFTI CONSOLIDATION CHECK
@@ -331,13 +226,12 @@ echo ""
 echo "=========================================="
 echo "NIFTI → HDF5 CONSOLIDATION"
 echo "=========================================="
-echo "Consolidated NIfTI → HDF5, cleaned up temporary files"
-if [ -d "${METRICS_DIR}/synthseg" ]; then
-    du -sh "${METRICS_DIR}/synthseg/"
+if [ -d "${SYNTHSEG_DIR}" ]; then
+    du -sh "${SYNTHSEG_DIR}/"
     echo "HDF5 archives:"
-    ls -lh "${METRICS_DIR}/synthseg/"*.h5 2>/dev/null || echo "  (no .h5 files yet)"
+    ls -lh "${SYNTHSEG_DIR}/"*.h5 2>/dev/null || echo "  (no .h5 files yet)"
     echo "Remaining NIfTI dirs:"
-    find "${METRICS_DIR}/synthseg/" -maxdepth 1 -type d -name "*nifti*" -o -name "*labels*" 2>/dev/null | head -10 || echo "  (none — all consolidated)"
+    find "${SYNTHSEG_DIR}/" -maxdepth 1 -type d -name "*nifti*" -o -name "*labels*" 2>/dev/null | head -10 || echo "  (none — all consolidated)"
 fi
 
 # ========================================================================
@@ -361,28 +255,12 @@ for f in "${METRICS_DIR}"/*.json; do
     fi
 done
 
-# MOTFM outputs
-if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
-    for f in "${FEAT_DIR}/motfm"/*.h5; do
-        if [ -f "$f" ]; then
-            SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
-            echo "[OK]   motfm/$(basename $f) (${SIZE} bytes)"
-        fi
-    done
-fi
-if [ "${ENABLE_MOTFM:-0}" -eq 1 ]; then
-    for f in "${METRICS_DIR}/motfm"/*.json; do
-        if [ -f "$f" ]; then
-            echo "[OK]   motfm/$(basename $f)"
-        fi
-    done
-fi
-
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 echo ""
 echo "=========================================="
 echo "PHASE 5 EVALUATION COMPLETED"
 echo "=========================================="
+echo "Run dir:    ${RUN_DIR}"
 echo "Finished:   $(date)"
 echo "Duration:   $(($ELAPSED / 3600))h $((($ELAPSED / 60) % 60))m $(($ELAPSED % 60))s"

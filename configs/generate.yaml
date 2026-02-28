@@ -2,8 +2,8 @@
 # Used by generate_latents.py, decode_volumes.py, compute_metrics.py
 
 generation:
-  n_samples: 2000
-  nfe_levels: [1, 2, 5, 10, 25, 50]
+  n_samples: 500
+  nfe_levels: [1, 10, 50]
   decode_nfe_levels: [1, 10, 50]
   batch_size_generate: 8
   batch_size_decode: 1

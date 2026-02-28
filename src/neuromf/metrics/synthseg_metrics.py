@@ -206,7 +206,7 @@ def run_synthseg(
             cmd,
             capture_output=True,
             text=True,
-            timeout=14400,  # 4-hour timeout for 2000 volumes
+            timeout=7200,  # 2-hour timeout for 500 volumes
         )
         if result.returncode != 0:
             logger.error(
