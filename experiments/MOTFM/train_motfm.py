@@ -359,6 +359,19 @@ def main() -> None:
     )
     lr_cb = LearningRateMonitor(logging_interval="step")
 
+    # Training monitor: loss JSON, multi-NFE samples, end-of-training figures
+    from motfm_callbacks import MOTFMTrainingMonitor
+
+    monitor_dir = os.path.join(root_ckpt_dir, run_name, "monitor")
+    monitor_cb = MOTFMTrainingMonitor(
+        output_dir=monitor_dir,
+        nfe_list=[1, 10, 50],
+        n_samples=4,
+        seed=42,
+        val_freq=ckpt_every,
+        config=config,
+    )
+
     # Precision
     _bf16_supported = (
         torch.cuda.is_available()
@@ -401,7 +414,7 @@ def main() -> None:
         check_val_every_n_epoch=ckpt_every,
         enable_progress_bar=True,
         logger=tb_logger,
-        callbacks=[ckpt_cb, lr_cb],
+        callbacks=[ckpt_cb, lr_cb, monitor_cb],
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
