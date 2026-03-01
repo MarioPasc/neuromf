@@ -20,7 +20,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKER_SCRIPT="${SCRIPT_DIR}/../../slurm/train/worker.sh"
+WORKER_SCRIPT="${SCRIPT_DIR}/../../../slurm/train/worker.sh"
 
 if [ ! -f "${WORKER_SCRIPT}" ]; then
     echo "ERROR: Worker script not found at ${WORKER_SCRIPT}" >&2
