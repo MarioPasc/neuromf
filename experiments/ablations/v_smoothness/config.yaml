@@ -17,13 +17,9 @@ smoothness:
   lambda_smooth: 0.01
   strategy: fd
   fd_step: 0.001
-  start_step: 1000
+  start_step: 0
   n_probes: 1
   probe_distribution: gaussian
 
-# Redirect outputs to ablation-specific directories
-paths:
-  checkpoints_dir: "${paths.results_root}/ablations/v_smoothness/checkpoints"
-  logs_dir: "${paths.results_root}/ablations/v_smoothness/logs"
-  samples_dir: "${paths.results_root}/ablations/v_smoothness/samples"
-  diagnostics_dir: "${paths.results_root}/ablations/v_smoothness/diagnostics"
+# Output paths: train.py creates a unique run directory (results_root/runs/run_<timestamp>/)
+# automatically for every run, so no custom path overrides needed here.

@@ -99,12 +99,9 @@ echo "  Memory:      ${MEM}G" >&2
 echo "  Resume:      ${RESUME_CKPT:-none}" >&2
 echo "" >&2
 
-# Create output directories
+# SLURM log output directory (run dir is created by train.py)
 ABL_DIR="${RESULTS_DST}/ablations/v_smoothness"
-mkdir -p "${ABL_DIR}/checkpoints"
-mkdir -p "${ABL_DIR}/logs"
-mkdir -p "${ABL_DIR}/samples"
-mkdir -p "${ABL_DIR}/diagnostics"
+mkdir -p "${ABL_DIR}"
 
 # ========================================================================
 # SUBMIT JOB
