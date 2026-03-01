@@ -1,0 +1,85 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{MOTFM Baseline}
+\label{sec:motfm_baseline}
+
+Medical Optimal Transport Flow Matching (MOTFM)~\cite{motfm} is our
+primary baseline: a conditional flow matching model operating in pixel space
+with an ODE solver at inference.  Unlike NeuroMF, MOTFM requires multiple
+integration steps (typically 10 Euler steps) and works directly on voxel-space
+volumes rather than in a compressed latent space.
+
+\subsubsection{Architecture}
+
+MOTFM uses a \code{DiffusionModelUNet} from MONAI-Generative with 4 resolution
+levels: channel widths $[32, 64, 128, 256]$, 2 residual blocks per level,
+attention only at the coarsest level, and flash attention enabled.  The model is
+unconditional (no mask or class conditioning) for fair comparison with NeuroMF
+on the same dataset.
+
+\subsubsection{Step-Matched Training Budget}
+
+To ensure a fair comparison, we match the total number of \emph{optimiser steps}
+rather than epochs, since our dataset is $7.3\times$ larger than the one used in
+the original MOTFM paper.
+
+\begin{table}[ht]
+\centering
+\caption{MOTFM training budget: paper vs.\ our step-matched setup.}
+\label{tab:motfm_budget}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Property} & \textbf{Paper} & \textbf{Ours} \\
+\midrule
+Dataset                  & MSD Brain (750 scans) & FOMO-60K (5{,}471 scans) \\
+Resolution               & $192^3$               & $192^3$ \\
+Hardware                 & 1$\times$ RTX 4090    & 4$\times$ A100-40GB (DDP) \\
+Batch size (per GPU)     & 1                     & 1 \\
+Gradient accumulation    & 1                     & 1 \\
+Effective batch size     & 1                     & 4 \\
+Steps per epoch          & 750                   & 1{,}368 \\
+Epochs                   & 200                   & 110 \\
+\textbf{Total optimiser steps} & \textbf{150{,}000} & \textbf{${\sim}$150{,}480} \\
+Learning rate            & $10^{-4}$             & $10^{-4}$ \\
+Precision                & fp32                  & bf16-mixed \\
+Solver                   & Euler, 10 steps       & Euler, 10 steps \\
+\midrule
+Est.\ wall time          & ---                   & ${\sim}$69\,h (2.9 days) \\
+SLURM wall limit         & ---                   & 4 days \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The step-matching rationale is straightforward:
+\begin{equation}
+  N_\text{epochs}^\text{ours}
+  = \left\lceil \frac{N_\text{paper} \cdot E_\text{paper}}
+                     {\lceil S_\text{ours} / G \rceil} \right\rceil
+  = \left\lceil \frac{750 \times 200}{\lceil 5471 / 4 \rceil} \right\rceil
+  = \left\lceil \frac{150{,}000}{1{,}368} \right\rceil
+  = 110
+\end{equation}
+where $S_\text{ours} = 5{,}471$ is our training set size and $G = 4$ is the GPU
+count.  The effective batch size increases from~1 to~4 due to DDP data
+parallelism; this is standard practice and commonly accepted for fair
+comparison, as each GPU still processes one sample per step with no gradient
+accumulation.
+
+\subsubsection{Key Differences from NeuroMF}
+
+\begin{table}[ht]
+\centering
+\caption{Architectural and methodological differences between NeuroMF and MOTFM.}
+\label{tab:neuromf_vs_motfm}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Property} & \textbf{NeuroMF} & \textbf{MOTFM} \\
+\midrule
+Operating space      & Latent ($4 \times 48^3$) & Pixel ($1 \times 192^3$) \\
+NFE (inference)      & 1                        & 10 (Euler) \\
+Training paradigm    & MeanFlow (iMF dual-head) & Flow matching (velocity) \\
+VAE dependency       & Frozen MAISI VAE         & None \\
+Model parameters     & ${\sim}$178M             & TBD \\
+Conditioning         & Unconditional            & Unconditional \\
+\bottomrule
+\end{tabular}
+\end{table}

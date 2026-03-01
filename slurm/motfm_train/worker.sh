@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -J motfm_train
-#SBATCH --time=3-00:00:00
+#SBATCH --time=5-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=256G
 #SBATCH --constraint=dgx
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4
 #SBATCH --output=train_%j.out
 #SBATCH --error=train_%j.err
 
@@ -14,6 +14,9 @@
 #
 # Trains MOTFM on FOMO-60K (unconditional 3D, 192^3) using the vendored
 # trainer.py from src/external/MOTFM/. No modifications to vendored code.
+#
+# Supports multi-GPU DDP. Lightning auto-detects SLURM-allocated GPUs via
+# devices="auto" in config. DDP strategy is resolved by _resolve_strategy().
 #
 # Expected env vars (exported by launch.sh):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, MOTFM_CONFIG
@@ -55,10 +58,16 @@ echo "=========================================="
 echo "ENVIRONMENT VERIFICATION"
 echo "=========================================="
 echo "[python] $(which python || true)"
-python -c "import torch; print('PyTorch', torch.__version__); print('CUDA:', torch.cuda.is_available())"
+python -c "import torch; print('PyTorch', torch.__version__); print('CUDA:', torch.cuda.is_available()); print('GPUs:', torch.cuda.device_count())"
 python -c "import flow_matching; print('flow_matching OK')"
 python -c "from generative.networks.nets import DiffusionModelUNet; print('monai-generative OK')"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
+
+VISIBLE_GPUS=$(python -c "import torch; print(torch.cuda.device_count())")
+echo "Visible GPUs: ${VISIBLE_GPUS}"
+if [ "$VISIBLE_GPUS" -gt 1 ]; then
+    echo "Multi-GPU DDP: ${VISIBLE_GPUS} GPUs detected (eff. batch = 1 × 1 × ${VISIBLE_GPUS} = ${VISIBLE_GPUS})"
+fi
 
 # ========================================================================
 # PRE-FLIGHT CHECKS

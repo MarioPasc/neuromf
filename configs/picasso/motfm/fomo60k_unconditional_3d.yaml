@@ -3,6 +3,10 @@
 # Based on MOTFM's config_3D.yaml but unconditional (no masks, no classes).
 # For fair comparison with NeuroMF on the same dataset.
 #
+# Step-matched to the paper: 750 scans × 200 epochs × accum=1 = 150,000 optimizer
+# steps. With 5,471 scans and 4 GPUs (accum=1), each epoch = ceil(5471/4) = 1,368
+# steps → 110 epochs × 1,368 = 150,480 steps ≈ 150K. (~2.9 days on 4 GPUs.)
+#
 # Train: python -u src/external/MOTFM/trainer.py --config_path <this_file>
 
 model_args:
@@ -29,10 +33,10 @@ data_args:
   norm_scope: "global"
 
 train_args:
-  num_epochs: 200
+  num_epochs: 110
   batch_size: 1
   lr: 0.0001
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 1       # Paper used no accumulation (accum=1)
   grad_clip_norm: 1.0
   device: "cuda"
   checkpoint_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/motfm/checkpoints"
@@ -45,7 +49,7 @@ train_args:
   deterministic: False
   log_every_n_steps: 50
   num_sanity_val_steps: 0
-  num_workers: 4
+  num_workers: 8                    # per-GPU; HDF5 lazy loading is I/O-bound
 
 solver_args:
   method: "euler"
