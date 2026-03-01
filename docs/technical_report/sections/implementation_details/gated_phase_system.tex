@@ -1,0 +1,26 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Gated Phase System}
+
+The project is implemented in 9~gated phases (0--8).  Phase $N{+}1$ cannot
+begin until Phase $N$'s critical tests all pass (Table~\ref{tab:phases}).
+
+\begin{table}[ht]
+\centering
+\caption{Phase status.}
+\label{tab:phases}
+\begin{tabular}{clll}
+\toprule
+\textbf{Phase} & \textbf{Title} & \textbf{Status} & \textbf{Tests} \\
+\midrule
+0 & VAE Validation         & Complete      & 7/7 \\
+1 & Latent Pre-computation & Complete      & 7/7 \\
+2 & Toy Experiment (Torus) & Complete      & 6/6 + 2 info \\
+3 & MeanFlow Loss + 3D UNet & Complete    & 28/28 \\
+4 & Training on Brain MRI  & Complete      & 12+ \\
+5 & Generation + Evaluation & Code complete & 11/11 local \\
+6 & Ablation Runs          & Planned       & --- \\
+7 & LoRA Fine-Tuning (FCD) & Planned       & --- \\
+8 & Paper Figures          & Planned       & --- \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,73 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Frozen MAISI VAE (Encoder-Decoder)}
+
+The MAISI VAE~\cite{maisi} is a 3D variational autoencoder with adversarial
+training, pre-trained on ${\sim}55$K CT+MRI volumes.  We use it as a
+\textbf{frozen foundation model}---all parameters are locked, and it is never
+fine-tuned. Key properties are listed in Table~\ref{tab:vae}.
+
+\begin{table}[ht]
+\centering
+\caption{MAISI VAE properties.}
+\label{tab:vae}
+\begin{tabular}{ll}
+\toprule
+\textbf{Property}      & \textbf{Value} \\
+\midrule
+Parameters             & 20,944,897 (${\sim}$21\,M) \\
+Encoder stages         & 3 levels of $2\times$ strided 3D conv \\
+Latent channels        & 4 (with KL regularisation) \\
+Spatial compression    & $4\times$ per axis: $(1,192^3)\!\to\!(4,48^3)$ \\
+Attention              & None (all \code{attention\_levels=false}) \\
+Training losses        & $L_1$ + LPIPS + PatchGAN + KL \\
+Checkpoint format      & Wrapped in \code{"unet\_state\_dict"} key \\
+Scale factor           & $s = 0.96240234375$ \\
+Memory optimisation    & \code{num\_splits} for chunk-based processing \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The VAE encoding and decoding operations are:
+\begin{equation}
+  z = s \cdot \mathrm{Enc}_\phi(x_\mathrm{MRI})
+    \;\in \mathbb{R}^{4 \times 48 \times 48 \times 48},
+  \qquad
+  \hat{x}_\mathrm{MRI} = \mathrm{Dec}_\phi(z\,/\,s)
+    \;\in \mathbb{R}^{1 \times 192 \times 192 \times 192}
+  \label{eq:vae}
+\end{equation}
+\begin{shapes}
+$x_\mathrm{MRI}$: $(B, 1, 192, 192, 192)$ --- single-channel T1 MRI.\\
+$z$: $(B, 4, 48, 48, 48)$ --- latent ($4\times$ spatial compression per axis, $1 \to 4$ channels).\\
+$s = 0.9624$ --- scale factor extracted from
+\code{diff\_unet\_3d\_rflow-mr.pt["scale\_factor"]}.
+\end{shapes}
+
+\textbf{Reconstruction quality} (Phase~0, 20 IXI volumes): Mean SSIM\,=\,0.9213,
+Mean PSNR\,=\,30.86\,dB.
+
+\textbf{Latent distribution quality.}  Encoding all 6,471~volumes (train + val
++ test) confirms the latent space is well-regularised
+(Table~\ref{tab:latent_stats}).
+
+\begin{table}[ht]
+\centering
+\caption{Per-channel latent statistics ($n = 6{,}471$ encoded volumes).}
+\label{tab:latent_stats}
+\begin{tabular}{ccccc}
+\toprule
+\textbf{Channel} & \textbf{Mean} & \textbf{Std} & \textbf{Skewness} & \textbf{Kurtosis} \\
+\midrule
+0 & $-0.053$ & $0.970$ & $+0.105$ & $-0.123$ \\
+1 & $-0.185$ & $1.019$ & $+0.002$ & $-0.019$ \\
+2 & $-0.051$ & $0.970$ & $+0.045$ & $+0.099$ \\
+3 & $+0.001$ & $1.011$ & $+0.069$ & $+0.144$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The distributions are near-Gaussian: skewness $|\gamma| < 0.11$, excess
+kurtosis $|\kappa| < 0.15$, and standard deviations cluster around
+$0.97$--$1.02$.  Cross-channel correlations are negligible
+(max off-diagonal $|r| = 0.046$), confirming the KL regularisation produces
+approximately independent, unit-variance channels.

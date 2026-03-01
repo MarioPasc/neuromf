@@ -1,0 +1,7 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{SWD (Sliced Wasserstein Distance)}
+
+SWD improves rapidly in early training (best = 1.779 at epoch~9) but then
+\textbf{diverges from FID}---SWD increases monotonically after epoch ${\sim}50$
+(final: 2.555) while FID continues to decrease.  SWD is \textbf{not a reliable
+proxy} for perceptual quality in this setting.

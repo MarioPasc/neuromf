@@ -1,0 +1,24 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Compute Budget}
+
+\begin{table}[ht]
+\centering
+\caption{Compute budget and actual training cost.}
+\label{tab:compute}
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Hardware                   & 6$\times$ A100-SXM4-40GB (one DGX node) \\
+Strategy                   & DDP (DistributedDataParallel) \\
+Per-GPU batch              & $B_\mathrm{gpu} = 2$ (JVP activation: ${\sim}$20\,GB) \\
+Gradient accumulation      & 11 steps \\
+Effective batch            & $B_\mathrm{eff} = 2 \times 6 \times 11 = 132$ \\
+Optimiser steps/epoch      & 41 \\
+Planned optimiser steps    & 61,500 (1,500 epochs $\times$ 41) \\
+Actual optimiser steps     & ${\sim}$28,980 (early-stopped at epoch~690) \\
+Mean epoch time            & 268.1\,s (${\sim}$4.5\,min) \\
+\textbf{Total wall time}   & \textbf{${\sim}$51.4\,hours (${\sim}$2.1\,days)} \\
+\bottomrule
+\end{tabular}
+\end{table}

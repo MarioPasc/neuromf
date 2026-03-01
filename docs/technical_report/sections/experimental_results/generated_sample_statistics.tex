@@ -1,0 +1,26 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Generated Sample Statistics}
+
+The model's output $\hat{x}$ statistics evolve during training
+(Table~\ref{tab:xhat}).
+
+\begin{table}[ht]
+\centering
+\caption{Statistics of generated $\hat{x} \in \mathbb{R}^{4 \times 48 \times 48 \times 48}$ at different training stages.}
+\label{tab:xhat}
+\begin{tabular}{rcccc}
+\toprule
+\textbf{Epoch} & $\mathbb{E}[\hat{x}]$ & $\mathrm{std}[\hat{x}]$ & $\min[\hat{x}]$ & $\max[\hat{x}]$ \\
+\midrule
+0   & $+0.004$ & $0.243$ & $-2.06$ & $3.41$ \\
+100 & $-0.001$ & $0.737$ & $-5.88$ & $8.56$ \\
+388 & $-0.001$ & $0.753$ & $-5.84$ & $8.69$ \\
+689 & $-0.001$ & $0.781$ & $-6.22$ & $9.38$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The standard deviation stabilises around 0.75--0.78, approximately 75\% of the
+true latent std (${\sim}$0.97--1.02).  This \textbf{variance under-estimation}
+is the primary quality bottleneck: generated samples have slightly less contrast
+than real ones.

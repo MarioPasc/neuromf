@@ -1,0 +1,18 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Full Generation Pipeline (Phase~5)}
+
+\begin{enumerate}[nosep]
+  \item Pre-generate shared noise $\varepsilon \in \mathbb{R}^{N \times 4 \times 48 \times 48 \times 48}$ (for NFE-consistency analysis).
+  \item For each NFE level: generate latents, store in HDF5 (latents, seeds,
+        timing).
+  \item Denormalise: $z_0 = \hat{z}\cdot\sigma_{\mathrm{latent}}
+                           + \mu_{\mathrm{latent}}$,
+    where $\mu_\mathrm{latent}, \sigma_\mathrm{latent} \in \mathbb{R}^{1 \times 4 \times 1 \times 1 \times 1}$.
+  \item Decode: $\hat{x}_\mathrm{MRI} = \mathrm{Dec}_\phi(z_0\,/\,s)
+    \in \mathbb{R}^{B \times 1 \times 192 \times 192 \times 192}$.
+  \item Clamp to $[0,1]$; store decoded volumes in HDF5.
+\end{enumerate}
+
+\textbf{Shared noise protocol.}  The same noise tensor $\varepsilon$ is used
+across all NFE levels for a given sample index, enabling direct comparison of
+how additional steps refine the output.

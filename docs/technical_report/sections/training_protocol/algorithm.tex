@@ -1,0 +1,75 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Algorithm (One Training Step)}
+\label{sec:algorithm}
+
+Given a mini-batch of $B$ pre-computed latents and the dual-head model
+$f_\theta$ (with u-head and v-head), one training step proceeds as follows.
+All tensors are annotated with their shapes.
+
+\begin{enumerate}[nosep, leftmargin=2em]
+  \item \textbf{Load data:}
+    $z_0 \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$
+    (normalised latent from HDF5).
+
+  \item \textbf{Sample noise:}
+    $\varepsilon \sim \mathcal{N}(\mathbf{0},\,I_d)
+    \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$.
+
+  \item \textbf{Sample times:}
+    $t, r \sim \mathrm{LogitNormal}(\mu{=}{-0.4},\,\sigma{=}1.0)
+    \in \mathbb{R}^B$,
+    clamped to $[0.001,\,1.0]$, with $t \ge r$.
+    For half the batch ($\lfloor B/2 \rfloor$ samples): set $r = t$
+    (FM samples).
+
+  \item \textbf{Interpolate:}
+    $z_t = (1-\bar{t})\odot z_0 + \bar{t}\odot\varepsilon
+    \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$,
+    where $\bar{t} = t.\mathrm{view}(B,1,1,1,1)$.
+
+  \item \textbf{Target:}
+    $v_c = \varepsilon - z_0
+    \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$.
+
+  \item \textbf{Tangent (no grad):}
+    $(\_, \tilde{v}) = f_\theta(z_t,\,r{=}t,\,t)$;
+    $\tilde{v} \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$
+    is the v-head output at $r{=}t$ (instantaneous).
+    Computed under \code{torch.no\_grad()}.
+
+  \item \textbf{JVP (exact, dual):}
+    $(u_\theta,\;du/dt,\;\hat{v}) =
+    \texttt{jvp}(f_{\mathrm{dual}},\;(z_t,t,r),\;(\tilde{v},\mathbf{1},\mathbf{0}),\;
+    \texttt{has\_aux})$.
+    \begin{itemize}[nosep]
+      \item $u_\theta \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$
+        (average velocity, derived from $\hat{x}$ via Eq.~\ref{eq:xpred}).
+      \item $du/dt \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$
+        (JVP output).
+      \item $\hat{v} \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$
+        (v-head output, auxiliary---no JVP through it).
+    \end{itemize}
+
+  \item \textbf{Compound velocity:}
+    $V_\theta = u_\theta + (t-r).\mathrm{view}(B,1,1,1,1) \cdot \sg[du/dt]
+    \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$.
+
+  \item \textbf{Per-sample raw losses:}
+    $\ell_u^{(b)} = \|V_\theta^{(b)} - v_c^{(b)}\|_2^2 \in \mathbb{R}$,
+    $\ell_v^{(b)} = \|\hat{v}^{(b)} - v_c^{(b)}\|_2^2 \in \mathbb{R}$;
+    vectors $\boldsymbol{\ell}_u, \boldsymbol{\ell}_v \in \mathbb{R}^B$.
+
+  \item \textbf{Adaptive weighting} (Eq.~\ref{eq:adaptive_simplified}):
+    $\mathcal{L} = \frac{1}{B}\sum_{b=1}^{B}\!\left[
+      \frac{\ell_u^{(b)}}{\sg[\ell_u^{(b)}]+1}
+      + \frac{\ell_v^{(b)}}{\sg[\ell_v^{(b)}]+1}
+    \right] \in \mathbb{R}$.
+
+  \item \textbf{Backward + clip:}
+    $\nabla_\theta \mathcal{L}$; clip
+    $\|\nabla\|_2 \le 1.0$.
+
+  \item \textbf{Optimiser step + EMA update:}
+    $\theta \leftarrow \theta - \eta\,\nabla_\theta \mathcal{L}$;
+    $\theta_\EMA \leftarrow \beta\,\theta_\EMA + (1-\beta)\,\theta$.
+\end{enumerate}

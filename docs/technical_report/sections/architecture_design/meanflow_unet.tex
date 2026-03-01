@@ -1,0 +1,50 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{MeanFlow UNet (Generative Model)}
+
+The MeanFlow UNet (\code{MAISIUNetWrapper}) uses the \textbf{same architecture}
+as the MAISI diffusion UNet but with random initialisation and custom dual-time
+conditioning.  Key properties are listed in Table~\ref{tab:unet}.
+
+\begin{table}[ht]
+\centering
+\caption{MeanFlow UNet properties and tensor shapes through the encoder-decoder path.}
+\label{tab:unet}
+\begin{tabular}{lll}
+\toprule
+\textbf{Property}          & \textbf{Value} & \textbf{Feature map shape} \\
+\midrule
+Backbone                   & MONAI \code{DiffusionModelUNet} (3D) & --- \\
+Total parameters           & ${\sim}$178\,M & --- \\
+\code{conv\_in}            & Conv3d($4, 64, 3$, pad$=1$) & $(B, 64, 48, 48, 48)$ \\
+Down block 0 (ch$=64$)     & 2 ResBlocks, no attention & $(B, 64, 24, 24, 24)$ \\
+Down block 1 (ch$=128$)    & 2 ResBlocks, no attention & $(B, 128, 12, 12, 12)$ \\
+Down block 2 (ch$=256$)    & 2 ResBlocks + Transformer & $(B, 256, 6, 6, 6)$ \\
+Down block 3 (ch$=512$)    & 2 ResBlocks + Transformer & $(B, 512, 3, 3, 3)$ \\
+Middle block (ch$=512$)    & ResBlock + Attn + ResBlock & $(B, 512, 3, 3, 3)$ \\
+Up blocks (mirror down)    & With skip connections & up to $(B, 64, 48, 48, 48)$ \\
+\code{unet.out} (u-head)   & GN + SiLU + Conv3d($64, 4$) & $(B, 4, 48, 48, 48)$ \\
+\code{v\_out} (v-head)     & ResBlock + GN + SiLU + Conv3d($64, 4$) & $(B, 4, 48, 48, 48)$ \\
+\midrule
+Attention heads            & 32 channels/head at levels 2--3 & --- \\
+GroupNorm groups            & 32 & --- \\
+Flash attention            & \textbf{Disabled} (\code{torch.func.jvp} compat.) & --- \\
+Grad.\ checkpointing      & \textbf{Disabled} (exact JVP compat.) & --- \\
+Prediction type            & x-prediction ($\hat{x}$) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Flash attention incompatibility.}  \code{torch.func.jvp} uses
+forward-mode AD, which requires the computation graph to be fully traceable.
+Flash attention's fused CUDA kernels are opaque to PyTorch's AD system.
+Disabling flash attention adds ${\sim}10\%$ latency but enables exact JVP.
+
+\textbf{Gradient checkpointing incompatibility.}  Gradient checkpointing
+re-executes forward passes during backward, which conflicts with the
+forward-mode AD tape maintained by \code{torch.func.jvp}.
+
+\textbf{In-place operation patching.}  \code{torch.func.jvp} cannot handle
+in-place tensor mutations.  The function \code{patch\_inplace\_ops()} (line~133
+of \code{maisi\_unet.py}) recursively replaces \code{nn.SiLU(inplace=True)}
+and \code{nn.ReLU(inplace=True)} with out-of-place variants throughout the
+model.

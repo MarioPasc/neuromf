@@ -1,0 +1,21 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Preprocessing Pipeline}
+
+\begin{enumerate}[nosep]
+  \item \code{LoadImaged} (MONAI)
+  \item \code{EnsureChannelFirstd}
+  \item \code{Spacingd}(pixdim=1.0\,mm isotropic, bilinear)
+  \item \code{ScaleIntensityRangePercentilesd}(0\%--99.5\% $\to$ [0,\,1])
+  \item \code{CropForegroundd}(margin=4) --- brain-centred crop
+  \item \code{ResizeWithPadOrCropd}$(192,192,192)$ --- pad to target
+  \item \code{EnsureTyped}(dtype=float32)
+\end{enumerate}
+
+\textbf{Resolution choice ($192^3$ at 1.0\,mm isotropic).}  Selected after
+quantitative analysis of brain extent across 30 FOMO-60K subjects.  Brain AP
+extent reaches 193\,mm; $128^3$ and $160^3$ both clip frontal/occipital
+cortex.  \code{CropForegroundd} centres the crop on brain tissue, achieving
+100\% brain coverage for all subjects.
+
+\textbf{Latent shape:} $192/4 = 48$ per spatial axis, giving latents of shape
+$(4,48,48,48)$.

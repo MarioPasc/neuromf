@@ -1,0 +1,29 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{NFE Quality Analysis}
+
+Visual inspection of decoded samples reveals a clear quality hierarchy
+(Table~\ref{tab:nfe_quality}).
+
+\begin{table}[ht]
+\centering
+\caption{Visual quality at different NFE levels.}
+\label{tab:nfe_quality}
+\begin{tabular}{lll}
+\toprule
+\textbf{NFE} & \textbf{Quality} & \textbf{Key Features} \\
+\midrule
+1  & Recognisable, blurry    & Global structure correct, low contrast \\
+2  & Substantially sharper   & Cortical sulci visible \\
+5  & Sharp, plausible        & Clear grey-white contrast \\
+10 & Marginally crisper      & Diminishing returns beyond 5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{NFE-consistency metrics} (shared noise, converged model):
+cosine similarity NFE=1 vs NFE=2: ${\sim}$0.96; vs NFE=5: ${\sim}$0.91;
+vs NFE=10: ${\sim}$0.90.
+
+The 1-NFE output captures global anatomy correctly but lacks high-frequency
+detail---a known MeanFlow limitation.  NFE=2 provides substantial improvement
+at only $2\times$ cost.

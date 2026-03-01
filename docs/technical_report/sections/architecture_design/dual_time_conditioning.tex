@@ -1,0 +1,72 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Dual-Time Conditioning}
+
+MeanFlow requires conditioning on two time variables: $t$ (current time) and
+$r$ (interval lower bound).  We implement three conditioning modes and select
+\code{t\_h} based on ablation (Table~\ref{tab:conditioning}).
+
+\begin{table}[ht]
+\centering
+\caption{Conditioning modes.  Selected mode in \textbf{bold}.}
+\label{tab:conditioning}
+\begin{tabular}{llll}
+\toprule
+\textbf{Mode} & \textbf{Inputs} & \textbf{Embedding} & \textbf{Source} \\
+\midrule
+\code{dual} & $(r,t)$ & $\mathbf{e}_r+\mathbf{e}_t$ via separate MLPs & pMF \\
+\code{h}    & $h=t{-}r$ & $\mathbf{e}_h$ via UNet MLP & iMF \\
+\textbf{\code{t\_h}} & \textbf{$(t,\,h{=}t{-}r)$} & \textbf{$\mathbf{e}_t + \mathbf{e}_h$ via two MLPs} & \textbf{MF Tab.\,1c} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The \code{t\_h} mode conditions on both the absolute time $t$ and the interval
+width $h = t-r$.  The original MeanFlow paper (Table~1c) reports FID~61.06
+for $(t,h)$ vs~63.13 for $h$-only on ImageNet.
+
+\textbf{Sinusoidal embedding.}  Given a scalar $\tau \in [0,1]$ (either $t$ or
+$h$), the sinusoidal positional embedding~\cite{ddpm} is defined as:
+\begin{equation}
+  \mathrm{SinEmb}(\tau)
+    \coloneqq \bigl[\cos(\omega_j \cdot \tau'),\;\sin(\omega_j \cdot \tau')\bigr]_{j=0}^{d_\mathrm{sin}/2-1}
+    \;\in \mathbb{R}^{d_\mathrm{sin}}
+  \label{eq:sin_emb}
+\end{equation}
+where $\tau' = 1000 \cdot \tau$ (time scaling), $d_\mathrm{sin} = 64$ (=
+\code{channels[0]}), and the frequencies are
+$\omega_j = \exp(-\log(10000) \cdot j / (d_\mathrm{sin}/2))$ for
+$j = 0, \ldots, 31$.
+\begin{shapes}
+$\mathrm{SinEmb}(\tau)$: $(B, 64)$.\\
+\textbf{Code:} \code{maisi\_unet.py:48--58},
+\code{get\_timestep\_embedding(timesteps * 1000, embedding\_dim=64)}.
+\end{shapes}
+
+\textbf{Time embedding MLP.}  Each sinusoidal embedding is projected through a
+2-layer MLP:
+\begin{equation}
+  \mathrm{MLP}: \mathbb{R}^{d_\mathrm{sin}} \to \mathbb{R}^{d_\mathrm{emb}},
+  \qquad
+  \mathbf{e} = W_2\,\mathrm{SiLU}(W_1\,\mathrm{SinEmb}(\tau) + \mathbf{b}_1) + \mathbf{b}_2
+  \label{eq:time_mlp}
+\end{equation}
+where $W_1 \in \mathbb{R}^{d_\mathrm{emb} \times d_\mathrm{sin}}$,
+$W_2 \in \mathbb{R}^{d_\mathrm{emb} \times d_\mathrm{emb}}$,
+$d_\mathrm{sin} = 64$, $d_\mathrm{emb} = 256$.
+
+The combined conditioning embedding (in \code{t\_h} mode) is:
+\begin{equation}
+  \mathbf{e} = \mathrm{MLP}_t\!\bigl(\mathrm{SinEmb}(t)\bigr)
+             + \mathrm{MLP}_h\!\bigl(\mathrm{SinEmb}(h)\bigr)
+    \;\in \mathbb{R}^{d_\mathrm{emb}}
+  \label{eq:conditioning}
+\end{equation}
+\begin{shapes}
+$\mathrm{SinEmb}(t)$, $\mathrm{SinEmb}(h)$: each $(B, 64)$.\\
+$\mathrm{MLP}_t$ output, $\mathrm{MLP}_h$ output: each $(B, 256)$.\\
+$\mathbf{e}$: $(B, 256)$ --- injected into every ResBlock and Transformer block.\\
+\textbf{Code:} \code{maisi\_unet.py:448--460}:
+\code{emb = t\_emb + h\_emb}.\\
+$\mathrm{MLP}_t$: \code{self.unet.time\_embed} (MONAI built-in);
+$\mathrm{MLP}_h$: \code{self.h\_embed} (custom).
+\end{shapes}

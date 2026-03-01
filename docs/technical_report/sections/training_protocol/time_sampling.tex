@@ -1,0 +1,37 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Time Sampling}
+\label{sec:time_sampling}
+
+Times are drawn from a logit-normal distribution.  Given a standard normal
+sample $\xi \sim \mathcal{N}(0,1)$, the logit-normal transform is:
+\begin{equation}
+  t = \sigma(\mu + \sigma_t\,\xi)
+    = \frac{1}{1 + e^{-(\mu + \sigma_t \xi)}}
+    \;\in (0,1),
+  \qquad
+  t \leftarrow \max(t,\;t_{\min})
+  \label{eq:time_sampling}
+\end{equation}
+where $\sigma(\cdot)$ is the sigmoid function, $\mu = -0.4$ (biases toward
+lower $t$, \ie, near data), $\sigma_t = 1.0$, and $t_{\min} = 0.001$.
+\begin{shapes}
+$\xi$: $(B,)$; $t$: $(B,)$ after clamp.\\
+Both $t$ and $r$ are sampled independently from the same distribution,
+then swapped so $t \ge r$:\\
+$t \leftarrow \max(t_\mathrm{raw}, r_\mathrm{raw})$;
+$r \leftarrow \min(t_\mathrm{raw}, r_\mathrm{raw})$.\\
+\textbf{Code:} \code{time\_sampler.py:62--73}.
+\end{shapes}
+
+\textbf{$\mathrm{data\_proportion} = 0.5$.}  For the first $\lfloor B/2
+\rfloor$ samples in the batch, $r$ is set equal to $t$:
+\begin{equation}
+  r^{(b)} =
+  \begin{cases}
+    t^{(b)} & \text{if } b < \lfloor B/2 \rfloor
+      \quad\text{(FM sample: }h = 0\text{, JVP vanishes)} \\
+    r^{(b)}_{\mathrm{raw}} & \text{otherwise}
+      \quad\text{(MF sample: }h > 0\text{, self-consistency enforced)}
+  \end{cases}
+  \label{eq:data_proportion}
+\end{equation}

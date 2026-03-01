@@ -1,0 +1,24 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Optimiser and Schedule}
+
+Hyperparameters are listed in Table~\ref{tab:optimiser}.
+
+\begin{table}[ht]
+\centering
+\caption{Optimiser hyperparameters.}
+\label{tab:optimiser}
+\begin{tabular}{lll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} & \textbf{Justification} \\
+\midrule
+Optimiser       & AdamW         & Standard for diffusion/flow models \\
+Learning rate   & $\eta = 10^{-4}$     & MeanFlow reference default \\
+Weight decay    & 0.0           & No regularisation with adaptive loss \\
+Betas           & $(\beta_1, \beta_2) = (0.9,\,0.95)$  & $\beta_2{=}0.95$: faster momentum adaptation \\
+LR schedule     & Cosine decay  & $10^{-4} \to 5.6{\times}10^{-5}$ at early stop \\
+Warmup          & 0 steps       & Warmup destabilised MF loss (Phase~4c) \\
+Gradient clip   & $\|\nabla\|_2 \le 1.0$ & Prevents spike propagation \\
+Mixed precision & bf16          & Standard for A100 \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,36 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Training Dynamics}
+
+Table~\ref{tab:dynamics} shows key training metrics at milestone epochs.
+
+\begin{table}[ht]
+\centering
+\caption{Training dynamics at milestone epochs.}
+\label{tab:dynamics}
+\begin{tabular}{rrccccc}
+\toprule
+\textbf{Epoch} & \textbf{Raw Loss} & $\cos(V,v_c)$ & $\cos(\hat{v},v_c)$ & \textbf{Rel.\,Err.} & $\|\nabla\|$ & \textbf{LR} \\
+\midrule
+0   & 2,788,299 & 0.083 & 0.170 & 1.353 & 1.384 & $1.0\!\times\!10^{-4}$ \\
+50  & 5,316,270 & 0.240 & 0.388 & 1.759 & 0.953 & ${\sim}9.9\!\times\!10^{-5}$ \\
+100 & 6,275,983 & 0.274 & 0.412 & 1.778 & 0.910 & ${\sim}9.7\!\times\!10^{-5}$ \\
+388 & 4,724,751 & 0.295 & 0.429 & 1.645 & 1.180 & $8.5\!\times\!10^{-5}$ \\
+689 & 4,327,238 & 0.307 & 0.436 & 1.516 & 0.610 & $5.6\!\times\!10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key observations:}
+\begin{enumerate}[nosep]
+  \item \textbf{Raw loss is not a good proxy for generation quality.}  The raw
+    loss is dominated by the MF term ($\ell_{\mathrm{MF}} \approx
+    6.5\!\times\!10^6$ vs $\ell_{\mathrm{FM}} \approx
+    7\!\times\!10^5$) and does not monotonically decrease.  FID (computed from
+    EMA-weight samples) is the correct early-stopping metric.
+  \item \textbf{Cosine alignment improves steadily.}  $\cos(V,v_c)$ increases
+    from 0.083 to 0.307; the v-head alignment converges faster (0.170 $\to$
+    0.436), confirming it provides good tangents from early training.
+  \item \textbf{Gradient norm decreases dramatically.}  From 1.384 to 0.610;
+    clipping fraction drops ${\sim}90\%\!\to\!{\sim}5\%$, indicating stable
+    dynamics by epoch~${\sim}300$.
+\end{enumerate}

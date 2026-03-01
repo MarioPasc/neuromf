@@ -1,0 +1,50 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Flow Matching Preliminaries}
+
+Flow matching~\cite{lipman2023,liu2023} defines a probability path between data
+and noise via linear interpolation.  For a single sample:
+\begin{equation}
+  z_t = (1-t)\,z_0 + t\,\varepsilon, \qquad
+  z_0 \sim p_{\mathrm{data}},\quad
+  \varepsilon \sim \mathcal{N}(\mathbf{0},\,I_d),\quad
+  t \in [0,1]
+  \label{eq:interpolation}
+\end{equation}
+\begin{shapes}
+$z_0, \varepsilon, z_t \in \mathbb{R}^{C \times D \times H \times W}$;
+\quad batched: $(B, 4, 48, 48, 48)$.
+\quad $I_d$ is the $d \times d$ identity with $d = 442{,}368$.
+\quad $t \in \mathbb{R}$; batched: $(B,)$, broadcast to $(B,1,1,1,1)$.\\
+\textbf{Code:} \code{meanflow\_loss.py:201}:
+\code{z\_t = (1 - t\_broad) * z\_0 + t\_broad * eps}
+where \code{t\_broad = t.view(-1, 1, 1, 1, 1)}.
+\end{shapes}
+
+\noindent
+where $t{=}0$ is data and $t{=}1$ is noise. The \textbf{conditional velocity field}
+is defined as:
+\begin{equation}
+  v_c(z_t,t) \coloneqq \varepsilon - z_0
+  \quad \in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:cond_velocity}
+\end{equation}
+\begin{shapes}
+$v_c \in \mathbb{R}^{C \times D \times H \times W}$;
+\quad batched: $(B, 4, 48, 48, 48)$.\\
+\textbf{Code:} \code{meanflow\_loss.py:204}: \code{v\_c = eps - z\_0}.
+\end{shapes}
+
+\noindent
+A neural network $v_\theta$ is trained to match this field:
+\begin{equation}
+  \mathcal{L}_{\mathrm{FM}}
+    = \mathbb{E}_{z_0,\,\varepsilon,\,t}
+      \left[\,\bigl\|v_\theta(z_t,t) - v_c\bigr\|_2^2\,\right]
+  \label{eq:fm_loss}
+\end{equation}
+where $\|\cdot\|_2^2$ denotes the squared $L_2$ norm summed over all
+$d = C \cdot D \cdot H \cdot W = 442{,}368$ elements.
+
+\textbf{Limitation.}  Sampling requires integrating the learned velocity field
+from $t{=}1$ to $t{=}0$ via numerical ODE solvers, requiring $K \geq 5$
+network evaluations even with trajectory straightening (rectified flow).

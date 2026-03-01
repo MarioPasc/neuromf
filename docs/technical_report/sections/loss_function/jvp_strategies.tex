@@ -1,0 +1,72 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{JVP Strategies}
+\label{sec:jvp_strat}
+
+Two strategies are implemented for computing the directional derivative in
+Eq.~\eqref{eq:jvp_def}.
+
+\textbf{Strategy 1: Exact JVP} (\code{torch.func.jvp}).  Computes the exact
+directional derivative via forward-mode automatic differentiation:
+\begin{equation}
+  \bigl(u_\theta,\;\tfrac{du}{dt},\;\hat{v}\bigr)
+    = \texttt{torch.func.jvp}\!\bigl(
+        \underbrace{f_{\mathrm{dual}}}_{\mathbb{R}^d \times \mathbb{R} \times \mathbb{R} \,\to\, \mathbb{R}^d \times \mathbb{R}^d},\;
+        \underbrace{(z_t,\,t,\,r)}_{\text{primals}},\;
+        \underbrace{(\tilde{v},\,\mathbf{1},\,\mathbf{0})}_{\text{tangents}},\;
+        \texttt{has\_aux}{=}\texttt{True}\bigr)
+  \label{eq:exact_jvp}
+\end{equation}
+\begin{shapes}
+Primals: $z_t \!:\! (B, 4, 48, 48, 48)$; $t \!:\! (B,)$; $r \!:\! (B,)$.\\
+Tangents: $\tilde{v} \!:\! (B, 4, 48, 48, 48)$; $\mathbf{1}_B \!:\! (B,)$; $\mathbf{0}_B \!:\! (B,)$.\\
+Returns: $u_\theta \!:\! (B, 4, 48, 48, 48)$; $du/dt \!:\! (B, 4, 48, 48, 48)$; $\hat{v} \!:\! (B, 4, 48, 48, 48)$.\\
+\code{has\_aux=True} captures $\hat{v}$ without computing its JVP (zero overhead).\\
+Compound: $V = u + (t-r) \cdot \sg[du/dt]$: $(B, 4, 48, 48, 48)$.\\
+\textbf{Code:} \code{jvp\_strategies.py:109--119}.
+Memory: ${\sim}20$\,GB activations per sample at $B{=}2$ on A100-40GB.
+\end{shapes}
+
+\noindent
+Here $f_{\mathrm{dual}}(z,t,r) \coloneqq (u_\theta(z,t,r),\;\hat{v}(z,t,r))$
+returns both the average velocity (through which the JVP is computed) and the
+v-head output (captured as auxiliary, no JVP).  The function
+\code{\_u\_with\_v\_aux} wraps the dual model output so that
+\code{has\_aux=True} passes the v-head through unchanged.
+
+\textbf{Strategy 2: Finite Difference JVP} (FD-JVP).  Approximates the
+directional derivative using a perturbation of step size
+$\delta = 10^{-3}$:
+\begin{equation}
+  \frac{du_\theta}{dt}\bigg|_{\tilde{v}}
+    \approx \frac{
+      u_\theta^{\mathrm{(fp32)}}(z_t + \delta\,\tilde{v},\;t + \delta,\;r)
+      - u_\theta^{\mathrm{(fp32)}}(z_t,\;t,\;r)
+    }{\delta}
+    \;\in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:fd_jvp}
+\end{equation}
+\begin{shapes}
+Perturbed inputs: $z_t + \delta\tilde{v}$: $(B, 4, 48, 48, 48)$; $t + \delta$: $(B,)$.\\
+Both $u$ terms cast to fp32 before subtraction (avoids bf16 catastrophic cancellation).\\
+Perturbed pass runs under \code{torch.no\_grad()} (since $du/dt$ is always detached).\\
+\textbf{Code:} \code{jvp\_strategies.py:156--168}.
+\end{shapes}
+
+\textbf{Critical incompatibility (Phase~4f).}  x-prediction + FD-JVP is
+\textbf{numerically unstable}.  The x-to-u conversion
+$u = (z_t - \hat{x})/t$ has a $1/t$ singularity.  When FD-JVP computes
+the difference quotient, the result involves:
+\begin{equation}
+  \frac{du}{dt}\bigg|_\mathrm{FD}
+    = \frac{u(t{+}\delta)-u(t)}{\delta}
+    \sim \frac{O(1/t)}{\delta}
+    = O\!\left(\frac{1}{t^2\,\delta}\right) \to \infty
+  \quad\text{as }t\to t_{\min}
+  \label{eq:fd_instability}
+\end{equation}
+With exact JVP, the $1/t$ factor is analytically differentiated via the
+chain rule, yielding stable gradients.
+
+\textbf{Rule:} \fbox{x-pred + exact JVP = stable}\ \ %
+\fbox{u-pred + FD-JVP = stable}\ \ %
+\fbox{x-pred + FD-JVP = explosion}

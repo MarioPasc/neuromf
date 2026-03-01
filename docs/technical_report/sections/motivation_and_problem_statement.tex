@@ -1,0 +1,58 @@
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Motivation and Problem Statement}
+\label{sec:motivation}
+
+\subsection{Clinical Need}
+
+Generative models for 3D brain MRI synthesis serve three clinical purposes:
+(i)~data augmentation for rare pathologies with scarce training data,
+(ii)~synthetic cohorts for privacy-preserving research, and
+(iii)~counterfactual generation for explainability.
+The critical bottleneck in existing methods is \textbf{sampling cost}:
+state-of-the-art approaches (DDPM, flow matching, rectified flow)
+require 5--1000 network evaluations per volume, making large-scale synthesis
+prohibitively slow.
+
+\subsection{Gap in the Literature}
+
+No prior work has applied MeanFlow---or any 1-step flow-based model---to 3D
+medical image synthesis. The closest works are summarised in
+Table~\ref{tab:literature}.
+
+\begin{table}[ht]
+\centering
+\caption{Comparison with related generative methods for brain MRI.}
+\label{tab:literature}
+\begin{tabular}{lccll}
+\toprule
+\textbf{Method} & \textbf{Space} & \textbf{NFE} & \textbf{Paradigm} & \textbf{Domain} \\
+\midrule
+MAISI-v2 \cite{maisi_v2}    & Latent & 5--50   & Rectified Flow       & 3D CT/MRI \\
+MOTFM \cite{motfm}          & Pixel  & 10--50  & OT Flow Matching     & 3D Brain MRI \\
+Med-DDPM \cite{medddpm}     & Pixel  & 1000    & DDPM                 & 3D Brain MRI \\
+pMF \cite{pmf}              & Pixel  & 1       & Progressive MeanFlow & 2D Natural Images \\
+\textbf{NeuroMF (ours)}     & \textbf{Latent} & \textbf{1} & \textbf{MeanFlow (iMF dual-head)} & \textbf{3D Brain MRI} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Our work fills the intersection: \textbf{1-step $+$ latent $+$ 3D $+$ medical}.
+
+\subsection{Approach Overview}
+
+NeuroMF trains a MeanFlow model in the latent space of a frozen MAISI 3D VAE:
+\begin{center}
+\begin{BVerbatim}
+Input MRI (1x192^3) --> Frozen MAISI VAE Encoder --> Latent (4x48^3)
+                                                         |
+                                                  Train MeanFlow
+                                                         |
+                                                         v
+Synthetic MRI (1x192^3) <-- Frozen MAISI VAE Decoder <--'
+\end{BVerbatim}
+\end{center}
+
+At inference, a \textbf{single forward pass} through the MeanFlow network
+generates a complete 3D brain MRI volume.  The network learns the
+\emph{average velocity} of a probability flow ODE, which by construction
+encodes the entire transport from noise to data in one evaluation.

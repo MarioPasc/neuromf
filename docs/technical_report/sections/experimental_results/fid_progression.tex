@@ -1,0 +1,30 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{FID Progression}
+
+FID is computed as a 2.5D metric using RadImageNet ResNet-50 features on
+central axial, coronal, and sagittal slices (Table~\ref{tab:fid}).
+
+\begin{table}[ht]
+\centering
+\caption{2.5D FID progression during training (selected checkpoints).}
+\label{tab:fid}
+\begin{tabular}{rrrrrl}
+\toprule
+\textbf{Epoch} & \textbf{Step} & $\FID_{\mathrm{avg}}$ & $\FID_{xy}$ & $\FID_{yz}$ & \textbf{Notes} \\
+\midrule
+9    & 420    & 46.76 & 45.12 & 46.68 & First evaluation \\
+28   & 1,218  & 28.40 & 17.25 & 43.63 & Rapid initial drop \\
+88   & 3,738  & 14.61 & 14.08 & 16.25 & Approaching plateau \\
+178  & 7,518  & 14.06 & 13.79 & 15.46 & \\
+268  & 11,298 & 12.94 & 12.77 & 14.06 & \\
+\textbf{388} & \textbf{16,338} & \textbf{11.67} & \textbf{11.85} & \textbf{12.09} & \textbf{Best FID} \\
+628  & 26,418 & 11.92 & 12.03 & 12.33 & \\
+688  & 28,938 & 11.88 & 12.14 & 12.08 & Final evaluation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+FID drops rapidly from 46.76 to ${\sim}$14 in the first 88~epochs, then
+gradually improves to \textbf{11.67} at epoch~388, after which it plateaus.
+Training continued for 302~more epochs without improvement before early
+stopping triggered.

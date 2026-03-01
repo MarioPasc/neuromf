@@ -1,0 +1,43 @@
+
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Operator Definitions}
+\label{sec:operators}
+
+We define two operators used throughout this report.
+
+\textbf{Definition 1 (Stop-gradient).}  The stop-gradient operator
+$\sg[\cdot]$ returns the value of its argument but blocks gradient
+propagation during backpropagation:
+\begin{equation}
+  \sg[x] \coloneqq x, \qquad
+  \frac{\partial}{\partial \theta}\,\sg[x(\theta)] = \mathbf{0}
+  \label{eq:sg_def}
+\end{equation}
+In code, $\sg[\cdot]$ is implemented as \code{.detach()}, which detaches the
+tensor from the computation graph.  For any differentiable function
+$f(\theta, \sg[g(\theta)])$, the gradient $\nabla_\theta f$ treats $\sg[g]$
+as a constant, so only the explicit dependence of $f$ on $\theta$ is
+differentiated.
+
+\textbf{Definition 2 (Jacobian-Vector Product).}  Given a differentiable
+function $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$ evaluated at a point
+$\mathbf{x}_0 \in \mathbb{R}^n$, and a tangent vector
+$\mathbf{v} \in \mathbb{R}^n$, the Jacobian-vector product (JVP) is:
+\begin{equation}
+  \jvp\bigl(\mathbf{f};\;\mathbf{x}_0;\;\mathbf{v}\bigr)
+    \coloneqq J_\mathbf{f}(\mathbf{x}_0)\,\mathbf{v}
+    = \left.\frac{d}{d\alpha}\,\mathbf{f}(\mathbf{x}_0 + \alpha\,\mathbf{v})
+      \right|_{\alpha=0}
+    \;\in \mathbb{R}^m
+  \label{eq:jvp_operator}
+\end{equation}
+where $J_\mathbf{f}(\mathbf{x}_0) \in \mathbb{R}^{m \times n}$ is the
+Jacobian matrix.  The JVP can be computed in $O(n)$ time via forward-mode
+automatic differentiation (\code{torch.func.jvp}), without ever constructing
+the full $O(n^2)$ Jacobian.
+
+In our setting, $\mathbf{f} = u_\theta$ maps
+$(\underbrace{z_t}_{\mathbb{R}^d},\;\underbrace{t}_{\mathbb{R}},\;
+\underbrace{r}_{\mathbb{R}})$ to $\mathbb{R}^d$ with $d = 442{,}368$, so the
+Jacobian $J \in \mathbb{R}^{442{,}368 \times 442{,}370}$ is never formed.
+The tangent vector is $(\tilde{v},\,1,\,0)$ (see \S\ref{sec:compound_v}).

@@ -1,0 +1,18 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{One-Step Sampling (1-NFE)}
+
+With x-prediction, 1-NFE sampling is a single forward pass:
+\begin{equation}
+  \varepsilon \sim \mathcal{N}(\mathbf{0},\,I_d)
+    \;\in \mathbb{R}^{B \times C \times D \times H \times W},
+  \qquad
+  z_0 = f_\theta(\varepsilon,\;r{=}\mathbf{0}_B,\;t{=}\mathbf{1}_B)
+    \;\in \mathbb{R}^{B \times C \times D \times H \times W}
+  \label{eq:1nfe_sampling}
+\end{equation}
+\begin{shapes}
+$\varepsilon, z_0$: $(B, 4, 48, 48, 48)$.
+\quad $r = \mathbf{0}_B$, $t = \mathbf{1}_B$: each $(B,)$.\\
+The v-head output is discarded: \code{if isinstance(output, tuple): output = output[0]}.\\
+\textbf{Code:} \code{one\_step.py:32--46}.
+\end{shapes}

@@ -1,0 +1,25 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{EMA (Exponential Moving Average)}
+\label{sec:ema}
+
+An EMA model maintains shadow parameters $\theta_\EMA$ that are a running
+weighted average of the online parameters $\theta$.  The update rule, applied
+after each optimiser step, is:
+\begin{equation}
+  \theta_{\EMA}^{(k+1)}
+    \coloneqq \beta\,\theta_{\EMA}^{(k)} + (1-\beta)\,\theta^{(k+1)}
+  \label{eq:ema}
+\end{equation}
+where $\beta = 0.9999$ is the decay rate (half-life $\approx 6{,}931$ steps),
+$k$ is the optimiser step index, $\theta^{(k+1)}$ are the parameters after the
+$k$-th optimiser step, and $\theta_\EMA^{(0)} = \theta^{(0)}$ (initialised to
+model weights).
+\begin{shapes}
+$\theta, \theta_\EMA$: all trainable parameters (${\sim}178$\,M scalars).\\
+\textbf{Code:} \code{ema.py:50}: \code{shadow[name].mul\_(decay).add\_(param.data, alpha=1-decay)}.\\
+Applied per-parameter: each shadow tensor has the same shape as its corresponding parameter.
+\end{shapes}
+
+\noindent
+All FID evaluations during training use EMA weights.  The best model checkpoint
+is selected by FID computed from EMA-weight samples.

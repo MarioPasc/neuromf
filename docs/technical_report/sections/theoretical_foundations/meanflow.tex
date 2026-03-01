@@ -1,0 +1,31 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{MeanFlow: Average Velocity for 1-Step Generation}
+
+MeanFlow~\cite{meanflow} replaces the instantaneous velocity $v(z_t,t)$ with
+the \textbf{average velocity} over an interval $[r,t]$:
+\begin{equation}
+  u(z_t,r,t)
+    \coloneqq \frac{1}{t-r}\int_r^t v(z_s,s)\,ds
+    \quad \in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:avg_velocity}
+\end{equation}
+\begin{shapes}
+$u \in \mathbb{R}^{C \times D \times H \times W}$;
+\quad batched: $(B, 4, 48, 48, 48)$.
+\quad $r, t \in \mathbb{R}$; batched: $(B,)$.
+\end{shapes}
+
+\noindent
+If the average velocity from $t{=}0$ to $t{=}1$ is known exactly, the entire
+flow can be computed in one step:
+\begin{equation}
+  z_0 = z_1 - u_\theta(z_1,\,r{=}0,\,t{=}1)
+  \quad \in \mathbb{R}^{C \times D \times H \times W}
+  \qquad \text{[1-NFE generation]}
+  \label{eq:one_nfe}
+\end{equation}
+\begin{shapes}
+$z_1 = \varepsilon \sim \mathcal{N}(\mathbf{0}, I_d)$: $(B, 4, 48, 48, 48)$.
+\quad $r = \mathbf{0}_B$, $t = \mathbf{1}_B$: each $(B,)$.\\
+\textbf{Code:} \code{one\_step.py:37}: \code{output = model(noise, r, t)}.
+\end{shapes}

@@ -1,0 +1,53 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Notation and Tensor Dimensions}
+\label{sec:notation}
+
+Table~\ref{tab:notation} defines all symbols used in this report and their
+tensor shapes as instantiated in code (\code{src/neuromf/}).  Equations are
+presented \emph{per-sample} (batch index suppressed) unless stated otherwise;
+grey \emph{Shapes} boxes show the batched implementation dimensions.
+
+\begin{table}[ht]
+\centering
+\caption{Notation, symbols, and tensor dimensions.  All latent-space tensors
+live in $\mathbb{R}^{C \times D \times H \times W}$ with $C{=}4$,
+$D{=}H{=}W{=}48$.  The total latent dimensionality is
+$d = C \cdot D \cdot H \cdot W = 4 \times 48^3 = 442{,}368$.}
+\label{tab:notation}
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} & \textbf{Per-sample shape} & \textbf{Batched shape} \\
+\midrule
+$z_0$ & Clean latent (data) & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$\varepsilon$ & Gaussian noise & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$z_t$ & Noisy interpolation at time $t$ & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$v_c$ & Conditional velocity (target) & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$u_\theta$ & Average velocity (model output) & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$\hat{x}$ & Denoised data estimate (x-pred) & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$\hat{v}$ & v-head output (tangent predictor) & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$\tilde{v}$ & JVP tangent vector & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$V_\theta$ & Compound velocity & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+$\frac{du}{dt}$ & JVP output (directional deriv.) & $\mathbb{R}^{C \times D \times H \times W}$ & $(B, 4, 48, 48, 48)$ \\
+\midrule
+$t$ & Upper time (current) & $[0,1]$ & $(B,)$ \\
+$r$ & Lower time (interval start) & $[0,1],\; r \le t$ & $(B,)$ \\
+$h$ & Interval width $h \coloneqq t - r$ & $[0,1]$ & $(B,)$ \\
+\midrule
+$\mathbf{e}_t$ & Time embedding for $t$ & $\mathbb{R}^{d_\mathrm{emb}}$ & $(B, 256)$ \\
+$\mathbf{e}_h$ & Time embedding for $h$ & $\mathbb{R}^{d_\mathrm{emb}}$ & $(B, 256)$ \\
+$\mathbf{e}$ & Combined embedding $\mathbf{e}_t + \mathbf{e}_h$ & $\mathbb{R}^{d_\mathrm{emb}}$ & $(B, 256)$ \\
+\midrule
+$\ell_u, \ell_v$ & Per-sample raw losses & $\mathbb{R}_{\ge 0}$ & $(B,)$ \\
+$w_u, w_v$ & Per-sample adaptive weights & $\mathbb{R}_{> 0}$ & $(B,)$ \\
+$\mathcal{L}$ & Total scalar loss & $\mathbb{R}$ & scalar \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Broadcasting convention.}  When a scalar-per-sample quantity $t \in
+\mathbb{R}^B$ multiplies a 5-D tensor $z \in \mathbb{R}^{B \times C \times D
+\times H \times W}$, $t$ is reshaped to $(B, 1, 1, 1, 1)$ via
+\code{t.view(-1, 1, 1, 1, 1)} before element-wise multiplication.  We write
+this broadcast as $t \odot z$ and denote the broadcast shape as
+$\bar{t} \in \mathbb{R}^{B \times 1 \times 1 \times 1 \times 1}$.

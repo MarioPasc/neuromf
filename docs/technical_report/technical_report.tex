@@ -1,0 +1,234 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,mathtools}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{fancyvrb}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{microtype}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+
+% ── Formatting ────────────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=green!50!black,
+  urlcolor=blue!70!black,
+}
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+
+% ── Shape annotation box ────────────────────────────────────────────────────
+\newtcolorbox{shapes}{
+  colback=gray!8, colframe=gray!50, boxrule=0.3pt,
+  left=4pt, right=4pt, top=2pt, bottom=2pt,
+  fontupper=\small, before skip=2pt, after skip=6pt,
+}
+
+% ── Custom commands ───────────────────────────────────────────────────────────
+\newcommand{\jvp}{\mathrm{JVP}}
+\newcommand{\EMA}{\mathrm{EMA}}
+\newcommand{\FID}{\mathrm{FID}}
+\newcommand{\SWD}{\mathrm{SWD}}
+\newcommand{\ie}{\textit{i.e.}}
+\newcommand{\eg}{\textit{e.g.}}
+\newcommand{\etal}{\textit{et~al.}}
+\newcommand{\code}[1]{\texttt{#1}}
+\DeclareMathOperator{\sg}{sg}        % stop-gradient
+\DeclareMathOperator{\sigmoid}{\sigma}
+\DeclareMathOperator{\diag}{diag}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\begin{center}
+  {\LARGE\bfseries NeuroMF: Latent MeanFlow for\\[4pt] One-Step 3D Brain MRI Synthesis}\\[18pt]
+  {\large Technical Report --- Detailed Scientific Summary}\\[12pt]
+  {\large Mario Pascual-Gonz\'{a}lez}\\[6pt]
+  {\normalsize February 2026}\\[6pt]
+  {\small\itshape Phases 0--5 complete (code); Phase~4 best model trained and evaluated;
+  Phase~5 generation pipeline ready}
+\end{center}
+
+\vspace{1em}
+\hrule
+\vspace{0.5em}
+
+\tableofcontents
+
+\vspace{1em}
+\hrule
+\newpage
+
+\input{sections/motivation_and_problem_statement.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Theoretical Foundations}
+\label{sec:theory}
+
+
+\input{sections/theoretical_foundations/notation_and_tensor_dimensions.tex}
+
+\input{sections/theoretical_foundations/operator_definitions.tex}
+
+\input{sections/theoretical_foundations/flow_matching_preliminaries.tex}
+
+\input{sections/theoretical_foundations/meanflow.tex}
+
+\input{sections/theoretical_foundations/meanflow_identity_and_compound_velocity.tex}
+
+\input{sections/theoretical_foundations/improved_meanflow.tex}
+
+\input{sections/theoretical_foundations/x_pred_reparameterisation.tex}
+
+\input{sections/theoretical_foundations/latent_space_formulation.tex}
+
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Architecture Design}
+\label{sec:architecture}
+
+\input{sections/architecture_design/frozen_maisi_vae.tex}
+
+\input{sections/architecture_design/meanflow_unet.tex}
+
+\input{sections/architecture_design/dual_time_conditioning.tex}
+
+\input{sections/architecture_design/v_head.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Loss Function and Training Objective}
+\label{sec:loss}
+
+\input{sections/loss_function/per_channel_lp_loss.tex}
+
+\input{sections/loss_function/combined_imf_dual_head_loss.tex}
+
+\input{sections/loss_function/adaptive_weighting.tex}
+
+\input{sections/loss_function/jvp_strategies.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Data Pipeline}
+\label{sec:data}
+
+\input{sections/data_pipeline/dataset.tex}
+
+\input{sections/data_pipeline/preprocessing_pipeline.tex}
+
+\input{sections/data_pipeline/latent_precomputation.tex}
+
+\input{sections/data_pipeline/latent_augmentation.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Training Protocol}
+\label{sec:training}
+
+\input{sections/training_protocol/algorithm.tex}
+
+\input{sections/training_protocol/time_sampling.tex}
+
+\input{sections/training_protocol/optimiser_and_schedule.tex}
+
+\input{sections/training_protocol/compute_budget.tex}
+
+\input{sections/training_protocol/ema.tex}
+
+\input{sections/training_protocol/divergence_monitoring.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Sampling and Generation}
+\label{sec:sampling}
+
+\input{sections/sampling_and_generation/one_step_sampling.tex}
+
+\input{sections/sampling_and_generation/multi_step_euler_sampling.tex}
+
+\input{sections/sampling_and_generation/full_generation_pipeline.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Experimental Results}
+\label{sec:results}
+
+\input{sections/experimental_results/toy_validation.tex}
+
+\input{sections/experimental_results/main_training.tex}
+
+\input{sections/experimental_results/fid_progression.tex}
+
+\input{sections/experimental_results/training_dynamics.tex}
+
+\input{sections/experimental_results/generated_sample_statistics.tex}
+
+\input{sections/experimental_results/nfe_quality_analysis.tex}
+
+\input{sections/experimental_results/spectral_analysis.tex}
+
+\input{sections/experimental_results/swd.tex}
+
+\input{sections/experimental_results/key_ablation_insights.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Evaluation Protocol}
+\label{sec:evaluation}
+
+\input{sections/evaluation_protocol/image_quality_metrics.tex}
+
+\input{sections/evaluation_protocol/spectral_analysis.tex}
+
+\input{sections/evaluation_protocol/morphological_assessment.tex}
+
+\input{sections/evaluation_protocol/nfe_consistency_analysis.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Implementation Details}
+\label{sec:implementation}
+
+\input{sections/implementation_details/software_stack.tex}
+
+\input{sections/implementation_details/gated_phase_system.tex}
+
+\input{sections/implementation_details/compute_infrastructure.tex}
+
+
+\input{sections/novel_contributions.tex}
+
+
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Current Status and Next Steps}
+\label{sec:status}
+
+\input{sections/current_status/current_state.tex}
+
+\input{sections/current_status/key_findings.tex}
+
+\input{sections/current_status/open_questions.tex}
+
+
+\input{sections/bibliography.tex}
+
+\end{document}

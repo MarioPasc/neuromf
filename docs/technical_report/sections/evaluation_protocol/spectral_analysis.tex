@@ -1,0 +1,14 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Spectral Analysis}
+
+High-frequency energy ratio via 3D FFT:
+\begin{equation}
+  \rho \coloneqq \frac{\displaystyle\sum_{|\mathbf{k}|>k_0} |\mathcal{F}(x)(\mathbf{k})|^2}
+              {\displaystyle\sum_{\mathbf{k}} |\mathcal{F}(x)(\mathbf{k})|^2}
+    \;\in [0,1]
+  \label{eq:spectral}
+\end{equation}
+where $\mathcal{F}(x) \in \mathbb{C}^{D' \times H' \times W'}$ ($D'{=}H'{=}W'{=}192$)
+is the 3D discrete Fourier transform, $\mathbf{k} \in \mathbb{Z}^3$ is the
+frequency index, $|\mathbf{k}|$ is the radial frequency, and $k_0$ is the
+cutoff.  Reported for real, VAE-reconstructed, and generated volumes.

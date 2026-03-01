@@ -1,0 +1,92 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{The MeanFlow Identity and Compound Velocity}
+\label{sec:compound_v}
+
+The average velocity $u$ must satisfy a self-consistency condition.
+Differentiating the integral definition~\eqref{eq:avg_velocity} with respect
+to $t$ and applying the chain rule yields the \textbf{MeanFlow Identity}:
+\begin{equation}
+  v(z_t,t)
+    = u(z_t,r,t)
+      + (t-r)\!\left[
+          \underbrace{\frac{\partial u}{\partial z_t}\,v(z_t,t)}_{
+            \in\,\mathbb{R}^{d},\;\text{spatial JVP}}
+          + \underbrace{\frac{\partial u}{\partial t}}_{
+            \in\,\mathbb{R}^{d},\;\text{temporal deriv.}}
+        \right]
+  \label{eq:mf_identity}
+\end{equation}
+\begin{shapes}
+All terms $\in \mathbb{R}^{C \times D \times H \times W}$; batched: $(B, 4, 48, 48, 48)$.\\
+$\frac{\partial u}{\partial z_t} \in \mathbb{R}^{d \times d}$ is the Jacobian
+(never formed); only its product with $v$ is computed via JVP.\\
+$(t-r) \in \mathbb{R}$; batched: $(B,)$, broadcast to $(B,1,1,1,1)$.
+\end{shapes}
+
+\noindent
+The right-hand side, evaluated with the neural approximation $u_\theta$, gives
+the \textbf{compound velocity}.  We first compute the directional derivative
+(JVP) of $u_\theta$ with respect to its inputs $(z_t, t, r)$ in the tangent
+direction $(\tilde{v}, 1, 0)$:
+\begin{equation}
+  \frac{du_\theta}{dt}\bigg|_{\tilde{v}}
+    \coloneqq \jvp\!\bigl(u_\theta;\;(z_t,t,r);\;(\tilde{v},1,0)\bigr)
+    = \frac{\partial u_\theta}{\partial z_t}\,\tilde{v}
+      + \frac{\partial u_\theta}{\partial t}\cdot 1
+      + \frac{\partial u_\theta}{\partial r}\cdot 0
+    \;\in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:jvp_def}
+\end{equation}
+\begin{shapes}
+Primals: $z_t \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$,
+$t \in \mathbb{R}^{B}$, $r \in \mathbb{R}^{B}$.\\
+Tangents: $\tilde{v} \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$,
+$\mathbf{1}_B \in \mathbb{R}^{B}$, $\mathbf{0}_B \in \mathbb{R}^{B}$.\\
+Output: $\frac{du}{dt} \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$.\\
+\textbf{Code:} \code{jvp\_strategies.py:117}: \code{u, du\_dt, v = torch.func.jvp(}\\
+\code{\quad \_u\_with\_v\_aux, (z\_t, t, r), (v\_tangent, dt, dr), has\_aux=True)}.\\
+Here \code{dt = torch.ones\_like(t)}: $(B,)$; \code{dr = torch.zeros\_like(r)}: $(B,)$.
+\end{shapes}
+
+\noindent
+The compound velocity is then:
+\begin{equation}
+  \boxed{
+  V_\theta
+    \coloneqq u_\theta
+      + (t - r) \cdot \sg\!\left[\frac{du_\theta}{dt}\bigg|_{\tilde{v}}\right]
+  }
+  \quad \in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:compound_V}
+\end{equation}
+\begin{shapes}
+$u_\theta, V_\theta \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$;
+$\sg[\cdot]$ is \code{.detach()} (Def.~1, Eq.~\ref{eq:sg_def}).\\
+$(t-r)$: $(B,)$ broadcast to $(B,1,1,1,1)$ via \code{.view(-1,1,1,1,1)}.\\
+\textbf{Code:} \code{jvp\_strategies.py:59}:
+\code{V = u + t\_minus\_r * du\_dt.detach()}.\\
+Gradients flow through $u_\theta$ but \textbf{not} through $du/dt$ (stop-gradient).
+\end{shapes}
+
+\noindent
+The $\sg[\cdot]$ on the JVP term is essential: it ensures that during
+backpropagation, gradients flow only through $u_\theta$ (left term), not
+through the JVP correction.  Without $\sg[\cdot]$, second-order derivatives of
+$u_\theta$ would be needed, making training intractable.
+
+\textbf{Tangent vector $\tilde{v}$.}  In the improved MeanFlow (iMF)
+formulation~\cite{imf}, the tangent $\tilde{v}$ is the model's own
+instantaneous velocity estimate at $r{=}t$ (see \S\ref{sec:vhead} for
+the dual-head variant):
+\begin{equation}
+  \tilde{v} = u_\theta(z_t,\,r{=}t,\,t)
+  \quad \in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:tangent_imf}
+\end{equation}
+This makes $V_\theta$ depend only on $z_t$ (not on ground-truth $z_0$ or
+$\varepsilon$), matching the inference setting where data is unavailable.
+
+\textbf{Special cases.}  When $r = t$ (flow-matching samples, 50\% of the
+batch), $(t-r) = 0$ and $V_\theta = u_\theta$, recovering standard flow
+matching.  When $r < t$ (MeanFlow samples), the JVP correction enforces
+self-consistency of the average velocity across intervals.

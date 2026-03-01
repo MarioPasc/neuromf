@@ -1,0 +1,7 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Divergence Monitoring}
+
+An EMA-smoothed raw loss monitor (decay~0.99, half-life ${\sim}$69 steps)
+tracks training stability.  Warnings fire at $3\times$ and $5\times$ the
+minimum EMA loss, with a grace period of 1000~steps.  Early stopping is
+FID-based via \code{EvaluationCallback} with patience\,=\,10.

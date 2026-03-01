@@ -1,0 +1,33 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Dataset}
+
+We use 8 datasets from FOMO-60K, a large-scale preprocessed brain MRI
+collection (Table~\ref{tab:dataset}).
+
+\begin{table}[ht]
+\centering
+\caption{Dataset composition from 8 FOMO-60K subsets.}
+\label{tab:dataset}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Dataset} & \textbf{Train Subj.} & \textbf{Train Scans} & \textbf{Val Scans} & \textbf{Test Scans} \\
+\midrule
+PT001\_OASIS1 & 352  & 1,414 & 170 & 96 \\
+PT002\_OASIS2 & 71   & 682   & 82  & 37 \\
+PT005\_IXI    & 494  & 494   & 58  & 29 \\
+PT007\_NIMH   & 212  & 428   & 48  & 23 \\
+PT008\_DLBS   & 394  & 807   & 109 & 51 \\
+PT011\_MBSR   & 125  & 295   & 36  & 16 \\
+PT012\_UCLA   & 106  & 106   & 13  & 6  \\
+PT015\_NKI    & 722  & 1,245 & 158 & 68 \\
+\midrule
+\textbf{Total} & \textbf{2,476} & \textbf{5,471} & \textbf{674} & \textbf{326} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Many subjects have multiple sessions (longitudinal scans), yielding 5,471
+training scans from 2,476 subjects---approximately $4\times$ more data than
+the initially planned ${\sim}1{,}172$ scans from 3~datasets.  All volumes are
+T1-weighted, skull-stripped, RAS-oriented, and co-registered.  The split is
+stratified by dataset with a fixed seed of~42 for reproducibility.

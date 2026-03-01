@@ -1,0 +1,61 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{v-Head (Auxiliary Tangent Predictor)}
+\label{sec:vhead_arch}
+
+The v-head is a lightweight auxiliary output path branching from the UNet's
+final feature map $\mathbf{h}$ (before the main output convolution):
+\begin{center}
+\begin{BVerbatim}
+Shared Backbone (B, 64, 48, 48, 48)
+  |-- u-head: UNet out conv  --> (B, 4, 48, 48, 48)  [main]
+  |-- v-head: ResBlock -> GN -> SiLU -> Conv3d --> (B, 4, 48, 48, 48)
+\end{BVerbatim}
+\end{center}
+
+The v-head ResBlock~(\code{\_VHeadResBlock}, \code{maisi\_unet.py:205--235})
+has the following structure:
+\begin{equation}
+  \mathrm{ResBlock}(\mathbf{h})
+    = \mathbf{h}
+      + \underbrace{
+          \mathrm{Conv}_{3 \times 3 \times 3}^{64 \to 64}\bigl(
+            \mathrm{SiLU}\bigl(
+              \mathrm{GN}_{32}\bigl(
+                \mathrm{Conv}_{3 \times 3 \times 3}^{64 \to 64}\bigl(
+                  \mathrm{SiLU}\bigl(\mathrm{GN}_{32}(\mathbf{h})\bigr)
+                \bigr)
+              \bigr)
+            \bigr)
+          \bigr)
+        }_{\text{zero-initialised second conv}}
+  \label{eq:vhead_resblock}
+\end{equation}
+\begin{shapes}
+$\mathbf{h} \in \mathbb{R}^{B \times 64 \times 48 \times 48 \times 48}$.
+\quad $\mathrm{GN}_{32}$: GroupNorm with 32 groups over 64 channels.\\
+Conv weights: $\mathbb{R}^{64 \times 64 \times 3 \times 3 \times 3}$
+($= 110{,}592$ params each). Second conv zero-initialised.\\
+Total v-head: ${\sim}228$\,K params ($<0.13\%$ of 178\,M backbone).
+\end{shapes}
+
+\begin{table}[ht]
+\centering
+\caption{v-Head properties.}
+\label{tab:vhead}
+\begin{tabular}{ll}
+\toprule
+\textbf{Property}   & \textbf{Value} \\
+\midrule
+ResBlocks            & 1 \\
+Parameters           & ${\sim}$228\,K ($<$0.13\% of total 178\,M) \\
+Initialisation       & Final Conv3d zero-initialised (weights and bias) \\
+Inference cost       & Zero (output discarded at sampling) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Zero initialisation rationale.}  The v-head starts at identically zero
+output ($\hat{v} = \mathbf{0}$), so the u-head gradient signal is unperturbed
+at initialisation.  Our training confirms:
+$\cos(\hat{v},v_c)$ rises from 0.17 (epoch~0) to 0.39 (epoch~50) to 0.44
+(epoch~689).

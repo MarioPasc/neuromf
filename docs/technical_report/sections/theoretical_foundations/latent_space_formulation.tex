@@ -1,0 +1,17 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Latent Space Formulation}
+
+All of the above operates identically in latent space.  The computational
+advantages are:
+\begin{enumerate}[nosep]
+  \item \textbf{JVP cost reduction:} Latent dimension
+    $d = 4\times 48^3 = 442{,}368$ vs pixel space
+    $d = 192^3 = 7{,}077{,}888$---a \textbf{16$\times$ reduction} in JVP
+    compute per iteration.
+  \item \textbf{Memory reduction:} The UNet operates on $48^3$ feature maps
+    vs $192^3$---approximately \textbf{64$\times$ reduction} in activation
+    memory per JVP pass.
+  \item \textbf{Training efficiency:} The latent space is pre-computed
+    (Phase~1), so VAE encode/decode cost is amortised across all training
+    epochs.
+\end{enumerate}

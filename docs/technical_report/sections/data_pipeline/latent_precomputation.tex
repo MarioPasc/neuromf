@@ -1,0 +1,11 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Latent Pre-Computation (Phase~1)}
+
+All training volumes are pre-encoded through the frozen MAISI VAE and stored
+in HDF5 shards.  A total of 6,471~volumes were encoded (${\sim}$11.5\,GB
+storage).
+
+\textbf{Latent statistics} are computed online during encoding via
+\code{LatentStatsAccumulator} (sum-of-powers method in float64): per-channel
+mean, std, skewness, kurtosis, min, max, and a $4{\times}4$ cross-channel
+Pearson correlation matrix.

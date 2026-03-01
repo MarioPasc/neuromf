@@ -1,0 +1,8 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Compute Infrastructure}
+
+\begin{itemize}[nosep]
+  \item \textbf{Local:} RTX 4060 8\,GB --- development, testing, analysis.
+  \item \textbf{Picasso:} 4 nodes $\times$ 8$\times$ A100-40GB --- training,
+        encoding, evaluation.  SLURM with \code{--constraint=dgx}.
+\end{itemize}

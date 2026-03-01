@@ -1,0 +1,23 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Latent Augmentation}
+
+Three augmentation transforms operate directly on latents during training
+(Table~\ref{tab:augmentation}).
+
+\begin{table}[ht]
+\centering
+\caption{Latent augmentation transforms.}
+\label{tab:augmentation}
+\begin{tabular}{llll}
+\toprule
+\textbf{Transform} & \textbf{Prob.} & \textbf{Params} & \textbf{Rationale} \\
+\midrule
+Flip depth axis   & 0.5 & L--R in RAS        & Bilateral symmetry \\
+Gaussian noise    & 0.2 & 5\% of per-ch.\ std & Encoding noise \\
+Intensity scale   & 0.2 & $\pm$5\%            & Scanner variation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Approximately 68\% of training samples are augmented per epoch
+(${\sim}3{,}720$ out of 5,471).

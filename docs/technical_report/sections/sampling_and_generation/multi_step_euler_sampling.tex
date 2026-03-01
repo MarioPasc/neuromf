@@ -1,0 +1,27 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Multi-Step Euler Sampling}
+
+For comparison, multi-step Euler sampling divides $[1,0]$ into $K$ uniform
+steps with timesteps $t_i = 1 - i/K$ for $i = 0, \ldots, K$:
+\begin{equation}
+  \Delta t_i \coloneqq t_i - t_{i+1} = \frac{1}{K},
+  \qquad
+  t_i, t_{i+1} \in \{1,\;1{-}\tfrac{1}{K},\;\ldots,\;0\}
+  \label{eq:euler_times}
+\end{equation}
+At each step, the model predicts $\hat{x}$, which is converted to velocity
+and used for an Euler update:
+\begin{equation}
+  \hat{x}_i = f_\theta(z^{(i)},\;r{=}t_{i+1},\;t{=}t_i)
+    \;\in \mathbb{R}^{C \times D \times H \times W},
+  \qquad
+  u_i = \frac{z^{(i)}-\hat{x}_i}{\max(t_i,\,0.05)},
+  \qquad
+  z^{(i+1)} = z^{(i)} - \Delta t_i \cdot u_i
+  \label{eq:euler_step}
+\end{equation}
+\begin{shapes}
+$z^{(i)}, \hat{x}_i, u_i$: each $(B, 4, 48, 48, 48)$.
+\quad $z^{(0)} = \varepsilon$; $z^{(K)} = z_0$ (final sample).\\
+\textbf{Code:} \code{multi\_step.py}; NFE levels tested: $K \in \{1,2,5,10\}$.
+\end{shapes}

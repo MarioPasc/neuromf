@@ -1,0 +1,83 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Adaptive Weighting}
+\label{sec:adaptive}
+
+Each loss component is independently normalised by its own magnitude to prevent
+either head from dominating the gradient.  For a generic per-sample raw loss
+$\ell^{(b)} \in \mathbb{R}_{\ge 0}$, the adaptive weight and weighted loss
+are:
+\begin{equation}
+  w^{(b)}
+    \coloneqq \bigl(\sg[\ell^{(b)}] + \varepsilon_{\mathrm{norm}}\bigr)^{p_{\mathrm{norm}}}
+    \;\in \mathbb{R}_{> 0}
+  \label{eq:adaptive_weight}
+\end{equation}
+\begin{equation}
+  \ell^{(b)}_{\mathrm{weighted}}
+    \coloneqq \frac{\ell^{(b)}}{w^{(b)}}
+    \;\in \mathbb{R}_{\ge 0}
+  \label{eq:adaptive_weighted_loss}
+\end{equation}
+where $\sg[\cdot]$ is the stop-gradient operator (Eq.~\ref{eq:sg_def})
+ensuring the weight does not contribute gradients, $\varepsilon_{\mathrm{norm}}
+= 1.0$, and $p_{\mathrm{norm}} = 1.0$.  Substituting these defaults:
+\begin{equation}
+  w^{(b)} = \sg[\ell^{(b)}] + 1.0,
+  \qquad
+  \ell^{(b)}_{\mathrm{weighted}}
+    = \frac{\ell^{(b)}}{\sg[\ell^{(b)}] + 1.0}
+  \label{eq:adaptive_simplified}
+\end{equation}
+\begin{shapes}
+$\ell^{(b)}$: per-sample scalar; full batch: $(B,)$.\\
+$w^{(b)}$: per-sample scalar; full batch: $(B,)$. Computed with \code{.detach()} on $\ell$.\\
+$\ell^{(b)}_{\mathrm{weighted}}$: per-sample scalar; full batch: $(B,)$.\\
+\textbf{Code:} \code{meanflow\_loss.py:347--351}:
+\code{adp\_weight\_u = (raw\_loss\_u.detach() + norm\_eps) ** norm\_p};
+\code{loss\_u = raw\_loss\_u / adp\_weight\_u}.
+Applied \textbf{independently} to u-head and v-head.
+\end{shapes}
+
+\noindent
+This is a form of \textbf{logarithmic loss normalisation}: the effective loss
+behaves as $\ell_\mathrm{w} \approx \ell/(\ell+1)$, which is bounded in
+$[0,1)$ and varies slowly with raw loss magnitude:
+\begin{equation}
+  \lim_{\ell \to 0}\;\frac{\ell}{\ell + 1} = 0,
+  \qquad
+  \lim_{\ell \to \infty}\;\frac{\ell}{\ell + 1} = 1
+\end{equation}
+
+At convergence (epoch~388, best FID), the loss decomposition shows this
+balancing in action (Table~\ref{tab:loss_decomp}).
+
+\begin{table}[ht]
+\centering
+\caption{Loss decomposition at best FID (epoch~388).}
+\label{tab:loss_decomp}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Component} & \textbf{Raw Loss} & \textbf{Share} \\
+\midrule
+FM loss ($r=t$, flow matching)       & 715,432   & 10.3\% \\
+MF loss ($r<t$, self-consistency)    & 6,254,997 & 89.7\% \\
+\midrule
+v-head loss                          & 714,646   & --- \\
+u-head loss (compound $V$)           & 3,485,215 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The MF loss is ${\sim}9\times$ larger than the FM loss, which is expected: the
+compound velocity $V$ must also capture the JVP correction term, a harder
+target than the direct velocity at $r{=}t$.  The adaptive weighting equalises
+their gradient contributions to ${\sim}1.0$ each.
+
+\textbf{Why $\varepsilon_{\mathrm{norm}}{=}1.0$?}  Through Phase~4c debugging,
+we discovered that $\varepsilon_{\mathrm{norm}}{=}0.01$ caused catastrophic
+gradient amplification for samples with small raw loss.  The weight
+$1/(\ell+0.01)$ can reach $100\times$, creating a positive feedback loop.
+
+\textbf{Why $p_{\mathrm{norm}}{=}1.0$?}  With $p_{\mathrm{norm}}{=}0.5$, the
+weight becomes $w = \sqrt{\ell+1.0}$, which under-normalises large
+losses, leading to a $1000\times$ gradient explosion (Phase~4e).

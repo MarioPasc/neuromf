@@ -1,0 +1,24 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Main Training (Phase~4): Best Model}
+
+The best model uses x-prediction + exact JVP + $(t,h)$ conditioning + v-head
+(1~ResBlock) + $L_2$ loss (Table~\ref{tab:best_model}).
+
+\begin{table}[ht]
+\centering
+\caption{Best model configuration.}
+\label{tab:best_model}
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Prediction type   & x-prediction \\
+JVP strategy      & Exact (\code{torch.func.jvp}) \\
+Conditioning      & $t\_h$ (condition on $t$ and $h=t{-}r$) \\
+v-head            & 1 ResBlock (${\sim}$228\,K params, $<$0.13\%) \\
+Loss norm         & $L_2$ ($p{=}2$) with independent adaptive weighting \\
+Best FID epoch    & \textbf{388} (step 16,338) \\
+Early-stopped at  & Epoch 690 (patience=10, 46\% of planned 1,500) \\
+\bottomrule
+\end{tabular}
+\end{table}

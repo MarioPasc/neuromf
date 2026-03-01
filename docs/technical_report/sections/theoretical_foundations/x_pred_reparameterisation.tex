@@ -1,0 +1,56 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{x-Prediction Reparameterisation}
+\label{sec:xpred}
+
+Instead of directly outputting the average velocity $u$, the u-head outputs a
+denoised data estimate $\hat{x}$ (x-prediction, following pMF~\cite{pmf}).
+The average velocity is derived via:
+\begin{equation}
+  \hat{x} = f_\theta(z_t,r,t)
+    \;\in \mathbb{R}^{C \times D \times H \times W},
+  \qquad
+  u_\theta = \frac{z_t - \hat{x}}{\max(t,\,t_{\min})}
+    \;\in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:xpred}
+\end{equation}
+where $t_{\min} = 0.05$ is a clamping threshold that prevents the $1/t$
+singularity near $t = 0$.  The division is element-wise after broadcasting
+$t$ to shape $(B, 1, 1, 1, 1)$.
+\begin{shapes}
+$\hat{x}, z_t, u_\theta$: each $(B, 4, 48, 48, 48)$.
+\quad $t$: $(B,)$, clamped to $[\,t_{\min},\,\infty)$, broadcast to $(B,1,1,1,1)$.\\
+\textbf{Code:} \code{meanflow\_loss.py:113--119}:
+\code{t\_safe = t\_.view(-1, *([1]*(z.ndim-1))).clamp(min=t\_min)};
+\code{return (z - x\_hat) / t\_safe}.
+\end{shapes}
+
+\textbf{Justification (manifold hypothesis).}  The x-prediction target lies on
+the data manifold, which has low intrinsic dimensionality.  The velocity $u$
+spans a higher-dimensional space.  For architectures with a bottleneck (UNet
+encoder-decoder), predicting a low-dimensional target ($\hat{x}$) is easier
+than predicting a high-dimensional one ($u$).
+
+\textbf{Quantitative criterion} (pMF Table~2): x-prediction dominates when
+$d_{\mathrm{input}}/d_{\mathrm{bottleneck}} > 1$.  For our 3D UNet:
+\begin{equation}
+  \frac{d_{\mathrm{input}}}{d_{\mathrm{bottleneck}}}
+    = \frac{C \times D \times H \times W}{\text{channels}[3] \times (D/8)^3}
+    = \frac{4 \times 48^3}{512 \times 6^3}
+    = \frac{442{,}368}{110{,}592} \approx 4
+\end{equation}
+This is firmly in the x-prediction regime.
+
+\textbf{At inference (1-NFE).}  With x-prediction, 1-step sampling simplifies
+to a single forward pass---the model directly outputs $\hat{x} = z_0$:
+\begin{equation}
+  z_0 = f_\theta(\varepsilon,\;r{=}0,\;t{=}1)
+    \;\in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:1nfe_xpred}
+\end{equation}
+\begin{shapes}
+$\varepsilon$: $(B, 4, 48, 48, 48)$.
+\quad $r = \mathbf{0}_B$: $(B,)$; $t = \mathbf{1}_B$: $(B,)$.
+\quad Output: $(B, 4, 48, 48, 48)$.\\
+\textbf{Code:} \code{one\_step.py:37--44}:
+\code{output = model(noise, r, t)}; \code{return output} (x-pred: direct).
+\end{shapes}

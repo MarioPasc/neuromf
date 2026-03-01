@@ -1,0 +1,21 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Image Quality Metrics}
+
+\begin{table}[ht]
+\centering
+\caption{Evaluation metrics suite.}
+\label{tab:metrics}
+\begin{tabular}{lll}
+\toprule
+\textbf{Metric} & \textbf{Description} & \textbf{Features} \\
+\midrule
+2.5D FID  & Slice-wise FID (ax/cor/sag)   & RadImageNet ResNet-50 \\
+3D FID    & Volumetric FID               & Med3D ResNet-50 \\
+MMD       & Max Mean Discrepancy         & Gaussian kernel \\
+Coverage  & Real--synthetic NN fraction  & Feature-space NN \\
+Density   & Synthetic near real manifold & Complementary to coverage \\
+MS-SSIM   & 3-level Multi-Scale SSIM (3D) & MONAI \code{SSIMMetric} \\
+PSNR      & Peak Signal-to-Noise Ratio   & Actual data range \\
+\bottomrule
+\end{tabular}
+\end{table}

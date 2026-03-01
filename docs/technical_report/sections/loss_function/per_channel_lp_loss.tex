@@ -1,0 +1,33 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Per-Channel \texorpdfstring{$L_p$}{Lp} Loss}
+\label{sec:lp_loss}
+
+The base loss function computes a per-channel, spatially-summed $L_p$ norm.
+For tensors $\hat{y}, y \in \mathbb{R}^{C \times D \times H \times W}$:
+\begin{equation}
+  \ell_p(\hat{y},\,y)
+    \coloneqq \sum_{c=1}^{C}\;\sum_{i=1}^{D}\sum_{j=1}^{H}\sum_{k=1}^{W}
+      \bigl|\hat{y}_{c,i,j,k} - y_{c,i,j,k}\bigr|^p
+    \;\in \mathbb{R}_{\ge 0}
+  \label{eq:lp_loss}
+\end{equation}
+\begin{shapes}
+$\hat{y}, y \in \mathbb{R}^{B \times 4 \times 48 \times 48 \times 48}$.\\
+Output with \code{reduction="none"}: per-sample scalar $(B,)$---summed over all
+$C \times D \times H \times W = 4 \times 48^3 = 442{,}368$ elements per sample.\\
+\textbf{Code:} \code{lp\_loss.py:34--48}:
+\code{diff = (pred - target).abs()}; \code{diff = diff.pow(p)};
+\code{per\_sample = diff.sum(dim=[1,2,3,4])}.
+\end{shapes}
+
+\noindent
+For the best model: $p{=}2.0$ (standard $L_2$), no per-channel weights.
+When optional channel weights $\mathbf{w} \in \mathbb{R}^C$ are provided:
+\begin{equation}
+  \ell_p^{\mathbf{w}}(\hat{y},y)
+    = \sum_{c=1}^{C} w_c \!\sum_{i,j,k}
+      |\hat{y}_{c,i,j,k} - y_{c,i,j,k}|^p
+  \label{eq:lp_weighted}
+\end{equation}
+This extends the SLIM-Diff per-channel loss~\cite{slimdiff} from pixel-space
+DDPM to latent-space MeanFlow.

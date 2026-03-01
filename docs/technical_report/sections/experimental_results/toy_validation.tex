@@ -1,0 +1,26 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Toy Validation (Phase~2): MeanFlow on Flat Torus}
+
+Before scaling to brain MRI, MeanFlow was validated on a flat torus in
+$\mathbb{R}^4$ (Table~\ref{tab:torus}).
+
+\begin{table}[ht]
+\centering
+\caption{Phase~2 toy validation results.}
+\label{tab:torus}
+\begin{tabular}{llr}
+\toprule
+\textbf{Metric} & \textbf{Result} & \textbf{Target} \\
+\midrule
+1-NFE torus distance            & 0.0892  & $<$0.1 \\
+5-step torus distance           & 0.0271  & $<$0.05 \\
+Angular KS $p$-value ($\theta_1$) & 0.374 & $>$0.01 \\
+Angular KS $p$-value ($\theta_2$) & 0.575 & $>$0.01 \\
+x-pred vs u-pred loss ratio     & $<$1.2  & $<$1.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This confirmed: (i)~the MeanFlow implementation correctly learns 1-step
+generation, (ii)~the angular distribution is statistically indistinguishable
+from truth (KS test), and (iii)~both x-prediction and u-prediction converge.

@@ -1,0 +1,30 @@
+%═══════════════════════════════════════════════════════════════════════════════
+\section{Novel Contributions}
+\label{sec:contributions}
+
+\textbf{Contribution 1: First MeanFlow for 3D Medical Image Synthesis.}
+We achieve 1-NFE generation of $192^3$ brain MRI volumes in the latent space
+of a frozen MAISI VAE---a \textbf{50--1000$\times$ reduction in sampling cost}
+compared to existing methods (DDPM: 1000; flow matching: 10--50; rectified
+flow: 5--50 steps).  Best 2.5D FID: \textbf{11.67}, trained in ${\sim}$51
+hours on 6$\times$ A100 GPUs.
+
+\textbf{Contribution 2: Per-Channel $L_p$ Loss in Latent MeanFlow.}
+We extend the SLIM-Diff per-channel $L_p$ loss~\cite{slimdiff} from
+pixel-space DDPM to latent-space MeanFlow, providing a framework for
+ablation over $p \in \{1.0,\ldots,3.0\}$.
+
+\textbf{Contribution 3: x-Prediction vs u-Prediction in Latent 3D UNets.}
+First investigation of this dichotomy (established by pMF for 2D ViTs) in
+latent space with 3D UNets.  We document the critical incompatibility:
+\textbf{x-prediction + FD-JVP is numerically unstable} due to the $1/t$
+singularity.
+
+\textbf{Contribution 4: iMF Dual-Head in Medical Context.}
+First application of the iMF dual-head architecture outside natural images.
+The v-head adds ${\sim}$228\,K parameters ($<$0.13\%) and is disabled at
+inference.
+
+\textbf{Contribution 5 (Planned): LoRA Fine-Tuning for Joint Image-Mask
+Synthesis.}  Phase~7 will demonstrate LoRA fine-tuning for joint FLAIR MRI +
+FCD mask synthesis in a data-scarce setting (${\sim}$50--100 cases).

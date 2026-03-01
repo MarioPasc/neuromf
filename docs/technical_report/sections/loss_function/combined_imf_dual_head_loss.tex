@@ -1,0 +1,35 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Combined iMF Dual-Head Loss}
+\label{sec:dual_loss}
+
+The training loss has two independently-weighted components:
+\begin{equation}
+  \boxed{
+  \mathcal{L}
+    = \frac{1}{B}\sum_{b=1}^{B}\!\left[
+        \frac{\ell_p^{(b)}(V_\theta,\,v_c)}{w_u^{(b)}}
+        + \frac{\ell_p^{(b)}(\hat{v},\,v_c)}{w_v^{(b)}}
+      \right]
+  }
+  \;\in \mathbb{R}
+  \label{eq:total_loss}
+\end{equation}
+where the superscript $(b)$ denotes the $b$-th sample in the batch, and:
+\begin{itemize}[nosep]
+  \item $\ell_p^{(b)}(V_\theta, v_c)$ is the \textbf{compound velocity loss}
+    (u-head): enforces MeanFlow self-consistency.
+  \item $\ell_p^{(b)}(\hat{v}, v_c)$ is the \textbf{tangent supervision loss}
+    (v-head): directly supervises the auxiliary head.
+  \item $w_u^{(b)}, w_v^{(b)}$ are per-sample adaptive weights (defined below).
+\end{itemize}
+Both losses target the same conditional velocity $v_c = \varepsilon - z_0
+\in \mathbb{R}^{C \times D \times H \times W}$.
+\begin{shapes}
+$V_\theta, \hat{v}, v_c$: each $(B, 4, 48, 48, 48)$.\\
+$\ell_p^{(b)}(\cdot, \cdot)$: scalar per sample, so the full vector is $(B,)$.\\
+$\mathcal{L}$: scalar (mean over batch).\\
+\textbf{Code:} \code{meanflow\_loss.py:342--356}:
+\code{raw\_loss\_u = lp\_loss(V, v\_c, ...)};
+\code{raw\_loss\_v = lp\_loss(v, v\_c, ...)};
+\code{loss = (loss\_u + loss\_v).mean()}.
+\end{shapes}

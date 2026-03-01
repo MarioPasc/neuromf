@@ -1,0 +1,17 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Key Findings}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Early stopping was effective:} Best FID at epoch~388,
+    used only 46\% of planned 1,500~epochs. Total training: 51.4~hours.
+  \item \textbf{1-NFE quality gap is significant:} NFE=1 is blurry;
+    NFE$\geq$2 is substantially sharper.
+  \item \textbf{Variance under-estimation:} Generated std ${\sim}$0.78 vs
+    true ${\sim}$0.97--1.02.  The 20--25\% gap is the primary quality
+    bottleneck.
+  \item \textbf{v-head converges fast:} $\cos(\hat{v},v_c)$ reaches~0.39 by
+    epoch~50 (85\% of final~0.44).
+  \item \textbf{SWD anti-correlates with FID} beyond early training.
+  \item \textbf{Gradient clipping fraction:} 90\% $\to$ 5\%, confirming stable
+    dynamics by epoch~${\sim}300$.
+\end{enumerate}

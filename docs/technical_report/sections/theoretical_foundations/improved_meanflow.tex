@@ -1,0 +1,46 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{Improved MeanFlow (iMF) and the Dual-Head Architecture}
+\label{sec:vhead}
+
+The original MeanFlow uses the ground-truth velocity
+$v_c = \varepsilon - z_0$ as the JVP tangent.  \textbf{Problem:} this creates
+a dependency on data at inference time (where $z_0$ is unavailable).  The
+improved MeanFlow (iMF)~\cite{imf} resolves this by using the model's own
+prediction as the tangent, making $V$ a function of $z_t$ alone.
+
+\textbf{The dual-head extension} (our architecture, inspired by iMF) introduces
+two output heads on a shared UNet backbone:
+\begin{itemize}[nosep]
+  \item \textbf{u-head} (main): Predicts the denoised data estimate $\hat{x}$
+    (x-prediction mode), from which $u_\theta$ is derived.  Used at inference.
+  \item \textbf{v-head} (auxiliary): Predicts the instantaneous velocity
+    $\hat{v}$, directly supervised against $v_c$.  Provides the JVP tangent
+    $\tilde{v} = \hat{v}$ during training.  \textbf{Disabled at inference}
+    (zero cost).
+\end{itemize}
+
+The shared backbone produces a feature tensor $\mathbf{h} \in
+\mathbb{R}^{B \times 64 \times 48 \times 48 \times 48}$ (channel dimension
+equals \code{channels[0]}$= 64$).  Both heads branch from $\mathbf{h}$:
+\begin{equation}
+  \hat{x} = \mathrm{UNet.out}(\mathbf{h})
+    \;\in \mathbb{R}^{C \times D \times H \times W},
+  \qquad
+  \hat{v} = \mathrm{v\_out}(\mathbf{h})
+    \;\in \mathbb{R}^{C \times D \times H \times W}
+  \label{eq:dual_heads}
+\end{equation}
+\begin{shapes}
+$\mathbf{h}$: $(B, 64, 48, 48, 48)$ --- shared backbone final feature map.\\
+$\hat{x}$: $(B, 4, 48, 48, 48)$ via \code{self.unet.out(h)} (Conv3d $64 \to 4$).\\
+$\hat{v}$: $(B, 4, 48, 48, 48)$ via \code{self.v\_out(h)} (ResBlock $\to$ GN $\to$ SiLU $\to$ Conv3d $64 \to 4$).\\
+\textbf{Code:} \code{maisi\_unet.py:415--418}.
+\end{shapes}
+
+\noindent
+The v-head solves a critical practical problem: without it, the tangent comes
+from the u-head's own prediction, which is poor in early training, creating a
+bootstrapping problem that causes loss divergence.  The v-head receives direct
+supervision ($\|\hat{v} - v_c\|^p$), providing high-quality tangents from the
+first epoch.  In our training, the v-head cosine alignment $\cos(\hat{v},v_c)$
+reached 0.39 by epoch~50---85\% of its final value of~0.44.
