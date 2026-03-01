@@ -66,8 +66,8 @@ These are verified values from checkpoint and dataset inspection. Use them direc
 ### Hardware Usage Policy
 
 - **Local laptop (RTX 4060 8GB):** Code development, unit tests with mock data, statistical analysis, figure generation, git operations. **No GPU-heavy tasks** — 192³ volumes exceed 8GB VRAM even with `num_splits=6`.
-- **Picasso supercomputer (A100 40GB):** All GPU workloads — VAE validation (Phase 0), latent encoding (Phase 1), MeanFlow training (Phase 4), evaluation (Phase 5), ablations (Phase 6). Submit via SLURM scripts in `experiments/slurm/phase_{N}/`.
-- **SLURM scripts:** Each phase has a launcher (`<task>.sh`, run from login node) and a worker (`<task>_worker.sh`, submitted by launcher). Launcher exports env vars and creates output dirs; worker does env setup, pre-flight checks, runs the CLI, and verifies outputs.
+- **Picasso supercomputer (A100 40GB):** All GPU workloads — VAE validation (Phase 0), latent encoding (Phase 1), MeanFlow training (Phase 4), evaluation (Phase 5), ablations (Phase 6). Atomic SLURM jobs live in `slurm/<task>/` (e.g., `slurm/train/`, `slurm/generate/`); multi-model orchestration in `experiments/slurm/phase_5/`.
+- **SLURM scripts:** Each atomic job has a `launch.sh` (run from login node) and `worker.sh` (submitted by launcher). Launchers send status to stderr, job ID to stdout (for orchestration capture via `JOB_ID=$(bash slurm/X/launch.sh ...)`). All launchers accept `--depends-on JOB_ID`.
 
 ---
 

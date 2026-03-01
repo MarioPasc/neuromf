@@ -15,10 +15,18 @@ Optimiser       & AdamW         & Standard for diffusion/flow models \\
 Learning rate   & $\eta = 10^{-4}$     & MeanFlow reference default \\
 Weight decay    & 0.0           & No regularisation with adaptive loss \\
 Betas           & $(\beta_1, \beta_2) = (0.9,\,0.95)$  & $\beta_2{=}0.95$: faster momentum adaptation \\
-LR schedule     & Cosine decay  & $10^{-4} \to 5.6{\times}10^{-5}$ at early stop \\
-Warmup          & 0 steps       & Warmup destabilised MF loss (Phase~4c) \\
+LR schedule     & Cosine decay  & $10^{-4} \to 0$ over total steps \\
+Warmup          & 1{,}000 steps (v2) & Linear warmup; 90.5\% grad clipping at step~0 \\
 Gradient clip   & $\|\nabla\|_2 \le 1.0$ & Prevents spike propagation \\
 Mixed precision & bf16          & Standard for A100 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\textbf{Warmup (v2).}  The v1 run used no warmup, which resulted in 90.5\%
+of gradient updates being clipped at epoch~0 (gradient norm exceeding the
+clip threshold of~1.0 on nearly every step).  By epoch~46 (${\sim}$2{,}000
+steps) the clip fraction dropped to 21.4\%.  In v2 we introduce a linear
+warmup over 1{,}000 steps (${\sim}$24 epochs), covering this unstable
+regime and following the recommendation of Goyal~\etal{}~\cite{goyal2017accurate}
+for large effective batch sizes ($B_\mathrm{eff} = 132$).

@@ -493,6 +493,7 @@ class MeanFlowPipeline(nn.Module):
         vc_flat = v_c.detach().flatten(1)
         cos_sim = torch.nn.functional.cosine_similarity(V_flat, vc_flat, dim=1)
         diag["diag_cosine_sim_V_vc"] = cos_sim.mean()
+        diag["diag_cosine_sim_V_vc_per_sample"] = cos_sim
 
         # --- Relative prediction error: ||V - v_c|| / ||v_c|| ---
         error_norms = (V.detach() - v_c.detach()).flatten(1).norm(dim=1)
@@ -503,6 +504,7 @@ class MeanFlowPipeline(nn.Module):
         vtilde_flat = v_tilde.detach().flatten(1)
         cos_sim_tangent = torch.nn.functional.cosine_similarity(vtilde_flat, vc_flat, dim=1)
         diag["diag_cosine_sim_vtilde_vc"] = cos_sim_tangent.mean()
+        diag["diag_cosine_sim_vtilde_vc_per_sample"] = cos_sim_tangent
 
         # --- Prediction-specific statistics ---
         if self.config.prediction_type == "x" and z_t is not None:

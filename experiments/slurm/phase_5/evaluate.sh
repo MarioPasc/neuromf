@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# PHASE 5: EVALUATION — SLURM LAUNCHER
+# PHASE 5: EVALUATION — ORCHESTRATION
 #
-# Login-node script that submits feature extraction + metrics job(s).
-# Requires generate.sh to have completed first.
-# Each model's results live in its own {ModelName}_{date}/ directory.
+# Thin orchestration script that dispatches NeuroiMF and/or MOTFM evaluation
+# jobs by calling the atomic launcher in slurm/evaluate/.
 #
 # Usage (from login node):
 #   bash experiments/slurm/phase_5/evaluate.sh --results-dir .../NeuroiMF_01032026
@@ -17,7 +16,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 # ========================================================================
 # PARSE ARGUMENTS
@@ -51,15 +50,15 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            echo "Unknown argument: $1"
-            echo "Usage: bash experiments/slurm/phase_5/evaluate.sh [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --results-dir PATH        NeuroiMF run directory"
-            echo "  --motfm                   Also evaluate MOTFM (separate job)"
-            echo "  --motfm-results-dir PATH  MOTFM run directory"
-            echo "  --skip-neuromf            Skip NeuroiMF evaluation"
-            echo "  --depends-on JOB_ID       Wait for job to finish"
+            echo "Unknown argument: $1" >&2
+            echo "Usage: bash experiments/slurm/phase_5/evaluate.sh [OPTIONS]" >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  --results-dir PATH        NeuroiMF run directory" >&2
+            echo "  --motfm                   Also evaluate MOTFM (separate job)" >&2
+            echo "  --motfm-results-dir PATH  MOTFM run directory" >&2
+            echo "  --skip-neuromf            Skip NeuroiMF evaluation" >&2
+            echo "  --depends-on JOB_ID       Wait for job to finish" >&2
             exit 1
             ;;
     esac
@@ -67,156 +66,66 @@ done
 
 # Validate flags
 if [ "${SKIP_NEUROMF}" -eq 1 ] && [ "${ENABLE_MOTFM}" -eq 0 ]; then
-    echo "ERROR: --skip-neuromf requires --motfm"
+    echo "ERROR: --skip-neuromf requires --motfm" >&2
     exit 1
 fi
 
 if [ "${SKIP_NEUROMF}" -eq 0 ] && [ -z "${NEUROMF_RESULTS_DIR}" ]; then
-    echo "ERROR: --results-dir is required for NeuroiMF evaluation"
+    echo "ERROR: --results-dir is required for NeuroiMF evaluation" >&2
     exit 1
 fi
 
 if [ "${ENABLE_MOTFM}" -eq 1 ] && [ -z "${MOTFM_RESULTS_DIR}" ]; then
-    echo "ERROR: --motfm-results-dir is required when --motfm is set"
+    echo "ERROR: --motfm-results-dir is required when --motfm is set" >&2
     exit 1
 fi
 
-echo "=========================================="
-echo "PHASE 5: EVALUATION LAUNCHER"
-echo "=========================================="
-echo "Time: $(date)"
-echo ""
+echo "==========================================" >&2
+echo "PHASE 5: EVALUATION (orchestration)" >&2
+echo "==========================================" >&2
+echo "Time: $(date)" >&2
+echo "" >&2
 
 # ========================================================================
-# CONFIGURATION
+# DISPATCH NEUROMF EVALUATION
 # ========================================================================
-export CONDA_ENV_NAME="neuromf"
-
-export REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf"
-export CONFIGS_DIR="${REPO_SRC}/configs/picasso"
-
-echo "Configuration:"
-echo "  Repo:        ${REPO_SRC}"
+NEUROMF_JOB_ID=""
 if [ "${SKIP_NEUROMF}" -eq 0 ]; then
-    echo "  NeuroiMF:    ${NEUROMF_RESULTS_DIR}"
-fi
-if [ "${ENABLE_MOTFM}" -eq 1 ]; then
-    echo "  MOTFM:       ${MOTFM_RESULTS_DIR}"
-fi
-echo ""
-
-# ========================================================================
-# PRE-DOWNLOAD WEIGHTS (login node has internet, worker nodes do not)
-# ========================================================================
-R3D18_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/r3d_18_fid3d"
-R3D18_FILE="${R3D18_DIR}/r3d_18-b3b3357e.pth"
-R3D18_URL="https://download.pytorch.org/models/r3d_18-b3b3357e.pth"
-
-if [ -f "${R3D18_FILE}" ]; then
-    SIZE=$(stat -c%s "${R3D18_FILE}" 2>/dev/null || echo "?")
-    echo "R3D-18 weights: ${R3D18_FILE} (${SIZE} bytes) [cached]"
-else
-    echo "Downloading R3D-18 weights (login node → ${R3D18_FILE}) ..."
-    mkdir -p "${R3D18_DIR}"
-    wget -q --show-progress -O "${R3D18_FILE}" "${R3D18_URL}"
-    echo "R3D-18 weights downloaded: $(stat -c%s "${R3D18_FILE}") bytes"
-fi
-echo ""
-
-# ========================================================================
-# SUBMIT NEUROMF EVALUATION JOB
-# ========================================================================
-if [ "${SKIP_NEUROMF}" -eq 0 ]; then
-    export RUN_DIR="${NEUROMF_RESULTS_DIR}"
-
-    mkdir -p "${RUN_DIR}/features"
-    mkdir -p "${RUN_DIR}/metrics"
-    mkdir -p "${RUN_DIR}/metrics/synthseg"
-
-    SBATCH_ARGS=(
-        --parsable
-        --job-name="neuromf_p5_eval"
-        --time=0-23:00:00
-        --ntasks=1
-        --cpus-per-task=16
-        --mem=128G
-        --constraint=dgx
-        --gres=gpu:1
-        --output="${RUN_DIR}/evaluate_%j.out"
-        --error="${RUN_DIR}/evaluate_%j.err"
-        --export=ALL
-    )
-
+    LAUNCH_ARGS=(--run-dir "${NEUROMF_RESULTS_DIR}")
     if [ -n "${DEPENDS_ON}" ]; then
-        SBATCH_ARGS+=(--dependency=afterok:${DEPENDS_ON})
-        echo "Dependency:  afterok:${DEPENDS_ON}"
+        LAUNCH_ARGS+=(--depends-on "${DEPENDS_ON}")
     fi
 
-    NEUROMF_JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/evaluate_worker.sh")
-
-    echo "=========================================="
-    echo "NEUROMF EVALUATION JOB SUBMITTED"
-    echo "=========================================="
-    echo "Job ID:    ${NEUROMF_JOB_ID}"
-    echo "Monitor:   squeue -j ${NEUROMF_JOB_ID}"
-    echo "Logs:      ${RUN_DIR}/evaluate_${NEUROMF_JOB_ID}.{out,err}"
-    echo "Features:  ${RUN_DIR}/features/"
-    echo "Metrics:   ${RUN_DIR}/metrics/"
-    echo ""
+    NEUROMF_JOB_ID=$(bash "${REPO_ROOT}/slurm/evaluate/launch.sh" "${LAUNCH_ARGS[@]}")
+    echo "NeuroiMF evaluation dispatched: Job ${NEUROMF_JOB_ID} -> ${NEUROMF_RESULTS_DIR}" >&2
 fi
 
 # ========================================================================
-# SUBMIT MOTFM EVALUATION JOB (same worker script, different RUN_DIR)
+# DISPATCH MOTFM EVALUATION
 # ========================================================================
+MOTFM_JOB_ID=""
 if [ "${ENABLE_MOTFM}" -eq 1 ]; then
-    export RUN_DIR="${MOTFM_RESULTS_DIR}"
-
-    mkdir -p "${RUN_DIR}/features"
-    mkdir -p "${RUN_DIR}/metrics"
-    mkdir -p "${RUN_DIR}/metrics/synthseg"
-
-    MOTFM_SBATCH_ARGS=(
-        --parsable
-        --job-name="motfm_p5_eval"
-        --time=0-23:00:00
-        --ntasks=1
-        --cpus-per-task=16
-        --mem=128G
-        --constraint=dgx
-        --gres=gpu:1
-        --output="${RUN_DIR}/evaluate_%j.out"
-        --error="${RUN_DIR}/evaluate_%j.err"
-        --export=ALL
-    )
-
+    LAUNCH_ARGS=(--run-dir "${MOTFM_RESULTS_DIR}")
     if [ -n "${DEPENDS_ON}" ]; then
-        MOTFM_SBATCH_ARGS+=(--dependency=afterok:${DEPENDS_ON})
+        LAUNCH_ARGS+=(--depends-on "${DEPENDS_ON}")
     fi
 
-    MOTFM_JOB_ID=$(sbatch "${MOTFM_SBATCH_ARGS[@]}" "${SCRIPT_DIR}/evaluate_worker.sh")
-
-    echo "=========================================="
-    echo "MOTFM EVALUATION JOB SUBMITTED"
-    echo "=========================================="
-    echo "Job ID:    ${MOTFM_JOB_ID}"
-    echo "Monitor:   squeue -j ${MOTFM_JOB_ID}"
-    echo "Logs:      ${RUN_DIR}/evaluate_${MOTFM_JOB_ID}.{out,err}"
-    echo "Features:  ${RUN_DIR}/features/"
-    echo "Metrics:   ${RUN_DIR}/metrics/"
-    echo ""
+    MOTFM_JOB_ID=$(bash "${REPO_ROOT}/slurm/evaluate/launch.sh" "${LAUNCH_ARGS[@]}")
+    echo "MOTFM evaluation dispatched: Job ${MOTFM_JOB_ID} -> ${MOTFM_RESULTS_DIR}" >&2
 fi
 
 # ========================================================================
 # SUMMARY
 # ========================================================================
-echo "=========================================="
-echo "SUMMARY"
-echo "=========================================="
-if [ "${SKIP_NEUROMF}" -eq 0 ]; then
-    echo "  NeuroiMF:  Job ${NEUROMF_JOB_ID}  →  ${NEUROMF_RESULTS_DIR}"
+echo "" >&2
+echo "==========================================" >&2
+echo "SUMMARY" >&2
+echo "==========================================" >&2
+if [ -n "${NEUROMF_JOB_ID}" ]; then
+    echo "  NeuroiMF:  Job ${NEUROMF_JOB_ID}  ->  ${NEUROMF_RESULTS_DIR}" >&2
 fi
-if [ "${ENABLE_MOTFM}" -eq 1 ]; then
-    echo "  MOTFM:     Job ${MOTFM_JOB_ID}  →  ${MOTFM_RESULTS_DIR}"
+if [ -n "${MOTFM_JOB_ID}" ]; then
+    echo "  MOTFM:     Job ${MOTFM_JOB_ID}  ->  ${MOTFM_RESULTS_DIR}" >&2
 fi
-echo ""
-echo "Next step: run analyse.sh with --depends-on and --results-dir"
+echo "" >&2
+echo "Next step: run analyse.sh with --depends-on and --results-dir" >&2

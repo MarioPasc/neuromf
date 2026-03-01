@@ -121,78 +121,86 @@
 \newlabel{sec:training}{{6}{15}{Training Protocol}{section.6}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Algorithm (One Training Step)}{15}{subsection.6.1}\protected@file@percent }
 \newlabel{sec:algorithm}{{6.1}{15}{Algorithm (One Training Step)}{subsection.6.1}{}}
+\citation{goyal2017accurate}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Time Sampling}{16}{subsection.6.2}\protected@file@percent }
 \newlabel{sec:time_sampling}{{6.2}{16}{Time Sampling}{subsection.6.2}{}}
 \newlabel{eq:time_sampling}{{31}{16}{Time Sampling}{equation.6.31}{}}
 \newlabel{eq:data_proportion}{{32}{16}{Time Sampling}{equation.6.32}{}}
+\newlabel{eq:boundary_sampling}{{33}{16}{Time Sampling}{equation.6.33}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Optimiser and Schedule}{16}{subsection.6.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Optimiser hyperparameters.\relax }}{16}{table.caption.11}\protected@file@percent }
-\newlabel{tab:optimiser}{{11}{16}{Optimiser hyperparameters.\relax }{table.caption.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Optimiser hyperparameters.\relax }}{17}{table.caption.11}\protected@file@percent }
+\newlabel{tab:optimiser}{{11}{17}{Optimiser hyperparameters.\relax }{table.caption.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Compute Budget}{17}{subsection.6.4}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Compute budget and actual training cost.\relax }}{17}{table.caption.12}\protected@file@percent }
 \newlabel{tab:compute}{{12}{17}{Compute budget and actual training cost.\relax }{table.caption.12}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Compute Budget}{17}{subsection.6.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.5}EMA (Exponential Moving Average)}{17}{subsection.6.5}\protected@file@percent }
 \newlabel{sec:ema}{{6.5}{17}{EMA (Exponential Moving Average)}{subsection.6.5}{}}
-\newlabel{eq:ema}{{33}{17}{EMA (Exponential Moving Average)}{equation.6.33}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Divergence Monitoring}{17}{subsection.6.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Sampling and Generation}{17}{section.7}\protected@file@percent }
-\newlabel{sec:sampling}{{7}{17}{Sampling and Generation}{section.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}One-Step Sampling (1-NFE)}{17}{subsection.7.1}\protected@file@percent }
-\newlabel{eq:1nfe_sampling}{{34}{17}{One-Step Sampling (1-NFE)}{equation.7.34}{}}
+\newlabel{eq:ema}{{34}{17}{EMA (Exponential Moving Average)}{equation.6.34}{}}
+\citation{lin2024common}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Divergence Monitoring}{18}{subsection.6.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Sampling and Generation}{18}{section.7}\protected@file@percent }
+\newlabel{sec:sampling}{{7}{18}{Sampling and Generation}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}One-Step Sampling (1-NFE)}{18}{subsection.7.1}\protected@file@percent }
+\newlabel{sec:1nfe}{{7.1}{18}{One-Step Sampling (1-NFE)}{subsection.7.1}{}}
+\newlabel{eq:1nfe_sampling}{{35}{18}{One-Step Sampling (1-NFE)}{equation.7.35}{}}
+\newlabel{eq:norm_correction}{{36}{18}{One-Step Sampling (1-NFE)}{equation.7.36}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Multi-Step Euler Sampling}{18}{subsection.7.2}\protected@file@percent }
-\newlabel{eq:euler_times}{{35}{18}{Multi-Step Euler Sampling}{equation.7.35}{}}
-\newlabel{eq:euler_step}{{36}{18}{Multi-Step Euler Sampling}{equation.7.36}{}}
+\newlabel{eq:euler_times}{{37}{18}{Multi-Step Euler Sampling}{equation.7.37}{}}
+\newlabel{eq:euler_step}{{38}{18}{Multi-Step Euler Sampling}{equation.7.38}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Full Generation Pipeline (Phase\nobreakspace  {}5)}{18}{subsection.7.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {8}Experimental Results}{18}{section.8}\protected@file@percent }
-\newlabel{sec:results}{{8}{18}{Experimental Results}{section.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Toy Validation (Phase\nobreakspace  {}2): MeanFlow on Flat Torus}{18}{subsection.8.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Phase\nobreakspace  {}2 toy validation results.\relax }}{18}{table.caption.13}\protected@file@percent }
-\newlabel{tab:torus}{{13}{18}{Phase~2 toy validation results.\relax }{table.caption.13}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Main Training (Phase\nobreakspace  {}4): Best Model}{18}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Experimental Results}{19}{section.8}\protected@file@percent }
+\newlabel{sec:results}{{8}{19}{Experimental Results}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Toy Validation (Phase\nobreakspace  {}2): MeanFlow on Flat Torus}{19}{subsection.8.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Phase\nobreakspace  {}2 toy validation results.\relax }}{19}{table.caption.13}\protected@file@percent }
+\newlabel{tab:torus}{{13}{19}{Phase~2 toy validation results.\relax }{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Main Training (Phase\nobreakspace  {}4): Best Model}{19}{subsection.8.2}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Best model configuration.\relax }}{19}{table.caption.14}\protected@file@percent }
 \newlabel{tab:best_model}{{14}{19}{Best model configuration.\relax }{table.caption.14}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.3}FID Progression}{19}{subsection.8.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces 2.5D FID progression during training (selected checkpoints).\relax }}{19}{table.caption.15}\protected@file@percent }
-\newlabel{tab:fid}{{15}{19}{2.5D FID progression during training (selected checkpoints).\relax }{table.caption.15}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Training Dynamics}{19}{subsection.8.4}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {16}{\ignorespaces Training dynamics at milestone epochs.\relax }}{19}{table.caption.16}\protected@file@percent }
-\newlabel{tab:dynamics}{{16}{19}{Training dynamics at milestone epochs.\relax }{table.caption.16}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces 2.5D FID progression during training (selected checkpoints).\relax }}{20}{table.caption.15}\protected@file@percent }
+\newlabel{tab:fid}{{15}{20}{2.5D FID progression during training (selected checkpoints).\relax }{table.caption.15}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {16}{\ignorespaces Training dynamics at milestone epochs.\relax }}{20}{table.caption.16}\protected@file@percent }
+\newlabel{tab:dynamics}{{16}{20}{Training dynamics at milestone epochs.\relax }{table.caption.16}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.5}Generated Sample Statistics}{20}{subsection.8.5}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {17}{\ignorespaces Statistics of generated $\hat  {x} \in \mathbb  {R}^{4 \times 48 \times 48 \times 48}$ at different training stages.\relax }}{20}{table.caption.17}\protected@file@percent }
 \newlabel{tab:xhat}{{17}{20}{Statistics of generated $\hat {x} \in \mathbb {R}^{4 \times 48 \times 48 \times 48}$ at different training stages.\relax }{table.caption.17}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.6}NFE Quality Analysis}{20}{subsection.8.6}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {18}{\ignorespaces Visual quality at different NFE levels.\relax }}{20}{table.caption.18}\protected@file@percent }
-\newlabel{tab:nfe_quality}{{18}{20}{Visual quality at different NFE levels.\relax }{table.caption.18}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.7}Spectral Analysis}{20}{subsection.8.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.8}SWD (Sliced Wasserstein Distance)}{20}{subsection.8.8}\protected@file@percent }
-\citation{synthseg}
+\@writefile{lot}{\contentsline {table}{\numberline {18}{\ignorespaces Visual quality at different NFE levels.\relax }}{21}{table.caption.18}\protected@file@percent }
+\newlabel{tab:nfe_quality}{{18}{21}{Visual quality at different NFE levels.\relax }{table.caption.18}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.7}Spectral Analysis}{21}{subsection.8.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.8}SWD (Sliced Wasserstein Distance)}{21}{subsection.8.8}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.9}Key Ablation Insights}{21}{subsection.8.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation Protocol}{21}{section.9}\protected@file@percent }
-\newlabel{sec:evaluation}{{9}{21}{Evaluation Protocol}{section.9}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Image Quality Metrics}{21}{subsection.9.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {19}{\ignorespaces Evaluation metrics suite.\relax }}{21}{table.caption.19}\protected@file@percent }
-\newlabel{tab:metrics}{{19}{21}{Evaluation metrics suite.\relax }{table.caption.19}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Spectral Analysis}{21}{subsection.9.2}\protected@file@percent }
-\newlabel{eq:spectral}{{38}{21}{Spectral Analysis}{equation.9.38}{}}
+\citation{synthseg}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Evaluation Protocol}{22}{section.9}\protected@file@percent }
+\newlabel{sec:evaluation}{{9}{22}{Evaluation Protocol}{section.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Image Quality Metrics}{22}{subsection.9.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {19}{\ignorespaces Evaluation metrics suite.\relax }}{22}{table.caption.19}\protected@file@percent }
+\newlabel{tab:metrics}{{19}{22}{Evaluation metrics suite.\relax }{table.caption.19}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Spectral Analysis}{22}{subsection.9.2}\protected@file@percent }
+\newlabel{eq:spectral}{{40}{22}{Spectral Analysis}{equation.9.40}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.3}Morphological Assessment}{22}{subsection.9.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.4}NFE Consistency Analysis}{22}{subsection.9.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {10}Implementation Details}{22}{section.10}\protected@file@percent }
 \newlabel{sec:implementation}{{10}{22}{Implementation Details}{section.10}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Software Stack}{22}{subsection.10.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Gated Phase System}{22}{subsection.10.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {20}{\ignorespaces Phase status.\relax }}{22}{table.caption.20}\protected@file@percent }
-\newlabel{tab:phases}{{20}{22}{Phase status.\relax }{table.caption.20}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}Compute Infrastructure}{22}{subsection.10.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {11}Novel Contributions}{22}{section.11}\protected@file@percent }
-\newlabel{sec:contributions}{{11}{22}{Novel Contributions}{section.11}{}}
 \citation{slimdiff}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Gated Phase System}{23}{subsection.10.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {20}{\ignorespaces Phase status.\relax }}{23}{table.caption.20}\protected@file@percent }
+\newlabel{tab:phases}{{20}{23}{Phase status.\relax }{table.caption.20}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}Compute Infrastructure}{23}{subsection.10.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}Novel Contributions}{23}{section.11}\protected@file@percent }
+\newlabel{sec:contributions}{{11}{23}{Novel Contributions}{section.11}{}}
+\citation{goyal2017accurate}
+\@writefile{toc}{\contentsline {section}{\numberline {12}Current Status and Next Steps}{24}{section.12}\protected@file@percent }
+\newlabel{sec:status}{{12}{24}{Current Status and Next Steps}{section.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Current State (February 2026)}{24}{subsection.12.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.2}Key Findings}{24}{subsection.12.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.3}v2 Training Improvements}{24}{subsection.12.3}\protected@file@percent }
+\newlabel{sec:v2}{{12.3}{24}{v2 Training Improvements}{subsection.12.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.4}Open Questions}{24}{subsection.12.4}\protected@file@percent }
 \bibcite{meanflow}{{1}{}{{}}{{}}}
 \bibcite{imf}{{2}{}{{}}{{}}}
-\@writefile{toc}{\contentsline {section}{\numberline {12}Current Status and Next Steps}{23}{section.12}\protected@file@percent }
-\newlabel{sec:status}{{12}{23}{Current Status and Next Steps}{section.12}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Current State (February 2026)}{23}{subsection.12.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {12.2}Key Findings}{23}{subsection.12.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {12.3}Open Questions}{23}{subsection.12.3}\protected@file@percent }
 \bibcite{pmf}{{3}{}{{}}{{}}}
 \bibcite{maisi}{{4}{}{{}}{{}}}
 \bibcite{maisi_v2}{{5}{}{{}}{{}}}
@@ -206,5 +214,7 @@
 \bibcite{synthseg}{{13}{}{{}}{{}}}
 \bibcite{ddpm}{{14}{}{{}}{{}}}
 \bibcite{brlp}{{15}{}{{}}{{}}}
+\bibcite{goyal2017accurate}{{16}{}{{}}{{}}}
+\bibcite{lin2024common}{{17}{}{{}}{{}}}
 \providecommand\NAT@force@numbers{}\NAT@force@numbers
-\gdef \@abspage@last{24}
+\gdef \@abspage@last{25}

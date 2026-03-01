@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+#SBATCH -J motfm_p5_gen
+#SBATCH --time=1-00:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=128G
+#SBATCH --constraint=dgx
+#SBATCH --gres=gpu:1
+#SBATCH --output=generate_%j.out
+#SBATCH --error=generate_%j.err
+
+# =============================================================================
+# MOTFM GENERATION WORKER
+#
+# Stage 1: Prepare real test volumes (same preprocessing as NeuroiMF)
+# Stage 2: Generate MOTFM volumes at NFE levels (1, 10, 50)
+# Stage 3: Visualization sanity-check figures (CPU-only)
+#
+# Expected env vars (exported by launch.sh):
+#   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME,
+#   MOTFM_RUN_DIR, MOTFM_CHECKPOINT, MOTFM_CONFIG
+#   GEN_N_SAMPLES (optional override)
+# =============================================================================
+
+set -euo pipefail
+
+START_TIME=$(date +%s)
+echo "Phase 5 MOTFM generation started at: $(date)"
+echo "Hostname: $(hostname)"
+echo "SLURM Job ID: ${SLURM_JOB_ID:-local}"
+echo "Run directory: ${MOTFM_RUN_DIR}"
+
+# ========================================================================
+# ENVIRONMENT SETUP
+# ========================================================================
+module_loaded=0
+for m in miniconda3 Miniconda3 anaconda3 Anaconda3 miniforge mambaforge; do
+  if module avail 2>/dev/null | grep -qi "^${m}[[:space:]]"; then
+    module load "$m" && module_loaded=1 && break
+  fi
+done
+
+if [ "$module_loaded" -eq 0 ]; then
+  echo "[env] No conda module loaded; assuming conda already in PATH."
+fi
+
+if command -v conda >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  source "$(conda info --base)/etc/profile.d/conda.sh" || true
+  conda activate "${CONDA_ENV_NAME}" 2>/dev/null || source activate "${CONDA_ENV_NAME}"
+else
+  source activate "${CONDA_ENV_NAME}"
+fi
+
+echo "=========================================="
+echo "ENVIRONMENT VERIFICATION"
+echo "=========================================="
+echo "[python] $(which python || true)"
+python -c "import torch; print('PyTorch', torch.__version__); print('CUDA:', torch.cuda.is_available())"
+nvidia-smi --query-gpu=index,name,memory.total --format=csv
+
+# Resolve n_samples (CLI override > default 500)
+N_SAMPLES="${GEN_N_SAMPLES:-500}"
+echo "n_samples: ${N_SAMPLES}"
+
+# ========================================================================
+# PRE-FLIGHT CHECKS
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "PRE-FLIGHT CHECKS"
+echo "=========================================="
+
+cd "${REPO_SRC}"
+
+# Verify MOTFM checkpoint
+if [ -f "${MOTFM_CHECKPOINT}" ]; then
+    echo "[OK]   MOTFM checkpoint: ${MOTFM_CHECKPOINT}"
+else
+    echo "[MISS] MOTFM checkpoint not found: ${MOTFM_CHECKPOINT}"
+    exit 1
+fi
+
+# Verify MOTFM config
+if [ -f "${MOTFM_CONFIG}" ]; then
+    echo "[OK]   MOTFM config: ${MOTFM_CONFIG}"
+else
+    echo "[MISS] MOTFM config not found: ${MOTFM_CONFIG}"
+    exit 1
+fi
+
+# Quick import check
+python -c "
+from neuromf.data.mri_preprocessing import build_mri_preprocessing_from_config
+print('neuromf imports OK')
+"
+
+# ========================================================================
+# STAGE 1: PREPARE REAL TEST VOLUMES (same preprocessing as NeuroiMF)
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "STAGE 1: PREPARING REAL TEST VOLUMES"
+echo "=========================================="
+echo "(Reading original NIfTI files — no VAE round-trip)"
+
+GEN_DIR="${MOTFM_RUN_DIR}/generation"
+
+python experiments/cli/prepare_real_test.py \
+    --config "${CONFIGS_DIR}/generate.yaml" \
+    --configs-dir "${CONFIGS_DIR}" \
+    --output-dir "${GEN_DIR}"
+
+echo "Stage 1 complete."
+
+# ========================================================================
+# STAGE 2: MOTFM GENERATION
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "STAGE 2: MOTFM GENERATION"
+echo "=========================================="
+
+# Add MOTFM code to PYTHONPATH (vendored + our wrappers)
+export PYTHONPATH="${REPO_SRC}/src/external/MOTFM:${REPO_SRC}/experiments/MOTFM:${PYTHONPATH:-}"
+
+MOTFM_VOL_DIR="${GEN_DIR}/volumes"
+mkdir -p "${MOTFM_VOL_DIR}"
+
+python -u experiments/MOTFM/generate_volumes.py \
+    --config "${MOTFM_CONFIG}" \
+    --checkpoint "${MOTFM_CHECKPOINT}" \
+    --nfe 1 10 50 \
+    --n-samples "${N_SAMPLES}" \
+    --batch-size 1 \
+    --output-dir "${MOTFM_VOL_DIR}" \
+    --seed 42
+
+echo "Stage 2 complete."
+
+# ========================================================================
+# STAGE 3: VISUALIZATION (CPU-only)
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "STAGE 3: VISUALIZATION"
+echo "=========================================="
+
+python experiments/cli/visualize_generation.py \
+    --generation-dir "${GEN_DIR}" \
+    --output-dir "${GEN_DIR}/figures" \
+    --n-subjects 3 \
+    --nfe 1 10 50
+
+echo "Stage 3 complete."
+
+# ========================================================================
+# POST-FLIGHT
+# ========================================================================
+echo ""
+echo "=========================================="
+echo "OUTPUT VERIFICATION"
+echo "=========================================="
+
+for nfe in 1 10 50; do
+    f="${MOTFM_VOL_DIR}/nfe_$(printf '%03d' $nfe).h5"
+    if [ -f "$f" ]; then
+        SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+        echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (${SIZE} bytes)"
+    else
+        echo "[MISS] nfe_$(printf '%03d' $nfe).h5"
+    fi
+done
+
+if [ -f "${GEN_DIR}/real_test.h5" ]; then
+    SIZE=$(stat -c%s "${GEN_DIR}/real_test.h5" 2>/dev/null || echo "?")
+    echo "[OK]   real_test.h5 (${SIZE} bytes)"
+else
+    echo "[MISS] real_test.h5"
+fi
+
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+echo ""
+echo "=========================================="
+echo "MOTFM GENERATION COMPLETED"
+echo "=========================================="
+echo "Run dir:    ${MOTFM_RUN_DIR}"
+echo "Finished:   $(date)"
+echo "Duration:   $(($ELAPSED / 3600))h $((($ELAPSED / 60) % 60))m $(($ELAPSED % 60))s"

@@ -52,8 +52,8 @@ training:
   weight_decay: 0
   optimizer: adamw
   betas: [0.9, 0.95]            # reference: adam_beta2=0.95
-  max_epochs: 1500              # target ~61K optimizer steps on Picasso
-  warmup_steps: 0               # reference: no warmup
+  max_epochs: 3000              # v2: 4.3× v1 budget → ~126K optimizer steps
+  warmup_steps: 1000            # v2: linear warmup (addresses 90% grad clipping at epoch 0)
   lr_schedule: cosine            # "constant" | "cosine" | "linear"
   gradient_clip_norm: 1.0
   gradient_checkpointing: false  # must be false for exact JVP
@@ -101,10 +101,16 @@ time_sampling:
   sigma: 1.0
   t_min: 0.001
   data_proportion: 0.5           # match iMF reference: 50% FM, 50% MF
+  boundary_fraction: 0.1         # v2: fraction of batch from boundary region (t≈1, r≈0)
+  boundary_delta: 0.05           # v2: boundary width around (t=1, r=0)
 
 # EMA
 ema:
   decay: 0.9999
+
+# Sampling (inference)
+sampling:
+  norm_correction: 1.0            # v2: post-training calibration (default: no correction)
 
 # Sampling / logging (legacy keys, kept for backward compat)
 sample_every_n_epochs: 50
@@ -149,11 +155,11 @@ evaluation:
   n_real_cache: 200
   n_fid_samples: 100
   n_fid_real_samples: 200
-  fid_every_n_val_epochs: 3
+  fid_every_n_val_epochs: 1        # v2: FID every val epoch (was 3)
   center_slices_ratio: 0.6         # only used in 2d5 mode
   fid_weights_path: ""             # RadImageNet ResNet-50 (2d5 mode)
   fid_3d_weights_path: ""          # Deprecated (R3D-18 uses torchvision built-in weights)
-  early_stop_patience: 10
+  early_stop_patience: 30          # v2: 30 FID evals = 300 training epochs (was 10)
   seed: 42
 
 # Diagnostics

@@ -1,0 +1,35 @@
+%───────────────────────────────────────────────────────────────────────────────
+\subsection{v2 Training Improvements}
+\label{sec:v2}
+
+Based on the v1 training diagnostics (28{,}980 optimiser steps, 690 epochs),
+we identified three failure modes and designed targeted improvements.  All
+changes are hyperparameter tweaks or minor code modifications; no architectural
+changes are introduced.
+
+\textbf{1.\ Boundary-aware time sampling} (Section~\ref{sec:time_sampling}).
+The logit-normal distribution assigns $< 0.04\%$ of training samples to the
+1-NFE region $(t \approx 1, r \approx 0)$.  We inject $\alpha = 10\%$ of each
+batch from $\mathcal{U}([0.95, 1] \times [0.001, 0.05])$ to provide direct
+training signal at the 1-NFE operating point.
+
+\textbf{2.\ Extended training with improved checkpointing.}
+Max epochs increased from 1{,}500 to 3{,}000 (${\sim}$126K steps,
+$4.3\times$ v1 budget).  Early-stopping patience raised from 10 to 30 FID
+evaluations, with FID computed every validation epoch (every 10 training epochs)
+instead of every 3rd.  The best-FID checkpoint callback retains the top-3
+models (previously top-1) for rollback and post-hoc analysis.
+
+\textbf{3.\ Learning rate warmup.}
+Linear warmup over 1{,}000 steps (${\sim}$24 epochs), addressing the 90.5\%
+gradient clipping fraction observed at epoch~0.  Justified by the large
+effective batch size ($B_\text{eff} = 132$) per Goyal \etal~\cite{goyal2017accurate}.
+
+\textbf{4.\ Inference-time norm correction.}
+Post-training calibration of a scalar $\gamma$ (Section~\ref{sec:1nfe})
+to compensate for compound velocity norm overshoot ($\|V_\theta\|/\|v_c\|
+= 1.16$ at epoch~689).
+
+\textbf{5.\ Per-time-bin cosine diagnostics.}
+Cosine similarity $\cos(V, v_c)$ and $\cos(\tilde{v}, v_c)$ logged per
+time bin (near-data, mid, near-noise) for finer-grained convergence monitoring.

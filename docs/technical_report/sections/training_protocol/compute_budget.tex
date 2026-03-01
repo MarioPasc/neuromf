@@ -5,20 +5,23 @@
 \centering
 \caption{Compute budget and actual training cost.}
 \label{tab:compute}
-\begin{tabular}{ll}
+\begin{tabular}{lll}
 \toprule
-\textbf{Property} & \textbf{Value} \\
+\textbf{Property} & \textbf{v1} & \textbf{v2 (planned)} \\
 \midrule
-Hardware                   & 6$\times$ A100-SXM4-40GB (one DGX node) \\
-Strategy                   & DDP (DistributedDataParallel) \\
-Per-GPU batch              & $B_\mathrm{gpu} = 2$ (JVP activation: ${\sim}$20\,GB) \\
-Gradient accumulation      & 11 steps \\
-Effective batch            & $B_\mathrm{eff} = 2 \times 6 \times 11 = 132$ \\
-Optimiser steps/epoch      & 41 \\
-Planned optimiser steps    & 61,500 (1,500 epochs $\times$ 41) \\
-Actual optimiser steps     & ${\sim}$28,980 (early-stopped at epoch~690) \\
-Mean epoch time            & 268.1\,s (${\sim}$4.5\,min) \\
-\textbf{Total wall time}   & \textbf{${\sim}$51.4\,hours (${\sim}$2.1\,days)} \\
+Hardware                   & \multicolumn{2}{c}{6$\times$ A100-SXM4-40GB (DDP)} \\
+Per-GPU batch              & \multicolumn{2}{c}{$B_\mathrm{gpu} = 2$} \\
+Gradient accumulation      & \multicolumn{2}{c}{11 steps} \\
+Effective batch            & \multicolumn{2}{c}{$B_\mathrm{eff} = 2 \times 6 \times 11 = 132$} \\
+Optimiser steps/epoch      & \multicolumn{2}{c}{42} \\
+Max epochs                 & 1{,}500     & 3{,}000 \\
+Planned optimiser steps    & 63{,}000    & 126{,}000 \\
+Actual optimiser steps     & 28{,}980 (early stop) & --- \\
+Early-stop patience        & 10 FID evals & 30 FID evals \\
+FID eval frequency         & every 30 epochs & every 10 epochs \\
+Warmup steps               & 0            & 1{,}000 \\
+Mean epoch time            & \multicolumn{2}{c}{${\sim}$268\,s} \\
+\textbf{Total wall time (v1)}   & \multicolumn{2}{c}{\textbf{${\sim}$51.4\,hours}} \\
 \bottomrule
 \end{tabular}
 \end{table}

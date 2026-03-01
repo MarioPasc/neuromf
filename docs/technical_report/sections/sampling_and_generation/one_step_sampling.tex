@@ -1,5 +1,6 @@
 %───────────────────────────────────────────────────────────────────────────────
 \subsection{One-Step Sampling (1-NFE)}
+\label{sec:1nfe}
 
 With x-prediction, 1-NFE sampling is a single forward pass:
 \begin{equation}
@@ -14,5 +15,21 @@ With x-prediction, 1-NFE sampling is a single forward pass:
 $\varepsilon, z_0$: $(B, 4, 48, 48, 48)$.
 \quad $r = \mathbf{0}_B$, $t = \mathbf{1}_B$: each $(B,)$.\\
 The v-head output is discarded: \code{if isinstance(output, tuple): output = output[0]}.\\
-\textbf{Code:} \code{one\_step.py:32--46}.
+\textbf{Code:} \code{one\_step.py}.
 \end{shapes}
+
+\textbf{Norm correction (v2, post-training).}  The compound velocity norm
+ratio $\|V_\theta\|/\|v_c\|$ at epoch~689 is $1092/941 \approx 1.16$,
+indicating a systematic 16\% overshoot.  At inference this translates to
+overshooting the data manifold.  A scalar correction factor $\gamma$ is
+applied:
+\begin{equation}
+  z_0 = \varepsilon - \frac{u_\theta(\varepsilon,\,0,\,1)}{\gamma},
+  \qquad
+  u_\theta = \frac{\varepsilon - \hat{x}_\theta}{\,1\,}
+  \label{eq:norm_correction}
+\end{equation}
+where $\gamma$ is calibrated post-training on a grid $\{1.0, 1.05, 1.10,
+1.15, 1.20\}$ by minimising FID-3D at NFE$=$1.  Default: $\gamma = 1.0$
+(no correction).  This is analogous to the guidance rescale used in
+classifier-free guidance~\cite{lin2024common}.

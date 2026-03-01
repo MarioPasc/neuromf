@@ -17,18 +17,22 @@ def sample_euler(
     noise: Tensor,
     n_steps: int = 50,
     prediction_type: str = "u",
+    norm_correction: float = 1.0,
 ) -> Tensor:
     """Multi-step Euler sampling from t=1 to t=0.
 
-    For u-prediction: z_{t-dt} = z_t - dt * u_theta(z_t, r=t-dt, t=t).
+    For u-prediction: z_{t-dt} = z_t - dt * u_theta(z_t, r=t-dt, t=t) / gamma.
     For x-prediction: convert x_hat to u via u = (z_t - x_hat) / max(t, eps),
-    then apply the same Euler step.
+    then apply the same Euler step with norm correction.
 
     Args:
         model: Network with forward(z_t, r, t) -> output.
         noise: Gaussian noise of shape (B, D) or (B, C, ...).
         n_steps: Number of Euler steps.
         prediction_type: "u" for u-prediction, "x" for x-prediction.
+        norm_correction: Scalar correction factor gamma. Divides the
+            velocity by gamma to compensate for compound velocity norm
+            overshoot. Default 1.0 (no correction).
 
     Returns:
         Generated samples of same shape as noise.
@@ -60,6 +64,6 @@ def sample_euler(
         else:
             u = output
 
-        z = z - dt * u
+        z = z - dt * u / norm_correction
 
     return z

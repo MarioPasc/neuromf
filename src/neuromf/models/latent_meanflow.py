@@ -91,6 +91,8 @@ class LatentMeanFlow(pl.LightningModule):
         self._ts_sigma = float(ts.sigma)
         self._ts_t_min = float(ts.t_min)
         self._ts_data_proportion = float(ts.data_proportion)
+        self._ts_boundary_fraction = float(ts.get("boundary_fraction", 0.0))
+        self._ts_boundary_delta = float(ts.get("boundary_delta", 0.05))
 
         # Latent spatial size for sample generation
         self._latent_spatial = int(config.get("latent_spatial_size", 48))
@@ -186,6 +188,8 @@ class LatentMeanFlow(pl.LightningModule):
             sigma=self._ts_sigma,
             t_min=self._ts_t_min,
             data_proportion=self._ts_data_proportion,
+            boundary_fraction=self._ts_boundary_fraction,
+            boundary_delta=self._ts_boundary_delta,
             device=z_0.device,
         )
 
@@ -302,6 +306,8 @@ class LatentMeanFlow(pl.LightningModule):
             sigma=self._ts_sigma,
             t_min=self._ts_t_min,
             data_proportion=self._ts_data_proportion,
+            boundary_fraction=self._ts_boundary_fraction,
+            boundary_delta=self._ts_boundary_delta,
             device=z_0.device,
         )
 

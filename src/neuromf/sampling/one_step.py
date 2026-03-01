@@ -15,16 +15,20 @@ def sample_one_step(
     model: nn.Module,
     noise: Tensor,
     prediction_type: str = "u",
+    norm_correction: float = 1.0,
 ) -> Tensor:
     """Generate samples via 1-NFE MeanFlow sampling.
 
-    For u-prediction: z_0 = noise - u_theta(noise, r=0, t=1).
-    For x-prediction: z_0 = x_hat = model(noise, r=0, t=1).
+    For u-prediction: z_0 = noise - u_theta(noise, r=0, t=1) / gamma.
+    For x-prediction: z_0 = noise - (noise - x_hat) / gamma.
 
     Args:
         model: Network with forward(z_t, r, t) -> output.
         noise: Gaussian noise of shape (B, D) or (B, C, ...).
         prediction_type: "u" for u-prediction, "x" for x-prediction.
+        norm_correction: Scalar correction factor gamma. Divides the
+            velocity by gamma to compensate for compound velocity norm
+            overshoot. Default 1.0 (no correction).
 
     Returns:
         Generated samples of same shape as noise.
@@ -41,6 +45,10 @@ def sample_one_step(
         output = output[0]
 
     if prediction_type == "x":
+        if norm_correction != 1.0:
+            # x-pred: u = (noise - x_hat) / t, t=1 => u = noise - x_hat
+            # corrected: z_0 = noise - u / gamma = noise - (noise - x_hat) / gamma
+            return noise - (noise - output) / norm_correction
         return output  # model directly predicts x_0
     else:
-        return noise - output  # z_0 = noise - u
+        return noise - output / norm_correction  # z_0 = noise - u / gamma

@@ -23,5 +23,8 @@ and used for an Euler update:
 \begin{shapes}
 $z^{(i)}, \hat{x}_i, u_i$: each $(B, 4, 48, 48, 48)$.
 \quad $z^{(0)} = \varepsilon$; $z^{(K)} = z_0$ (final sample).\\
-\textbf{Code:} \code{multi\_step.py}; NFE levels tested: $K \in \{1,2,5,10\}$.
+\textbf{Code:} \code{multi\_step.py}; NFE levels tested: $K \in \{1,2,5,10,25,50\}$.
 \end{shapes}
+
+When norm correction is enabled (Section~\ref{sec:1nfe}), the Euler step
+becomes $z^{(i+1)} = z^{(i)} - \Delta t_i \cdot u_i / \gamma$.

@@ -32,32 +32,33 @@
 \contentsline {subsection}{\numberline {6.3}Optimiser and Schedule}{16}{subsection.6.3}%
 \contentsline {subsection}{\numberline {6.4}Compute Budget}{17}{subsection.6.4}%
 \contentsline {subsection}{\numberline {6.5}EMA (Exponential Moving Average)}{17}{subsection.6.5}%
-\contentsline {subsection}{\numberline {6.6}Divergence Monitoring}{17}{subsection.6.6}%
-\contentsline {section}{\numberline {7}Sampling and Generation}{17}{section.7}%
-\contentsline {subsection}{\numberline {7.1}One-Step Sampling (1-NFE)}{17}{subsection.7.1}%
+\contentsline {subsection}{\numberline {6.6}Divergence Monitoring}{18}{subsection.6.6}%
+\contentsline {section}{\numberline {7}Sampling and Generation}{18}{section.7}%
+\contentsline {subsection}{\numberline {7.1}One-Step Sampling (1-NFE)}{18}{subsection.7.1}%
 \contentsline {subsection}{\numberline {7.2}Multi-Step Euler Sampling}{18}{subsection.7.2}%
 \contentsline {subsection}{\numberline {7.3}Full Generation Pipeline (Phase\nobreakspace {}5)}{18}{subsection.7.3}%
-\contentsline {section}{\numberline {8}Experimental Results}{18}{section.8}%
-\contentsline {subsection}{\numberline {8.1}Toy Validation (Phase\nobreakspace {}2): MeanFlow on Flat Torus}{18}{subsection.8.1}%
-\contentsline {subsection}{\numberline {8.2}Main Training (Phase\nobreakspace {}4): Best Model}{18}{subsection.8.2}%
+\contentsline {section}{\numberline {8}Experimental Results}{19}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Toy Validation (Phase\nobreakspace {}2): MeanFlow on Flat Torus}{19}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Main Training (Phase\nobreakspace {}4): Best Model}{19}{subsection.8.2}%
 \contentsline {subsection}{\numberline {8.3}FID Progression}{19}{subsection.8.3}%
 \contentsline {subsection}{\numberline {8.4}Training Dynamics}{19}{subsection.8.4}%
 \contentsline {subsection}{\numberline {8.5}Generated Sample Statistics}{20}{subsection.8.5}%
 \contentsline {subsection}{\numberline {8.6}NFE Quality Analysis}{20}{subsection.8.6}%
-\contentsline {subsection}{\numberline {8.7}Spectral Analysis}{20}{subsection.8.7}%
-\contentsline {subsection}{\numberline {8.8}SWD (Sliced Wasserstein Distance)}{20}{subsection.8.8}%
+\contentsline {subsection}{\numberline {8.7}Spectral Analysis}{21}{subsection.8.7}%
+\contentsline {subsection}{\numberline {8.8}SWD (Sliced Wasserstein Distance)}{21}{subsection.8.8}%
 \contentsline {subsection}{\numberline {8.9}Key Ablation Insights}{21}{subsection.8.9}%
-\contentsline {section}{\numberline {9}Evaluation Protocol}{21}{section.9}%
-\contentsline {subsection}{\numberline {9.1}Image Quality Metrics}{21}{subsection.9.1}%
-\contentsline {subsection}{\numberline {9.2}Spectral Analysis}{21}{subsection.9.2}%
+\contentsline {section}{\numberline {9}Evaluation Protocol}{22}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Image Quality Metrics}{22}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Spectral Analysis}{22}{subsection.9.2}%
 \contentsline {subsection}{\numberline {9.3}Morphological Assessment}{22}{subsection.9.3}%
 \contentsline {subsection}{\numberline {9.4}NFE Consistency Analysis}{22}{subsection.9.4}%
 \contentsline {section}{\numberline {10}Implementation Details}{22}{section.10}%
 \contentsline {subsection}{\numberline {10.1}Software Stack}{22}{subsection.10.1}%
-\contentsline {subsection}{\numberline {10.2}Gated Phase System}{22}{subsection.10.2}%
-\contentsline {subsection}{\numberline {10.3}Compute Infrastructure}{22}{subsection.10.3}%
-\contentsline {section}{\numberline {11}Novel Contributions}{22}{section.11}%
-\contentsline {section}{\numberline {12}Current Status and Next Steps}{23}{section.12}%
-\contentsline {subsection}{\numberline {12.1}Current State (February 2026)}{23}{subsection.12.1}%
-\contentsline {subsection}{\numberline {12.2}Key Findings}{23}{subsection.12.2}%
-\contentsline {subsection}{\numberline {12.3}Open Questions}{23}{subsection.12.3}%
+\contentsline {subsection}{\numberline {10.2}Gated Phase System}{23}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Compute Infrastructure}{23}{subsection.10.3}%
+\contentsline {section}{\numberline {11}Novel Contributions}{23}{section.11}%
+\contentsline {section}{\numberline {12}Current Status and Next Steps}{24}{section.12}%
+\contentsline {subsection}{\numberline {12.1}Current State (February 2026)}{24}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}Key Findings}{24}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}v2 Training Improvements}{24}{subsection.12.3}%
+\contentsline {subsection}{\numberline {12.4}Open Questions}{24}{subsection.12.4}%

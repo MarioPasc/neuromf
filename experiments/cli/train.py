@@ -564,7 +564,7 @@ def main() -> None:
             dirpath=str(ckpt_dir),
             monitor=fid_monitor,
             mode="min",
-            save_top_k=1,
+            save_top_k=3,
             filename="best_fid_{epoch:03d}_{" + fid_monitor + ":.2f}",
             save_last=False,
         )
@@ -576,7 +576,7 @@ def main() -> None:
             eval_cfg.get("fid_every_n_val_epochs", 2),
             eval_cfg.get("early_stop_patience", 5),
         )
-        logger.info("FID checkpoint: monitor=%s (top 1)", fid_monitor)
+        logger.info("FID checkpoint: monitor=%s (top 3)", fid_monitor)
 
     # ------------------------------------------------------------------
     # Logger

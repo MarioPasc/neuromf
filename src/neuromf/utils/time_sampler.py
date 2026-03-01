@@ -40,6 +40,8 @@ def sample_t_and_r(
     sigma: float = 1.0,
     t_min: float = 0.001,
     data_proportion: float = 0.5,
+    boundary_fraction: float = 0.0,
+    boundary_delta: float = 0.05,
     device: torch.device | str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sample (t, r) pairs following MeanFlow-PyTorch convention.
@@ -48,27 +50,54 @@ def sample_t_and_r(
     then swapped so t >= r. For ``data_proportion`` fraction of the batch,
     r is set equal to t (JVP term vanishes, becoming standard FM loss).
 
+    When ``boundary_fraction > 0``, that fraction of the batch is sampled
+    from the 1-NFE boundary region: t ~ Uniform([1-delta, 1]), r ~ Uniform([t_min, delta]).
+    This injects training signal at the (t=1, r=0) operating point that the
+    logit-normal distribution assigns negligible mass to.
+
     Args:
         batch_size: Number of samples.
         mu: Mean of the underlying normal.
         sigma: Std of the underlying normal.
         t_min: Minimum clamp value.
-        data_proportion: Fraction of batch where r = t.
+        data_proportion: Fraction of standard batch where r = t.
+        boundary_fraction: Fraction of batch sampled from boundary region.
+        boundary_delta: Width of the boundary region around (t=1, r=0).
         device: Target device.
 
     Returns:
         Tuple of (t, r), each of shape (batch_size,).
     """
-    t_raw = sample_logit_normal(batch_size, mu=mu, sigma=sigma, t_min=t_min, device=device)
-    r_raw = sample_logit_normal(batch_size, mu=mu, sigma=sigma, t_min=t_min, device=device)
+    n_boundary = int(batch_size * boundary_fraction)
+    n_standard = batch_size - n_boundary
+
+    # Standard logit-normal sampling
+    t_raw = sample_logit_normal(n_standard, mu=mu, sigma=sigma, t_min=t_min, device=device)
+    r_raw = sample_logit_normal(n_standard, mu=mu, sigma=sigma, t_min=t_min, device=device)
 
     # Enforce t >= r
-    t = torch.maximum(t_raw, r_raw)
-    r = torch.minimum(t_raw, r_raw)
+    t_std = torch.maximum(t_raw, r_raw)
+    r_std = torch.minimum(t_raw, r_raw)
 
-    # For data_proportion of the batch, set r = t
-    data_size = int(batch_size * data_proportion)
-    mask = torch.arange(batch_size, device=device) < data_size
-    r = torch.where(mask, t, r)
+    # For data_proportion of the standard batch, set r = t
+    data_size = int(n_standard * data_proportion)
+    mask = torch.arange(n_standard, device=device) < data_size
+    r_std = torch.where(mask, t_std, r_std)
 
-    return t, r
+    if n_boundary > 0:
+        # Boundary sampling: (t, r) near (1, 0) for 1-NFE signal
+        t_bnd = torch.empty(n_boundary, device=device).uniform_(
+            1.0 - boundary_delta, 1.0
+        )
+        r_bnd = torch.empty(n_boundary, device=device).uniform_(
+            t_min, boundary_delta
+        )
+
+        t = torch.cat([t_std, t_bnd])
+        r = torch.cat([r_std, r_bnd])
+
+        # Shuffle to avoid systematic ordering
+        perm = torch.randperm(batch_size, device=device)
+        return t[perm], r[perm]
+
+    return t_std, r_std

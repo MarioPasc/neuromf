@@ -129,6 +129,11 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_jvp_spatial_norms: list[float] = []
         self._epoch_jvp_temporal_fracs: list[float] = []
 
+        # Per-time-bin cosine similarity accumulators
+        # Bins: [0.05, 0.2), [0.2, 0.8), [0.8, 1.0]
+        self._epoch_cosine_V_vc_bins: list[list[float]] = [[], [], []]
+        self._epoch_cosine_vtilde_vc_bins: list[list[float]] = [[], [], []]
+
         # Parameter snapshot for relative update norm
         self._param_snapshot: dict[str, torch.Tensor] = {}
 
@@ -285,6 +290,22 @@ class TrainingDiagnosticsCallback(pl.Callback):
             pl_module.log("train/meanflow/cosine_sim_v_vc", val)
             self._epoch_cosine_v_vc.append(val)
 
+        # Per-time-bin cosine similarity accumulation
+        if "t" in diag and "diag_cosine_sim_V_vc_per_sample" in diag:
+            t_vals = diag["t"].detach()
+            cos_V = diag["diag_cosine_sim_V_vc_per_sample"].detach()
+            cos_vt = diag.get("diag_cosine_sim_vtilde_vc_per_sample")
+            if cos_vt is not None:
+                cos_vt = cos_vt.detach()
+            # Bin: 0=[0.05,0.2), 1=[0.2,0.8), 2=[0.8,1.0]
+            bins = [(0.05, 0.2), (0.2, 0.8), (0.8, 1.0)]
+            for bi, (lo, hi) in enumerate(bins):
+                mask = (t_vals >= lo) & (t_vals < hi) if bi < 2 else (t_vals >= lo) & (t_vals <= hi)
+                if mask.any():
+                    self._epoch_cosine_V_vc_bins[bi].extend(cos_V[mask].cpu().tolist())
+                    if cos_vt is not None:
+                        self._epoch_cosine_vtilde_vc_bins[bi].extend(cos_vt[mask].cpu().tolist())
+
         # Accumulate t/r values for epoch sampling stats
         if "t" in diag:
             self._epoch_t_values.extend(diag["t"].detach().cpu().tolist())
@@ -376,6 +397,8 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_jvp_temporal_norms.clear()
         self._epoch_jvp_spatial_norms.clear()
         self._epoch_jvp_temporal_fracs.clear()
+        self._epoch_cosine_V_vc_bins = [[], [], []]
+        self._epoch_cosine_vtilde_vc_bins = [[], [], []]
 
     def on_train_epoch_end(
         self,
@@ -487,6 +510,20 @@ class TrainingDiagnosticsCallback(pl.Callback):
             summary["cosine_sim_vtilde_vc"] = sum(self._epoch_cosine_vtilde_vc) / len(
                 self._epoch_cosine_vtilde_vc
             )
+
+        # --- Per-time-bin cosine similarities ---
+        bin_labels = ["near_data", "mid", "near_noise"]
+        for bi, label in enumerate(bin_labels):
+            if self._epoch_cosine_V_vc_bins[bi]:
+                val = sum(self._epoch_cosine_V_vc_bins[bi]) / len(self._epoch_cosine_V_vc_bins[bi])
+                pl_module.log(f"train/cos_V_vc_{label}", val, sync_dist=True)
+                summary[f"cosine_sim_V_vc_{label}"] = val
+            if self._epoch_cosine_vtilde_vc_bins[bi]:
+                val = sum(self._epoch_cosine_vtilde_vc_bins[bi]) / len(
+                    self._epoch_cosine_vtilde_vc_bins[bi]
+                )
+                pl_module.log(f"train/cos_vtilde_vc_{label}", val, sync_dist=True)
+                summary[f"cosine_sim_vtilde_vc_{label}"] = val
 
         # --- Relative prediction error ---
         if self._epoch_relative_error:

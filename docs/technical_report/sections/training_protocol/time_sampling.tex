@@ -35,3 +35,21 @@ $r \leftarrow \min(t_\mathrm{raw}, r_\mathrm{raw})$.\\
   \end{cases}
   \label{eq:data_proportion}
 \end{equation}
+
+\textbf{Boundary-aware injection (v2).}  The logit-normal distribution
+assigns negligible mass to the 1-NFE operating point: $P(t > 0.95) =
+1 - \Phi(3.35) \approx 0.04\%$.  To provide direct training signal at this
+boundary, we replace the base distribution with a mixture:
+\begin{equation}
+  p(t,r) = (1-\alpha)\,p_{\mathrm{LN}}(t,r)
+         + \alpha\,\mathcal{U}\!\bigl([1{-}\delta,\,1] \times [t_{\min},\,\delta]\bigr),
+  \qquad \alpha = 0.1,\;\delta = 0.05
+  \label{eq:boundary_sampling}
+\end{equation}
+where $p_{\mathrm{LN}}$ is the logit-normal process above.  The boundary
+fraction $\alpha = 10\%$ is deliberately generous: the adaptive weight
+$w = \ell/(\ell + \varepsilon)$ partially damps high-loss boundary samples
+(gradient $\propto 1/\ell$ for large $\ell$), so surplus injection overcomes
+this attenuation.  At $\alpha = 0.1$ with $\delta = 0.05$, at least $8\%$ of
+every batch probes the region $(t > 0.95,\;r < 0.05)$ needed for 1-NFE
+generation.
