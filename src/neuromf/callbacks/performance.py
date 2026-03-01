@@ -77,6 +77,22 @@ class PerformanceCallback(pl.Callback):
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
     ) -> None:
-        """Log epoch wall time."""
+        """Log epoch wall time and print summary to console."""
         elapsed = time.monotonic() - self._epoch_start
         pl_module.log("perf/epoch_time_sec", elapsed, sync_dist=True)
+
+        # Console summary (rank 0 only)
+        if trainer.is_global_zero:
+            metrics = trainer.callback_metrics
+            loss = metrics.get("train/loss")
+            val_loss = metrics.get("val/loss")
+            parts = [
+                f"Epoch {trainer.current_epoch:>4d}",
+                f"step {trainer.global_step:>6d}",
+                f"time {elapsed:5.1f}s",
+            ]
+            if loss is not None:
+                parts.append(f"loss {float(loss):.4f}")
+            if val_loss is not None:
+                parts.append(f"val_loss {float(val_loss):.4f}")
+            logger.info(" | ".join(parts))
