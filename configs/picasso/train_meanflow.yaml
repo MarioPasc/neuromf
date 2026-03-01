@@ -17,9 +17,8 @@
 # Effective batch = batch_size x devices x accumulate = 2 x 6 x 11 = 132 (~128)
 # ~6,800 train scans (8K+ total) -> ~52 steps/epoch -> ~154K total steps at 3000 epochs (v2)
 
-# --- Picasso paths ---
+# --- Picasso paths (latents_dir comes from picasso/base.yaml) ---
 paths:
-  latents_dir: "${paths.results_root}/latents"
   checkpoints_dir: "${paths.results_root}/training_checkpoints"
   logs_dir: "${paths.results_root}/phase_4/logs"
   samples_dir: "${paths.results_root}/phase_4/samples"

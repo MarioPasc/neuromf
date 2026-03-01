@@ -91,8 +91,8 @@ echo "=========================================="
 
 cd "${REPO_SRC}"
 
-# Verify configs exist
-for f in "${CONFIGS_DIR}/base.yaml" "${REPO_SRC}/configs/train_meanflow.yaml" "${CONFIGS_DIR}/train_meanflow.yaml"; do
+# Verify configs exist (base + main + all TRAIN_CONFIG layers)
+for f in "${CONFIGS_DIR}/base.yaml" "${REPO_SRC}/configs/train_meanflow.yaml" ${TRAIN_CONFIG}; do
     if [ -f "$f" ]; then
         echo "[OK]   $f"
     else
@@ -103,8 +103,25 @@ for f in "${CONFIGS_DIR}/base.yaml" "${REPO_SRC}/configs/train_meanflow.yaml" "$
 done
 
 # Verify latent dir has HDF5 shard files and stats
-LATENT_DIR="${RESULTS_DST}/latents"
-H5_COUNT=$(find "${LATENT_DIR}" -name "*.h5" 2>/dev/null | wc -l)
+# Read latents_dir from the resolved config chain (matches what train.py will use)
+LATENT_DIR=$(python -c "
+from omegaconf import OmegaConf; import sys
+layers = [OmegaConf.load('${CONFIGS_DIR}/base.yaml')]
+main_cfg = '${REPO_SRC}/configs/train_meanflow.yaml'
+layers.append(OmegaConf.load(main_cfg))
+for cp in sys.argv[1:]:
+    layers.append(OmegaConf.load(cp))
+cfg = OmegaConf.merge(*layers); OmegaConf.resolve(cfg)
+print(cfg.paths.latents_dir)
+" ${TRAIN_CONFIG} 2>/dev/null) || LATENT_DIR="${RESULTS_DST}/latents"
+echo "Latent dir: ${LATENT_DIR}"
+
+# Guard: check dir exists first, then count (avoids set -eo pipefail silent death)
+if [ -d "${LATENT_DIR}" ]; then
+    H5_COUNT=$(find "${LATENT_DIR}" -name "*.h5" | wc -l)
+else
+    H5_COUNT=0
+fi
 echo "Latent HDF5 shards: ${H5_COUNT}"
 if [ "$H5_COUNT" -eq 0 ]; then
     echo "ERROR: No .h5 shard files found in ${LATENT_DIR}. Run Phase 1 first."

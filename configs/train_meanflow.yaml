@@ -179,9 +179,8 @@ diagnostics:
   enabled: false
   every_n_epochs: 50
 
-# Paths (will be merged with base.yaml)
+# Paths (merged with base.yaml — latents_dir comes from base.yaml)
 paths:
-  latents_dir: ${paths.results_root}/latents
   checkpoints_dir: ${paths.results_root}/training_checkpoints
   logs_dir: ${paths.results_root}/phase_4/logs
   samples_dir: ${paths.results_root}/phase_4/samples
