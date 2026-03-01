@@ -82,11 +82,8 @@ echo "  Memory:      ${MEM}G" >&2
 echo "  Resume:      ${RESUME_CKPT:-none}" >&2
 echo "" >&2
 
-# Create output directories
-mkdir -p "${RESULTS_DST}/training_checkpoints"
-mkdir -p "${RESULTS_DST}/phase_4/logs"
-mkdir -p "${RESULTS_DST}/phase_4/samples"
-mkdir -p "${RESULTS_DST}/phase_4/diagnostics"
+# Create SLURM log output directory (run dir is created by train.py)
+mkdir -p "${RESULTS_DST}/phase_4"
 
 # ========================================================================
 # SUBMIT JOB
@@ -121,11 +118,11 @@ echo "Job ID:    ${JOB_ID}" >&2
 echo "GPUs:      ${N_GPUS}" >&2
 echo "Monitor:   squeue -j ${JOB_ID}" >&2
 echo "Logs:      ${RESULTS_DST}/phase_4/train_${JOB_ID}.{out,err}" >&2
-echo "Checkpts:  ${RESULTS_DST}/training_checkpoints/" >&2
-echo "Samples:   ${RESULTS_DST}/phase_4/samples/" >&2
+echo "Run dir:   ${RESULTS_DST}/runs/run_<timestamp>/" >&2
 echo "" >&2
-echo "After completion, check TensorBoard logs:" >&2
-echo "  tensorboard --logdir ${RESULTS_DST}/phase_4/logs" >&2
+echo "After completion:" >&2
+echo "  ls ${RESULTS_DST}/runs/       # find your run directory" >&2
+echo "  tensorboard --logdir ${RESULTS_DST}/runs/run_*/logs" >&2
 
 # Job ID to stdout for orchestration capture
 echo "${JOB_ID}"

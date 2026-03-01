@@ -44,9 +44,5 @@ diagnostics:
 sample_collector:
   enabled: false
 
-# --- Separate output paths to avoid polluting real results ---
-paths:
-  checkpoints_dir: "${paths.results_root}/smoke_test/checkpoints"
-  logs_dir: "${paths.results_root}/smoke_test/logs"
-  samples_dir: "${paths.results_root}/smoke_test/samples"
-  diagnostics_dir: "${paths.results_root}/smoke_test/diagnostics"
+# Output paths: train.py creates a unique run directory (results_root/runs/run_<timestamp>/)
+# automatically for every run, so no custom path overrides needed here.

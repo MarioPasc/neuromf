@@ -71,11 +71,8 @@ echo "  GPUs:        ${N_GPUS}" >&2
 echo "  Config chain: ${TRAIN_CONFIG}" >&2
 echo "" >&2
 
-# Create output directories
-mkdir -p "${RESULTS_DST}/smoke_test/checkpoints"
-mkdir -p "${RESULTS_DST}/smoke_test/logs"
-mkdir -p "${RESULTS_DST}/smoke_test/samples"
-mkdir -p "${RESULTS_DST}/smoke_test/diagnostics"
+# Create SLURM log output directory (run dir is created by train.py)
+mkdir -p "${RESULTS_DST}/smoke_test"
 
 # ========================================================================
 # SUBMIT JOB
@@ -109,11 +106,12 @@ echo "GPUs:      ${N_GPUS}" >&2
 echo "Wall time: 1 hour" >&2
 echo "Monitor:   squeue -j ${JOB_ID}" >&2
 echo "Output:    ${RESULTS_DST}/smoke_test/smoke_${JOB_ID}.{out,err}" >&2
-echo "Checkpts:  ${RESULTS_DST}/smoke_test/checkpoints/" >&2
+echo "Run dir:   ${RESULTS_DST}/runs/run_<timestamp>/" >&2
 echo "" >&2
 echo "After completion, verify:" >&2
-echo "  ls ${RESULTS_DST}/smoke_test/checkpoints/*.ckpt" >&2
-echo "  cat ${RESULTS_DST}/smoke_test/diagnostics/training_summary.json | python -m json.tool" >&2
+echo "  ls ${RESULTS_DST}/runs/       # find your run directory" >&2
+echo "  ls ${RESULTS_DST}/runs/run_*/checkpoints/*.ckpt" >&2
+echo "  cat ${RESULTS_DST}/runs/run_*/diagnostics/aggregate_results/training_summary.json | python -m json.tool" >&2
 
 # Job ID to stdout for orchestration capture
 echo "${JOB_ID}"

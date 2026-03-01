@@ -178,19 +178,41 @@ echo "=========================================="
 echo "OUTPUT VERIFICATION"
 echo "=========================================="
 
-CKPT_DIR="${RESULTS_DST}/training_checkpoints"
-CKPT_COUNT=$(find "${CKPT_DIR}" -name "*.ckpt" 2>/dev/null | wc -l)
-echo "Checkpoint files: ${CKPT_COUNT}"
+# Find the most recent run directory (created by train.py)
+RUN_DIR=$(ls -1dt "${RESULTS_DST}/runs/run_"* 2>/dev/null | head -1)
+if [ -n "${RUN_DIR}" ]; then
+    echo "Run directory: ${RUN_DIR}"
+    CKPT_DIR="${RUN_DIR}/checkpoints"
+    CKPT_COUNT=$(find "${CKPT_DIR}" -name "*.ckpt" 2>/dev/null | wc -l)
+    echo "Checkpoint files: ${CKPT_COUNT}"
 
-if [ -f "${CKPT_DIR}/last.ckpt" ]; then
-    SIZE=$(stat -c%s "${CKPT_DIR}/last.ckpt" 2>/dev/null || echo "?")
-    echo "[OK]   last.ckpt (${SIZE} bytes)"
+    if [ -f "${CKPT_DIR}/last.ckpt" ]; then
+        SIZE=$(stat -c%s "${CKPT_DIR}/last.ckpt" 2>/dev/null || echo "?")
+        echo "[OK]   last.ckpt (${SIZE} bytes)"
+    else
+        echo "[MISS] last.ckpt"
+    fi
+
+    DIAG_SUMMARY="${RUN_DIR}/diagnostics/aggregate_results/training_summary.json"
+    if [ -f "${DIAG_SUMMARY}" ]; then
+        echo "[OK]   training_summary.json"
+        # Print GPU peak memory from last epoch if available
+        python -c "
+import json
+with open('${DIAG_SUMMARY}') as f:
+    data = json.load(f)
+if data and 'gpu_memory' in data[-1]:
+    mem = data[-1]['gpu_memory']
+    print(f\"  GPU peak allocated: {mem['peak_allocated_gb']:.2f} GB\")
+    print(f\"  GPU peak reserved:  {mem['peak_reserved_gb']:.2f} GB\")
+" 2>/dev/null || true
+    else
+        echo "[MISS] training_summary.json"
+    fi
 else
-    echo "[MISS] last.ckpt"
+    echo "[MISS] No run directory found under ${RESULTS_DST}/runs/"
+    CKPT_COUNT=0
 fi
-
-SAMPLE_COUNT=$(find "${RESULTS_DST}/phase_4/samples" -name "*.png" 2>/dev/null | wc -l)
-echo "Sample images: ${SAMPLE_COUNT}"
 
 # ========================================================================
 # COMPLETION
@@ -204,8 +226,8 @@ echo "=========================================="
 echo "Finished:   $(date)"
 echo "Duration:   $(($ELAPSED / 3600))h $((($ELAPSED / 60) % 60))m $(($ELAPSED % 60))s"
 echo "GPUs:       ${N_GPUS}"
-echo "Checkpts:   ${CKPT_COUNT} files in ${CKPT_DIR}"
-echo "Samples:    ${SAMPLE_COUNT} images"
+echo "Run dir:    ${RUN_DIR:-not found}"
+echo "Checkpts:   ${CKPT_COUNT} files"
 echo "Exit code:  ${TRAIN_EXIT}"
 
 if [ "$TRAIN_EXIT" -eq 0 ]; then

@@ -275,12 +275,25 @@ def main() -> None:
 
     loaded = " + ".join(str(p) for p in [base_path, main_train_path, *config_paths] if p.exists())
     logger.info("Config loaded: %s", loaded)
+
+    # ------------------------------------------------------------------
+    # Run directory — isolate each training run's outputs
+    # ------------------------------------------------------------------
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_root = Path(config.paths.results_root)
+    run_dir = results_root / "runs" / f"run_{run_id}"
+
+    # Override output paths to point into the run directory
+    OmegaConf.update(config, "paths.checkpoints_dir", str(run_dir / "checkpoints"))
+    OmegaConf.update(config, "paths.logs_dir", str(run_dir / "logs"))
+    OmegaConf.update(config, "paths.diagnostics_dir", str(run_dir / "diagnostics"))
+    OmegaConf.update(config, "paths.samples_dir", str(run_dir / "samples"))
+    OmegaConf.update(config, "paths.run_dir", str(run_dir))
+
+    logger.info("Run directory: %s", run_dir)
     logger.info("Latents dir: %s", config.paths.latents_dir)
     logger.info("Checkpoints dir: %s", config.paths.checkpoints_dir)
 
-    # ------------------------------------------------------------------
-    # Dry run
-    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     # Trainer infrastructure (devices, strategy, accelerator)
     # ------------------------------------------------------------------
@@ -305,6 +318,7 @@ def main() -> None:
 
     if args.dry_run:
         logger.info("=== DRY RUN ===")
+        logger.info("Run directory: %s", run_dir)
         logger.info("UNet channels: %s", list(config.unet.channels))
         logger.info("Prediction type: %s", config.unet.prediction_type)
         logger.info("Batch size: %d (per-GPU)", config.training.batch_size)
