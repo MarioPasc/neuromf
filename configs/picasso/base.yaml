@@ -9,7 +9,7 @@ paths:
 
   # Data
   datasets_root: "/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets"
-  fomo60k_root: "/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/FOMO60K"
+  fomo60k_root: "/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/FOMO60K/FOMO60K_NeuroiMF/dataset"
 
   # Model weights
   checkpoints_root: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints"
@@ -18,7 +18,7 @@ paths:
 
   # Outputs
   results_root: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results"
-  latents_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/latents"
+  latents_dir: "/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/FOMO60K/FOMO60K_NeuroiMF/latents"
   generated_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/generated"
   figures_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/figures"
   logs_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/logs"

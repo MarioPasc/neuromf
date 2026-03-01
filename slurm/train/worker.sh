@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -J neuromf_p4_train
-#SBATCH --time=1-12:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=96
+#SBATCH --mem=384G
 #SBATCH --constraint=dgx
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:6
 #SBATCH --output=train_%j.out
 #SBATCH --error=train_%j.err
 
@@ -16,8 +16,8 @@
 # Supports single-GPU and multi-GPU (DDP) within one DGX node.
 # Lightning handles process spawning — no srun needed.
 #
-# Dataset: ~6,471 scans (8 datasets), 3-way split (85/10/5)
-# ~5,500 train scans -> ~43 steps/epoch -> ~12,900 total steps at 300 epochs
+# Dataset: 8K+ scans, 3-way split (85/10/5)
+# ~6,800 train scans -> ~52 steps/epoch -> ~154K total steps at 3000 epochs (v2)
 #
 # Expected env vars (exported by launch.sh):
 #   REPO_SRC, CONFIGS_DIR, RESULTS_DST, CONDA_ENV_NAME, RESUME_CKPT, N_GPUS
@@ -167,9 +167,8 @@ if [ -n "${RESUME_CKPT:-}" ] && [ -f "${RESUME_CKPT}" ]; then
     TRAIN_CMD="${TRAIN_CMD} --resume ${RESUME_CKPT}"
 fi
 
-eval "${TRAIN_CMD}"
-
-TRAIN_EXIT=$?
+# Capture exit code without triggering set -e (post-flight runs either way)
+eval "${TRAIN_CMD}" && TRAIN_EXIT=0 || TRAIN_EXIT=$?
 
 # ========================================================================
 # POST-FLIGHT: Verify outputs

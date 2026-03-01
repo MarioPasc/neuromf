@@ -15,7 +15,7 @@
 #   Headroom: ~14 GB
 #
 # Effective batch = batch_size x devices x accumulate = 2 x 6 x 11 = 132 (~128)
-# ~5,500 train scans -> ~41 steps/epoch -> ~61,500 total steps at 1500 epochs
+# ~6,800 train scans (8K+ total) -> ~52 steps/epoch -> ~154K total steps at 3000 epochs (v2)
 
 # --- Picasso paths ---
 paths:
@@ -40,7 +40,7 @@ training:
   accumulate_grad_batches: 11        # effective batch = 2 x 6 x 11 = 132
   log_every_n_steps: 10              # ~41 steps/epoch -> log ~every 4 epochs
   augmentation:
-    enabled: true                    # critical for 1500 epochs on ~5.5K samples
+    enabled: true                    # critical for 3000 epochs on ~6.8K train samples
 
 # --- Diagnostics: always on for Picasso runs ---
 diagnostics:

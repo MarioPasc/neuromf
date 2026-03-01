@@ -4,7 +4,7 @@
 # Architecture choices (proven in xpred_exact_jvp ablation, FID 14.4):
 #   - x-prediction + exact JVP (stable; u-pred + FD-JVP diverges)
 #   - (t, h) conditioning (MF Table 1c: FID 61.06 vs h-only 63.13)
-#   - v-head with 1 ResBlock (tangent supervision + extra gradient signal)
+#   - v-head with 2 ResBlocks (tangent supervision + extra gradient signal)
 #   - L2 loss (p=2) with adaptive weighting (norm_p=1, norm_eps=1)
 #
 # Picasso overlay overrides hardware settings (GPUs, batch, workers, augmentation).
@@ -35,7 +35,7 @@ unet:
   t_min: 0.05
   gradient_checkpointing: false        # must be false for exact JVP (torch.func.jvp)
   use_v_head: true                     # iMF dual-head: v-head provides JVP tangent
-  v_head_num_res_blocks: 1             # 1 ResBlock (~228K params)
+  v_head_num_res_blocks: 2             # 2 ResBlocks (~456K params)
   conditioning_mode: t_h               # MF Table 1c optimal: (t, h=t-r)
   # Initialization strategy
   initialization:
@@ -94,6 +94,18 @@ meanflow:
   spatial_mask_ratio: 0.0         # Phase C (0.0=off)
   use_v_head: true                # must match unet.use_v_head
 
+# Velocity field smoothness regularizer (doc2)
+# Penalizes ||dv/dz_t||_F^2 / d via Hutchinson trace estimator.
+# Added to total loss as: lambda_smooth * L_smooth (NOT adaptive-weighted).
+smoothness:
+  enabled: false                  # Disabled by default; enable for v2+ experiments
+  lambda_smooth: 0.01            # Regularization weight
+  strategy: fd                   # "fd" (finite-difference) | "exact" (torch.func.jvp)
+  fd_step: 0.001                 # FD step size for finite-difference mode
+  start_step: 1000               # Skip first N optimizer steps (match LR warmup)
+  n_probes: 1                    # Hutchinson probes per step (more = lower variance)
+  probe_distribution: gaussian   # "gaussian" | "rademacher"
+
 # Time sampling
 time_sampling:
   distribution: logit_normal
@@ -121,8 +133,8 @@ latent_spatial_size: 48
 sample_collector:
   enabled: true
   collect_every_n_epochs: 50    # reduced for 1500-epoch training
-  n_samples: 4
-  nfe_steps: [1, 2, 5, 10]     # multi-NFE for comparison
+  n_samples: 2
+  nfe_steps: [1, 2, 5, 10, 50]     # multi-NFE for comparison
   seed: 42                      # fixed noise for evolution tracking
 
 # VAE for post-training decode (used by decode_samples.py CLI)

@@ -94,6 +94,16 @@ class LatentMeanFlow(pl.LightningModule):
         self._ts_boundary_fraction = float(ts.get("boundary_fraction", 0.0))
         self._ts_boundary_delta = float(ts.get("boundary_delta", 0.05))
 
+        # Smoothness regularizer config (doc2)
+        smooth_cfg = config.get("smoothness", {})
+        self._smooth_enabled = bool(smooth_cfg.get("enabled", False))
+        self._lambda_smooth = float(smooth_cfg.get("lambda_smooth", 0.01))
+        self._smooth_strategy = str(smooth_cfg.get("strategy", "fd"))
+        self._smooth_fd_step = float(smooth_cfg.get("fd_step", 1e-3))
+        self._smooth_start_step = int(smooth_cfg.get("start_step", 1000))
+        self._smooth_n_probes = int(smooth_cfg.get("n_probes", 1))
+        self._smooth_probe_dist = str(smooth_cfg.get("probe_distribution", "gaussian"))
+
         # Latent spatial size for sample generation
         self._latent_spatial = int(config.get("latent_spatial_size", 48))
         self._in_channels = int(config.unet.in_channels)
@@ -202,6 +212,45 @@ class LatentMeanFlow(pl.LightningModule):
             return_diagnostics=self._diag_enabled,
         )
         loss = result["loss"]
+
+        # --- Smoothness regularizer (doc2: velocity field Jacobian penalty) ---
+        if (
+            self._smooth_enabled
+            and self._use_v_head
+            and self.global_step >= self._smooth_start_step
+            and "_v_tangent" in result
+        ):
+            from neuromf.losses.smoothness_loss import velocity_smoothness_loss
+
+            smooth_result = velocity_smoothness_loss(
+                v_fn=self.net,
+                z_t=result["_z_t"],
+                t=t,
+                v_original=result["_v_tangent"],
+                strategy=self._smooth_strategy,
+                fd_step=self._smooth_fd_step,
+                n_probes=self._smooth_n_probes,
+                probe_distribution=self._smooth_probe_dist,
+            )
+            loss_smooth = smooth_result["loss"]
+            loss = loss + self._lambda_smooth * loss_smooth
+
+            self.log("train/loss_smooth", loss_smooth.detach(), sync_dist=True)
+            self.log(
+                "train/loss_smooth_weighted",
+                (self._lambda_smooth * loss_smooth).detach(),
+                sync_dist=True,
+            )
+            self.log(
+                "train/jac_frob_norm",
+                smooth_result["jac_frob_norm_est"],
+                sync_dist=True,
+            )
+
+            # Expose to diagnostics callback
+            if self._diag_enabled:
+                result["raw_loss_smooth"] = loss_smooth.detach()
+                result["jac_frob_norm_est"] = smooth_result["jac_frob_norm_est"]
 
         # NaN guard: return None so Lightning skips backward + optimizer entirely
         if not torch.isfinite(loss):

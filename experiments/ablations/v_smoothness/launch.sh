@@ -1,24 +1,38 @@
 #!/usr/bin/env bash
 # =============================================================================
-# MEANFLOW TRAINING — SLURM LAUNCHER (atomic)
+# VELOCITY SMOOTHNESS ABLATION LAUNCHER
 #
-# Login-node script that submits the training job on Picasso.
-# Uses x-pred + exact JVP (best known config), requiring batch_size=2 per GPU.
+# Submits the neuro-iMF model with the v-head Jacobian smoothness regularizer
+# enabled (doc2). Inherits all settings from the best known config (x-pred,
+# exact JVP, t_h conditioning, v-head, 3000 epochs) and adds:
+#   L_total = L_mf + 0.01 * ||dv/dz_t||_F^2 / d
 #
-# Expected time: ~490s/epoch on 6xA100 (8K+ volumes), 7-day wall limit.
-# Early stopping (patience=300 epochs) + 3D-FID checkpointing should
-# converge within the 7-day window (~1,230 epochs max).
+# The FD Hutchinson estimator adds one extra v_fn forward per step (~+2 GB),
+# fitting within batch_size=2 on A100 40GB with exact JVP.
 #
 # Usage (from login node):
-#   bash slurm/train/launch.sh
-#   N_GPUS=4 bash slurm/train/launch.sh
-#   bash slurm/train/launch.sh --resume /path/to/checkpoint.ckpt
-#   bash slurm/train/launch.sh --depends-on 12345
+#   bash experiments/ablations/v_smoothness/launch.sh
+#   bash experiments/ablations/v_smoothness/launch.sh --resume /path/to/ckpt
+#   bash experiments/ablations/v_smoothness/launch.sh --depends-on 12345
+#   N_GPUS=4 bash experiments/ablations/v_smoothness/launch.sh
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKER_SCRIPT="${SCRIPT_DIR}/../../slurm/train/worker.sh"
+
+# Validate worker script exists
+if [ ! -f "${WORKER_SCRIPT}" ]; then
+    # Fallback to phase_4 worker
+    WORKER_SCRIPT="${SCRIPT_DIR}/../../slurm/phase_4/train_worker.sh"
+    if [ ! -f "${WORKER_SCRIPT}" ]; then
+        echo "ERROR: Worker script not found." >&2
+        echo "  Tried: ${SCRIPT_DIR}/../../slurm/train/worker.sh" >&2
+        echo "  Tried: ${SCRIPT_DIR}/../../slurm/phase_4/train_worker.sh" >&2
+        exit 1
+    fi
+fi
 
 # ========================================================================
 # PARSE ARGUMENTS
@@ -38,14 +52,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown argument: $1" >&2
-            echo "Usage: bash slurm/train/launch.sh [--resume CKPT] [--depends-on JOB_ID]" >&2
+            echo "Usage: bash experiments/ablations/v_smoothness/launch.sh [--resume CKPT] [--depends-on JOB_ID]" >&2
             exit 1
             ;;
     esac
 done
 
 echo "==========================================" >&2
-echo "MEANFLOW TRAINING LAUNCHER" >&2
+echo "VELOCITY SMOOTHNESS ABLATION LAUNCHER" >&2
 echo "==========================================" >&2
 echo "Time: $(date)" >&2
 echo "" >&2
@@ -53,12 +67,15 @@ echo "" >&2
 # ========================================================================
 # CONFIGURATION
 # ========================================================================
-export EXPERIMENT_NAME="phase_4_meanflow_training"
+export EXPERIMENT_NAME="v_smoothness_ablation"
 export CONDA_ENV_NAME="${CONDA_ENV_NAME:-neuromf}"
 
 export REPO_SRC="${REPO_SRC:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf}"
 export CONFIGS_DIR="${CONFIGS_DIR:-${REPO_SRC}/configs/picasso}"
 export RESULTS_DST="${RESULTS_DST:-/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results}"
+
+# Config chain: Picasso overlay + smoothness ablation overlay
+export TRAIN_CONFIG="${CONFIGS_DIR}/train_meanflow.yaml ${SCRIPT_DIR}/config.yaml"
 
 # Number of GPUs — 6 for exact JVP (batch=2/GPU, accum=11, eff=132)
 export N_GPUS="${N_GPUS:-6}"
@@ -73,7 +90,7 @@ if [ "$MEM" -gt 480 ]; then MEM=480; fi
 
 echo "Configuration:" >&2
 echo "  Repo:        ${REPO_SRC}" >&2
-echo "  Configs:     ${CONFIGS_DIR}" >&2
+echo "  Configs:     ${TRAIN_CONFIG}" >&2
 echo "  Results:     ${RESULTS_DST}" >&2
 echo "  Conda env:   ${CONDA_ENV_NAME}" >&2
 echo "  GPUs:        ${N_GPUS}" >&2
@@ -83,27 +100,26 @@ echo "  Resume:      ${RESUME_CKPT:-none}" >&2
 echo "" >&2
 
 # Create output directories
-mkdir -p "${RESULTS_DST}/training_checkpoints"
-mkdir -p "${RESULTS_DST}/phase_4/logs"
-mkdir -p "${RESULTS_DST}/phase_4/samples"
-mkdir -p "${RESULTS_DST}/phase_4/diagnostics"
+ABL_DIR="${RESULTS_DST}/ablations/v_smoothness"
+mkdir -p "${ABL_DIR}/checkpoints"
+mkdir -p "${ABL_DIR}/logs"
+mkdir -p "${ABL_DIR}/samples"
+mkdir -p "${ABL_DIR}/diagnostics"
 
 # ========================================================================
 # SUBMIT JOB
 # ========================================================================
-# Lightning handles multi-GPU process spawning internally — SLURM only
-# needs 1 task with N GPUs allocated. No srun needed.
 SBATCH_ARGS=(
     --parsable
-    --job-name="neuromf_p4_${N_GPUS}gpu"
+    --job-name="neuromf_v_smooth"
     --time=7-00:00:00
     --ntasks=1
     --cpus-per-task="${CPUS}"
     --mem="${MEM}G"
     --constraint=dgx
     --gres="gpu:${N_GPUS}"
-    --output="${RESULTS_DST}/phase_4/train_%j.out"
-    --error="${RESULTS_DST}/phase_4/train_%j.err"
+    --output="${ABL_DIR}/train_%j.out"
+    --error="${ABL_DIR}/train_%j.err"
     --export=ALL
 )
 
@@ -112,7 +128,7 @@ if [ -n "${DEPENDS_ON}" ]; then
     echo "Dependency:  afterok:${DEPENDS_ON}" >&2
 fi
 
-JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/worker.sh")
+JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "${WORKER_SCRIPT}")
 
 echo "==========================================" >&2
 echo "JOB SUBMITTED" >&2
@@ -120,12 +136,12 @@ echo "==========================================" >&2
 echo "Job ID:    ${JOB_ID}" >&2
 echo "GPUs:      ${N_GPUS}" >&2
 echo "Monitor:   squeue -j ${JOB_ID}" >&2
-echo "Logs:      ${RESULTS_DST}/phase_4/train_${JOB_ID}.{out,err}" >&2
-echo "Checkpts:  ${RESULTS_DST}/training_checkpoints/" >&2
-echo "Samples:   ${RESULTS_DST}/phase_4/samples/" >&2
+echo "Logs:      ${ABL_DIR}/train_${JOB_ID}.{out,err}" >&2
+echo "Checkpts:  ${ABL_DIR}/checkpoints/" >&2
+echo "Diag:      ${ABL_DIR}/diagnostics/" >&2
 echo "" >&2
-echo "After completion, check TensorBoard logs:" >&2
-echo "  tensorboard --logdir ${RESULTS_DST}/phase_4/logs" >&2
+echo "After completion, compare against baseline:" >&2
+echo "  tensorboard --logdir_spec baseline:${RESULTS_DST}/phase_4/logs,smooth:${ABL_DIR}/logs" >&2
 
 # Job ID to stdout for orchestration capture
 echo "${JOB_ID}"

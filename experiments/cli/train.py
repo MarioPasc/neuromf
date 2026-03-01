@@ -630,6 +630,8 @@ def main() -> None:
         log_every_n_steps=int(config.training.log_every_n_steps),
         enable_progress_bar=True,
         deterministic=False,
+        limit_train_batches=trainer_cfg.get("limit_train_batches", None),
+        limit_val_batches=trainer_cfg.get("limit_val_batches", None),
     )
 
     # ------------------------------------------------------------------

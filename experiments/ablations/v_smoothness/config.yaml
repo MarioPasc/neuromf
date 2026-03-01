@@ -1,0 +1,29 @@
+# Velocity field smoothness regularizer ablation (doc2)
+#
+# Merged on top of: base.yaml -> train_meanflow.yaml -> picasso/train_meanflow.yaml
+#
+# Enables the Hutchinson-based Jacobian penalty on the v-head:
+#   L_total = L_mf + lambda_smooth * ||dv/dz_t||_F^2 / d
+#
+# Uses FD mode (memory-efficient) with lambda=0.01, matching LR warmup delay.
+# All other settings (x-pred, exact JVP, t_h conditioning, v-head, 3000 epochs,
+# augmentation, evaluation) are inherited from the base + Picasso overlay.
+#
+# Memory impact: one extra v_fn forward per step (FD mode) ≈ +2 GB on A100.
+#   batch_size=2 still fits comfortably with exact JVP on A100 40GB.
+
+smoothness:
+  enabled: true
+  lambda_smooth: 0.01
+  strategy: fd
+  fd_step: 0.001
+  start_step: 1000
+  n_probes: 1
+  probe_distribution: gaussian
+
+# Redirect outputs to ablation-specific directories
+paths:
+  checkpoints_dir: "${paths.results_root}/ablations/v_smoothness/checkpoints"
+  logs_dir: "${paths.results_root}/ablations/v_smoothness/logs"
+  samples_dir: "${paths.results_root}/ablations/v_smoothness/samples"
+  diagnostics_dir: "${paths.results_root}/ablations/v_smoothness/diagnostics"

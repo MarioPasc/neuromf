@@ -124,6 +124,10 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_v_head_norms: list[float] = []
         self._epoch_cosine_v_vc: list[float] = []
 
+        # Smoothness regularizer accumulators (doc2)
+        self._epoch_smoothness_losses: list[float] = []
+        self._epoch_jac_frob_norms: list[float] = []
+
         # JVP decomposition accumulators
         self._epoch_jvp_temporal_norms: list[float] = []
         self._epoch_jvp_spatial_norms: list[float] = []
@@ -290,6 +294,15 @@ class TrainingDiagnosticsCallback(pl.Callback):
             pl_module.log("train/meanflow/cosine_sim_v_vc", val)
             self._epoch_cosine_v_vc.append(val)
 
+        # Smoothness regularizer diagnostics (doc2)
+        if "raw_loss_smooth" in diag:
+            val = float(diag["raw_loss_smooth"])
+            pl_module.log("train/meanflow/smoothness_loss", val, sync_dist=True)
+            self._epoch_smoothness_losses.append(val)
+        if "jac_frob_norm_est" in diag:
+            val = float(diag["jac_frob_norm_est"])
+            self._epoch_jac_frob_norms.append(val)
+
         # Per-time-bin cosine similarity accumulation
         if "t" in diag and "diag_cosine_sim_V_vc_per_sample" in diag:
             t_vals = diag["t"].detach()
@@ -399,6 +412,8 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_jvp_temporal_fracs.clear()
         self._epoch_cosine_V_vc_bins = [[], [], []]
         self._epoch_cosine_vtilde_vc_bins = [[], [], []]
+        self._epoch_smoothness_losses.clear()
+        self._epoch_jac_frob_norms.clear()
 
     def on_train_epoch_end(
         self,
@@ -568,6 +583,16 @@ class TrainingDiagnosticsCallback(pl.Callback):
         if self._epoch_cosine_v_vc:
             summary["cosine_sim_v_vc"] = sum(self._epoch_cosine_v_vc) / len(self._epoch_cosine_v_vc)
 
+        # --- Smoothness regularizer (doc2) ---
+        if self._epoch_smoothness_losses:
+            val = sum(self._epoch_smoothness_losses) / len(self._epoch_smoothness_losses)
+            summary["smoothness_loss_mean"] = val
+            pl_module.log("train/smoothness/loss_epoch", val, sync_dist=True)
+        if self._epoch_jac_frob_norms:
+            val = sum(self._epoch_jac_frob_norms) / len(self._epoch_jac_frob_norms)
+            summary["jac_frob_norm_mean"] = val
+            pl_module.log("train/smoothness/jac_frob_norm_epoch", val, sync_dist=True)
+
         # --- Learning rate ---
         lr_sched = trainer.lr_scheduler_configs
         if lr_sched:
@@ -633,6 +658,18 @@ class TrainingDiagnosticsCallback(pl.Callback):
         # --- Epoch wall time ---
         if self._epoch_start_time > 0:
             summary["epoch_time_sec"] = time.monotonic() - self._epoch_start_time
+
+        # --- GPU memory stats ---
+        if torch.cuda.is_available() and pl_module.device.type == "cuda":
+            dev = pl_module.device
+            summary["gpu_memory"] = {
+                "allocated_gb": round(torch.cuda.memory_allocated(dev) / (1024**3), 3),
+                "reserved_gb": round(torch.cuda.memory_reserved(dev) / (1024**3), 3),
+                "peak_allocated_gb": round(torch.cuda.max_memory_allocated(dev) / (1024**3), 3),
+                "peak_reserved_gb": round(torch.cuda.max_memory_reserved(dev) / (1024**3), 3),
+            }
+            pl_module.log("perf/gpu_peak_allocated_gb", summary["gpu_memory"]["peak_allocated_gb"])
+            pl_module.log("perf/gpu_peak_reserved_gb", summary["gpu_memory"]["peak_reserved_gb"])
 
         # --- Merge sample collector stats if archive exists ---
         samples_dir = getattr(pl_module, "cfg", {})

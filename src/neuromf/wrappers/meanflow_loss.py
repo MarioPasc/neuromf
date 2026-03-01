@@ -372,6 +372,8 @@ class MeanFlowPipeline(nn.Module):
             "raw_loss": raw_loss,
             "raw_loss_u": raw_loss_u.detach().mean(),
             "raw_loss_v": raw_loss_v.detach().mean(),
+            "_v_tangent": v_tangent,  # already detached (no_grad at line 347)
+            "_z_t": z_t.detach(),
         }
 
         if return_diagnostics:

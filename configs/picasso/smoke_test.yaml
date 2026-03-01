@@ -1,0 +1,52 @@
+# Smoke test overlay for Picasso — merged ON TOP OF picasso/train_meanflow.yaml
+#
+# Exercises the exact same code path (config chain, model, loss, JVP, FID
+# callback, checkpointing) on minimal resources: 1 GPU, 5 train batches/epoch,
+# 3 epochs. Catches config errors, import failures, OOM, and pipeline bugs
+# before committing to a multi-day training run.
+#
+# Usage:
+#   TRAIN_CONFIG="${CONFIGS_DIR}/train_meanflow.yaml ${CONFIGS_DIR}/smoke_test.yaml"
+#   bash slurm/train/smoke_launch.sh
+#
+# Expected runtime: ~5-10 min on 1 A100.
+
+# --- Single GPU, batch-limited ---
+trainer:
+  devices: 1
+  strategy: auto
+  accelerator: gpu
+  limit_train_batches: 5
+  limit_val_batches: 2
+
+# --- Minimal training ---
+training:
+  max_epochs: 3
+  val_every_n_epochs: 1
+  save_every_n_epochs: 1
+  accumulate_grad_batches: 1
+  log_every_n_steps: 1
+
+# --- Evaluation: enabled but tiny ---
+evaluation:
+  enabled: true
+  n_fid_samples: 4
+  n_fid_real_samples: 8
+  fid_every_n_val_epochs: 1
+  early_stop_patience: 100       # don't early-stop during smoke test
+
+# --- Diagnostics: enabled ---
+diagnostics:
+  enabled: true
+  every_n_epochs: 1
+
+# --- Sample collector: disabled (not needed for smoke test) ---
+sample_collector:
+  enabled: false
+
+# --- Separate output paths to avoid polluting real results ---
+paths:
+  checkpoints_dir: "${paths.results_root}/smoke_test/checkpoints"
+  logs_dir: "${paths.results_root}/smoke_test/logs"
+  samples_dir: "${paths.results_root}/smoke_test/samples"
+  diagnostics_dir: "${paths.results_root}/smoke_test/diagnostics"
