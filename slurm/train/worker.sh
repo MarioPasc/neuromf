@@ -91,6 +91,9 @@ echo "=========================================="
 
 cd "${REPO_SRC}"
 
+# TRAIN_CONFIG allows ablation launchers to inject extra config layers
+TRAIN_CONFIG="${TRAIN_CONFIG:-${CONFIGS_DIR}/train_meanflow.yaml}"
+
 # Verify configs exist (base + main + all TRAIN_CONFIG layers)
 for f in "${CONFIGS_DIR}/base.yaml" "${REPO_SRC}/configs/train_meanflow.yaml" ${TRAIN_CONFIG}; do
     if [ -f "$f" ]; then
@@ -170,8 +173,6 @@ echo "Logs:        ${RESULTS_DST}/phase_4/logs/"
 echo "Samples:     ${RESULTS_DST}/phase_4/samples/"
 echo ""
 
-# TRAIN_CONFIG allows ablation launchers to inject extra config layers
-TRAIN_CONFIG="${TRAIN_CONFIG:-${CONFIGS_DIR}/train_meanflow.yaml}"
 echo "Config(s):   ${TRAIN_CONFIG}"
 
 TRAIN_CMD="python experiments/cli/train.py \

@@ -237,8 +237,12 @@ def _resolve_strategy(
         return DDPStrategy(find_unused_parameters=True) if len(devices) > 1 else "auto"
     if isinstance(devices, str):
         d = devices.strip().lower()
-        if d in {"auto", "1"}:
+        if d == "1":
             return "auto"
+        if d == "auto":
+            # Lightning resolves "auto" to all visible GPUs; check actual count
+            n = torch.cuda.device_count() if torch.cuda.is_available() else 0
+            return DDPStrategy(find_unused_parameters=True) if n > 1 else "auto"
         if "," in d:
             ids = [x for x in d.split(",") if x.strip() != ""]
             return DDPStrategy(find_unused_parameters=True) if len(ids) > 1 else "auto"
