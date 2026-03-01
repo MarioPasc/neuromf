@@ -20,16 +20,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKER_SCRIPT="${SCRIPT_DIR}/../../slurm/train/worker.sh"
+WORKER_SCRIPT="${SCRIPT_DIR}/../../../slurm/train/worker.sh"
 
 # Validate worker script exists
 if [ ! -f "${WORKER_SCRIPT}" ]; then
     # Fallback to phase_4 worker
-    WORKER_SCRIPT="${SCRIPT_DIR}/../../slurm/phase_4/train_worker.sh"
+    WORKER_SCRIPT="${SCRIPT_DIR}/../../../slurm/phase_4/train_worker.sh"
     if [ ! -f "${WORKER_SCRIPT}" ]; then
         echo "ERROR: Worker script not found." >&2
-        echo "  Tried: ${SCRIPT_DIR}/../../slurm/train/worker.sh" >&2
-        echo "  Tried: ${SCRIPT_DIR}/../../slurm/phase_4/train_worker.sh" >&2
+        echo "  Tried: ${SCRIPT_DIR}/../../../slurm/train/worker.sh" >&2
+        echo "  Tried: ${SCRIPT_DIR}/../../../slurm/phase_4/train_worker.sh" >&2
         exit 1
     fi
 fi
