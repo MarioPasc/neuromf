@@ -151,6 +151,7 @@ def _make_mock_trainer(val_data: Tensor) -> MagicMock:
     trainer = MagicMock()
     trainer.is_global_zero = True
     trainer.sanity_checking = False
+    trainer.world_size = 1
     type(trainer).should_stop = PropertyMock(return_value=False)
 
     # Mock val dataloader as a list containing one DataLoader-like object
