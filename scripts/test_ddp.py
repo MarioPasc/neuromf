@@ -57,11 +57,62 @@ class TinyModel(pl.LightningModule):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
 
 
+def run_trainer(
+    n_gpus: int,
+    n_samples: int,
+    max_epochs: int,
+    apply_fix: bool,
+) -> int:
+    """Run a short training and return observed world_size."""
+    dataset = TensorDataset(torch.randn(n_samples, 4, 8, 8, 8))
+    loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0)
+    model = TinyModel()
+
+    plugins: list = []
+    if apply_fix and os.environ.get("SLURM_JOB_ID"):
+        plugins.append(LightningEnvironment())
+        logger.info(
+            "  FIX APPLIED: LightningEnvironment override (ntasks=%s)",
+            os.environ.get("SLURM_NTASKS", "?"),
+        )
+    elif os.environ.get("SLURM_JOB_ID"):
+        logger.info(
+            "  NO FIX: letting Lightning auto-detect SLURMEnvironment (ntasks=%s)",
+            os.environ.get("SLURM_NTASKS", "?"),
+        )
+
+    strategy = "ddp" if n_gpus > 1 else "auto"
+
+    trainer = pl.Trainer(
+        accelerator="gpu",
+        devices=n_gpus,
+        strategy=strategy,
+        max_epochs=max_epochs,
+        enable_checkpointing=False,
+        enable_model_summary=False,
+        logger=False,
+        plugins=plugins if plugins else None,
+    )
+
+    trainer.fit(model, loader)
+    return trainer.world_size
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="DDP smoke test")
     parser.add_argument("--gpus", type=int, default=0, help="Number of GPUs (0 = auto-detect)")
     parser.add_argument("--steps", type=int, default=10, help="Training steps per epoch")
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
+    parser.add_argument(
+        "--no-fix",
+        action="store_true",
+        help="Skip the LightningEnvironment fix (to demonstrate the bug)",
+    )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Run both with and without the fix to prove the bug exists",
+    )
     args = parser.parse_args()
 
     n_visible = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -83,45 +134,61 @@ def main() -> None:
         logger.error(f"Need at least 2 GPUs for DDP test. Found {n_visible} visible GPUs.")
         raise SystemExit(1)
 
-    # Fake dataset: 64 random 4-channel 8^3 volumes
     n_samples = max(64, args.steps * n_gpus)
-    dataset = TensorDataset(torch.randn(n_samples, 4, 8, 8, 8))
-    loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0)
 
-    model = TinyModel()
+    if args.diagnose:
+        # ---- Diagnostic mode: run WITHOUT fix first, then WITH fix ----
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("DIAGNOSTIC MODE: proving the bug exists")
+        logger.info("=" * 60)
 
-    # Apply the same fix we use in train.py / train_motfm.py
-    plugins: list = []
-    if os.environ.get("SLURM_JOB_ID"):
-        plugins.append(LightningEnvironment())
-        logger.info(
-            "SLURM detected (ntasks=%s): using LightningEnvironment override",
-            os.environ.get("SLURM_NTASKS", "?"),
-        )
-    else:
-        logger.info("Not inside SLURM — no environment override needed")
+        logger.info("")
+        logger.info("--- Run A: WITHOUT fix (should show world_size=1 if SLURM vars set) ---")
+        ws_broken = run_trainer(n_gpus, n_samples, args.epochs, apply_fix=False)
 
-    strategy = "ddp" if n_gpus > 1 else "auto"
-    logger.info(f"Strategy: {strategy}, devices: {n_gpus}")
+        logger.info("")
+        logger.info("--- Run B: WITH fix (should show world_size=%d) ---", n_gpus)
+        ws_fixed = run_trainer(n_gpus, n_samples, args.epochs, apply_fix=True)
 
-    trainer = pl.Trainer(
-        accelerator="gpu",
-        devices=n_gpus,
-        strategy=strategy,
-        max_epochs=args.epochs,
-        enable_checkpointing=False,
-        enable_model_summary=False,
-        logger=False,
-        plugins=plugins if plugins else None,
-    )
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("DIAGNOSTIC RESULTS")
+        logger.info("=" * 60)
+        logger.info(f"Requested GPUs:              {n_gpus}")
+        logger.info(f"World size WITHOUT fix:       {ws_broken}")
+        logger.info(f"World size WITH fix:          {ws_fixed}")
+
+        if ws_broken == 1 and ws_fixed == n_gpus:
+            logger.info(
+                "CONFIRMED: SLURMEnvironment bug reduces world_size to 1. "
+                "LightningEnvironment fix restores %d-GPU DDP.",
+                n_gpus,
+            )
+        elif ws_broken == n_gpus and ws_fixed == n_gpus:
+            logger.info(
+                "Both runs used all GPUs. The bug does NOT reproduce in this "
+                "environment (SLURM_JOB_ID=%s). The fix is still safe (no-op "
+                "when not needed).",
+                os.environ.get("SLURM_JOB_ID", "not set"),
+            )
+        else:
+            logger.warning(
+                "Unexpected: without_fix=%d, with_fix=%d. Investigate manually.",
+                ws_broken,
+                ws_fixed,
+            )
+        return
+
+    # ---- Normal mode: run with or without fix ----
+    apply_fix = not args.no_fix
+    logger.info(f"Fix applied:               {apply_fix}")
 
     logger.info("Starting training...")
     t0 = time.time()
-    trainer.fit(model, loader)
+    world_size = run_trainer(n_gpus, n_samples, args.epochs, apply_fix=apply_fix)
     elapsed = time.time() - t0
 
-    # Verification
-    world_size = trainer.world_size
     logger.info("=" * 60)
     logger.info("RESULTS")
     logger.info("=" * 60)

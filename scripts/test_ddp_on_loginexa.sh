@@ -54,22 +54,8 @@ echo "CUDA visible devices: ${CUDA_VISIBLE_DEVICES:-all}"
 echo "torch.cuda.device_count(): $(python -c 'import torch; print(torch.cuda.device_count())')"
 echo ""
 
-# --- Simulate SLURM env to test the fix ---
-# On loginexa SLURM_JOB_ID may or may not be set.
-# To test our fix, we simulate the problematic SLURM environment:
-echo "--- Test 1: With simulated SLURM env (the bug scenario) ---"
-echo "Setting SLURM_JOB_ID=99999 SLURM_NTASKS=1 to simulate the bug..."
-SLURM_JOB_ID=99999 SLURM_NTASKS=1 python scripts/test_ddp.py "$@"
+# --- Diagnose: run WITHOUT fix then WITH fix under simulated SLURM ---
+echo "--- Diagnostic: proving the bug exists ---"
+echo "Setting SLURM_JOB_ID=99999 SLURM_NTASKS=1 to simulate compute node..."
 echo ""
-
-echo "--- Test 2: Without SLURM env (baseline) ---"
-echo "Unsetting SLURM vars to verify DDP works natively..."
-env -u SLURM_JOB_ID -u SLURM_NTASKS python scripts/test_ddp.py "$@"
-echo ""
-
-echo "=========================================="
-echo "ALL DDP TESTS PASSED"
-echo "=========================================="
-echo ""
-echo "The LightningEnvironment fix works correctly."
-echo "You can now submit real training jobs with 3 GPUs."
+SLURM_JOB_ID=99999 SLURM_NTASKS=1 python scripts/test_ddp.py --diagnose "$@"
