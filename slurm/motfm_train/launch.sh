@@ -8,19 +8,29 @@
 # Step-matched to paper budget:
 #   Paper:  750 scans × 200 epochs × accum=1 = 150,000 optimizer steps
 #           (1× RTX 4090, batch=1, no accumulation)
-#   Ours:   5,471 scans, batch=1, accum=1
+#   Ours:   5,471 scans, batch=1, accum=1 (no gradient accumulation — matches paper)
 #           steps/epoch = ceil(5471 / N_GPUS)
-#           110 epochs × ceil(5471/4) = 150,480 steps ≈ 150K
+#           Epochs computed to match ~150K total optimizer steps.
 #
-# Timing estimates (batch_size=1, accum=1, ~1.65s/sample/GPU):
-#   1 GPU:  ~2.5h/epoch → 110 epochs = 275h (11.5 days)
-#   2 GPUs: ~1.3h/epoch → 110 epochs = 138h (5.7 days)
-#   4 GPUs: ~0.6h/epoch → 110 epochs =  69h (2.9 days)  ← default
-#   8 GPUs: ~0.3h/epoch → 110 epochs =  35h (1.5 days)
+# Step-matched epochs and timing (batch_size=1, accum=1, ~1.65s/sample/GPU):
+#   N_GPUS  steps/ep  epochs  total_steps  wall_time
+#   1       5471       28     153,188      ~70h (2.9 days)
+#   2       2736       55     150,480      ~69h (2.9 days)
+#   3       1824       83     151,392      ~69h (2.9 days)  ← default
+#   4       1368      110     150,480      ~69h (2.9 days)
+#   8        684      220     150,480      ~69h (2.9 days)
 #
-# eff_batch = batch_size × accum × N_GPUS = 1 × 1 × N_GPUS.
+# Wall time is nearly identical regardless of GPU count because total
+# forward passes are fixed at ~150K. Using 3 GPUs minimises GPU-hour
+# waste from rank-0-only evaluation callbacks.
+#
+# eff_batch = batch_size × N_GPUS = 1 × N_GPUS (no accumulation).
 # Paper used eff_batch=1. With N_GPUS>1, eff_batch grows linearly —
 # this is standard DDP and commonly accepted for fair comparison.
+#
+# IMPORTANT: num_epochs in the config YAML is coupled to N_GPUS.
+# Default config has num_epochs=83 (matched to 3 GPUs). If you change
+# N_GPUS, update num_epochs in configs/picasso/motfm/*.yaml accordingly.
 #
 # Usage (from login node):
 #   bash slurm/motfm_train/launch.sh
@@ -68,8 +78,11 @@ export RESULTS_DST="${RESULTS_DST:-/mnt/home/users/tic_163_uma/mpascual/execs/ne
 
 export MOTFM_CONFIG="${CONFIGS_DIR}/motfm/fomo60k_unconditional_3d.yaml"
 
-# Number of GPUs — default 4 for ~3-day step-matched training
-export N_GPUS="${N_GPUS:-4}"
+# Number of GPUs — default 3 for ~3-day step-matched training
+# 3 GPUs instead of 4 to reduce GPU-hour waste from rank-0-only
+# evaluation callbacks. Wall time is identical (~69h) since total
+# forward passes are step-matched at ~150K.
+export N_GPUS="${N_GPUS:-3}"
 
 # Scale resources with GPU count
 CPUS=$((16 * N_GPUS))
@@ -79,15 +92,20 @@ MEM=$((64 * N_GPUS))
 if [ "$CPUS" -gt 128 ]; then CPUS=128; fi
 if [ "$MEM" -gt 480 ]; then MEM=480; fi
 
-# Step-matched training budget
+# Step-matched training budget (epochs computed from N_GPUS)
 TRAIN_SAMPLES=5471
 PAPER_STEPS=150000
-NUM_EPOCHS=110  # from config — step-matched for 4 GPUs
+STEPS_PER_EPOCH_EST=$(( (TRAIN_SAMPLES + N_GPUS - 1) / N_GPUS ))
+NUM_EPOCHS=$(( (PAPER_STEPS + STEPS_PER_EPOCH_EST - 1) / STEPS_PER_EPOCH_EST ))
 
 # Estimate timing
 EPOCH_SECS=$((TRAIN_SAMPLES * 165 / (100 * N_GPUS)))  # ~1.65s/sample/GPU
 STEPS_PER_EPOCH=$(( (TRAIN_SAMPLES + N_GPUS - 1) / N_GPUS ))  # ceil division
 TOTAL_STEPS=$((STEPS_PER_EPOCH * NUM_EPOCHS))
+
+# Warn if config num_epochs may need updating
+echo "Step-matched epochs: ${NUM_EPOCHS} (for ${N_GPUS} GPUs, ~${TOTAL_STEPS} steps)" >&2
+echo "  Verify configs/picasso/motfm/*.yaml has num_epochs: ${NUM_EPOCHS}" >&2
 TOTAL_HOURS=$(( EPOCH_SECS * NUM_EPOCHS / 3600 ))
 
 echo "Configuration:" >&2

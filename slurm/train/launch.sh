@@ -5,9 +5,9 @@
 # Login-node script that submits the training job on Picasso.
 # Uses x-pred + exact JVP (best known config), requiring batch_size=2 per GPU.
 #
-# Expected time: ~490s/epoch on 6xA100 (8K+ volumes), 7-day wall limit.
-# Early stopping (patience=300 epochs) + 3D-FID checkpointing should
-# converge within the 7-day window (~1,230 epochs max).
+# Expected time: ~980s/epoch on 3xA100 (8K+ volumes), 5-day wall limit.
+# Early stopping (patience=150 epochs) + 3D-FID checkpointing should
+# converge well within the 5-day window (model peaks ~200, stops ~350).
 #
 # Usage (from login node):
 #   bash slurm/train/launch.sh
@@ -60,8 +60,12 @@ export REPO_SRC="${REPO_SRC:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos
 export CONFIGS_DIR="${CONFIGS_DIR:-${REPO_SRC}/configs/picasso}"
 export RESULTS_DST="${RESULTS_DST:-/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results}"
 
-# Number of GPUs — 6 for exact JVP (batch=2/GPU, accum=11, eff=132)
-export N_GPUS="${N_GPUS:-6}"
+# Number of GPUs — 3 for exact JVP (batch=2/GPU, accum=22, eff=132)
+# Using 3 GPUs instead of 6 to avoid idle GPU waste from rank-0-only
+# evaluation callbacks (FID, SWD, sample collection). Same effective
+# batch size; training takes ~2x per epoch but total epochs are bounded
+# by early stopping (~350 epochs, ~4 days).
+export N_GPUS="${N_GPUS:-3}"
 
 # Scale resources with GPU count
 CPUS=$((16 * N_GPUS))
@@ -93,7 +97,7 @@ mkdir -p "${RESULTS_DST}/phase_4"
 SBATCH_ARGS=(
     --parsable
     --job-name="neuromf_p4_${N_GPUS}gpu"
-    --time=7-00:00:00
+    --time=5-00:00:00
     --ntasks=1
     --cpus-per-task="${CPUS}"
     --mem="${MEM}G"

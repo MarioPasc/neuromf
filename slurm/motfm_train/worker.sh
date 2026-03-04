@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -J motfm_train
-#SBATCH --time=5-00:00:00
+#SBATCH --time=4-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=256G
+#SBATCH --cpus-per-task=48
+#SBATCH --mem=192G
 #SBATCH --constraint=dgx
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:3
 #SBATCH --output=train_%j.out
 #SBATCH --error=train_%j.err
 

@@ -9,6 +9,7 @@
 #
 # The FD Hutchinson estimator adds one extra v_fn forward per step (~+2 GB),
 # fitting within batch_size=2 on A100 40GB with exact JVP.
+# Uses 3 GPUs (same effective batch=132 via higher accumulation).
 #
 # Usage (from login node):
 #   bash experiments/ablations/v_smoothness/launch.sh
@@ -77,8 +78,8 @@ export RESULTS_DST="${RESULTS_DST:-/mnt/home/users/tic_163_uma/mpascual/execs/ne
 # Config chain: Picasso overlay + smoothness ablation overlay
 export TRAIN_CONFIG="${CONFIGS_DIR}/train_meanflow.yaml ${SCRIPT_DIR}/config.yaml"
 
-# Number of GPUs — 6 for exact JVP (batch=2/GPU, accum=11, eff=132)
-export N_GPUS="${N_GPUS:-6}"
+# Number of GPUs — 3 for exact JVP (batch=2/GPU, accum=22, eff=132)
+export N_GPUS="${N_GPUS:-3}"
 
 # Scale resources with GPU count
 CPUS=$((16 * N_GPUS))
@@ -109,7 +110,7 @@ mkdir -p "${ABL_DIR}"
 SBATCH_ARGS=(
     --parsable
     --job-name="neuromf_v_smooth"
-    --time=7-00:00:00
+    --time=5-00:00:00
     --ntasks=1
     --cpus-per-task="${CPUS}"
     --mem="${MEM}G"

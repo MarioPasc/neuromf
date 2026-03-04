@@ -5,7 +5,7 @@
 # Architecture choices (prediction_type, conditioning_mode, jvp_strategy, etc.)
 # are set in the base config and inherited here.
 #
-# Hardware: A100-SXM4-40GB, 6 GPUs per job (within one DGX node)
+# Hardware: A100-SXM4-40GB, 3 GPUs per job (within one DGX node)
 # UNet: 178M params, ~6 GB fixed (params doubled during JVP + optimizer + grads)
 # Latent: (B, 4, 48, 48, 48) = 0.88 MB/sample in bf16
 #
@@ -14,8 +14,8 @@
 #   Activations: ~20 GB at batch_size=2 (batch_size=4 OOMs)
 #   Headroom: ~14 GB
 #
-# Effective batch = batch_size x devices x accumulate = 2 x 6 x 11 = 132 (~128)
-# ~6,800 train scans (8K+ total) -> ~52 steps/epoch -> ~154K total steps at 3000 epochs (v2)
+# Effective batch = batch_size x devices x accumulate = 2 x 3 x 22 = 132 (~128)
+# ~6,800 train scans (8K+ total) -> ~103 steps/epoch -> ~154K total steps at 1500 epochs
 
 # --- Picasso paths (latents_dir comes from picasso/base.yaml) ---
 paths:
@@ -25,19 +25,19 @@ paths:
   diagnostics_dir: "${paths.results_root}/phase_4/diagnostics"
   maisi_vae_weights: "${paths.checkpoints_root}/NV-Generate-MR/models/autoencoder_v2.pt"
 
-# --- Multi-GPU DDP: 6 A100s ---
+# --- Multi-GPU DDP: 3 A100s ---
 trainer:
-  devices: 6
+  devices: 3
   strategy: ddp
   accelerator: gpu
 
 # --- Training: hardware-specific overrides ---
 training:
   batch_size: 2                      # per-GPU; exact JVP limits to 2 on A100 40GB
-  num_workers: 16                    # 128 cores / 8 GPUs = 16 per GPU
+  num_workers: 16                    # 128 cores / 3 GPUs ≈ 42 available, 16 per GPU is sufficient
   prefetch_factor: 4
-  accumulate_grad_batches: 11        # effective batch = 2 x 6 x 11 = 132
-  log_every_n_steps: 10              # ~41 steps/epoch -> log ~every 4 epochs
+  accumulate_grad_batches: 22        # effective batch = 2 x 3 x 22 = 132
+  log_every_n_steps: 10              # ~103 steps/epoch -> log ~every epoch
   augmentation:
     enabled: true                    # critical for 3000 epochs on ~6.8K train samples
 
@@ -52,8 +52,9 @@ evaluation:
   fid_every_n_val_epochs: 1        # every val epoch (~10 training epochs); ~50s overhead
   fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
   fid_3d_weights_path: "${paths.checkpoints_root}/r3d_18_fid3d/r3d_18-b3b3357e.pth"  # R3D-18 local weights (offline Picasso nodes)
+  early_stop_patience: 15          # 15 FID evals × 10 epochs = 150 training epochs; model peaks ~200
 
-# --- VAE: A100 can decode without memory splits ---
+# --- VAE: A100 can decode without memory splits (num_splits=1) ---
 vae:
   norm_float16: true
   num_splits: 1

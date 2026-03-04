@@ -4,8 +4,9 @@
 # For fair comparison with NeuroMF on the same dataset.
 #
 # Step-matched to the paper: 750 scans × 200 epochs × accum=1 = 150,000 optimizer
-# steps. With 5,471 scans and 4 GPUs (accum=1), each epoch = ceil(5471/4) = 1,368
-# steps → 110 epochs × 1,368 = 150,480 steps ≈ 150K. (~2.9 days on 4 GPUs.)
+# steps. With 5,471 scans and 3 GPUs (accum=1, no gradient accumulation — matches
+# paper), each epoch = ceil(5471/3) = 1,824 steps → 83 epochs × 1,824 = 151,392
+# steps ≈ 150K. (~2.9 days on 3 GPUs — wall time is GPU-count-invariant.)
 #
 # Train: python -u src/external/MOTFM/trainer.py --config_path <this_file>
 
@@ -33,7 +34,7 @@ data_args:
   norm_scope: "global"
 
 train_args:
-  num_epochs: 110
+  num_epochs: 83                    # step-matched to 150K for 3 GPUs; update if changing N_GPUS
   batch_size: 1
   lr: 0.0001
   gradient_accumulation_steps: 1       # Paper used no accumulation (accum=1)

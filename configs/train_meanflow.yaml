@@ -171,7 +171,7 @@ evaluation:
   center_slices_ratio: 0.6         # only used in 2d5 mode
   fid_weights_path: ""             # RadImageNet ResNet-50 (2d5 mode)
   fid_3d_weights_path: ""          # Deprecated (R3D-18 uses torchvision built-in weights)
-  early_stop_patience: 30          # v2: 30 FID evals = 300 training epochs (was 10)
+  early_stop_patience: 15          # 15 FID evals × 10 val_every = 150 training epochs; model peaks ~200
   seed: 42
 
 # Diagnostics

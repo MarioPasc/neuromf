@@ -311,6 +311,24 @@ def main() -> None:
         strategy: str | DDPStrategy = DDPStrategy(broadcast_buffers=False)
     else:
         strategy = strategy_name
+
+    # Fix: Lightning auto-detects SLURMEnvironment when SLURM_JOB_ID is
+    # set, then reads SLURM_NTASKS for world_size. With --ntasks=1 (our
+    # launcher pattern), this forces world_size=1, ignoring devices=N.
+    # Override with LightningEnvironment so DDP spawns N local processes.
+    import os
+
+    plugins: list = []
+    if devices > 1 and os.environ.get("SLURM_JOB_ID"):
+        from pytorch_lightning.plugins.environments import LightningEnvironment
+
+        plugins.append(LightningEnvironment())
+        logger.info(
+            "SLURM detected with ntasks=%s: overriding SLURMEnvironment "
+            "with LightningEnvironment for single-node DDP (%d GPUs)",
+            os.environ.get("SLURM_NTASKS", "?"),
+            devices,
+        )
     accum_steps = int(config.training.get("accumulate_grad_batches", 1))
     effective_batch = int(config.training.batch_size) * devices * accum_steps
 
@@ -646,6 +664,7 @@ def main() -> None:
         deterministic=False,
         limit_train_batches=trainer_cfg.get("limit_train_batches", None),
         limit_val_batches=trainer_cfg.get("limit_val_batches", None),
+        plugins=plugins if plugins else None,
     )
 
     # ------------------------------------------------------------------

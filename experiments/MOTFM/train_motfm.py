@@ -30,7 +30,6 @@ import os
 import resource
 import sys
 from pathlib import Path
-from typing import Optional, Union
 
 import pytorch_lightning as pl
 import torch
@@ -49,6 +48,7 @@ SCRIPT_VERSION = "2.0-h5lazy-gradckpt"
 
 
 # ── Memory diagnostics ──────────────────────────────────────────────────
+
 
 def _mem_rss_gb() -> float:
     """Return current RSS in GB."""
@@ -86,6 +86,7 @@ def _log_memory(label: str) -> None:
 
 # ── Gradient checkpointing ───────────────────────────────────────────────
 
+
 def _enable_gradient_checkpointing(model: torch.nn.Module) -> int:
     """Enable gradient checkpointing on DiffusionModelUNet blocks.
 
@@ -99,6 +100,7 @@ def _enable_gradient_checkpointing(model: torch.nn.Module) -> int:
         Number of blocks wrapped.
     """
     import functools
+
     from torch.utils.checkpoint import checkpoint as ckpt_fn
 
     unet = model.model.unet  # MergedModel.unet → DiffusionModelUNet
@@ -128,6 +130,7 @@ def _enable_gradient_checkpointing(model: torch.nn.Module) -> int:
 
 # ── Ensure MOTFM is importable ──────────────────────────────────────────
 
+
 def _ensure_motfm_on_path() -> None:
     """Add MOTFM vendored code to sys.path if needed."""
     project_root = Path(__file__).resolve().parent.parent.parent
@@ -142,6 +145,7 @@ def _ensure_motfm_on_path() -> None:
 
 
 # ── HDF5 Data Module ────────────────────────────────────────────────────
+
 
 class H5DataModule(pl.LightningDataModule):
     """Lightning DataModule backed by HDF5 lazy loading.
@@ -159,10 +163,10 @@ class H5DataModule(pl.LightningDataModule):
         super().__init__()
         self.config = config
         self.h5_path = h5_path
-        self.train_dataset: Optional[object] = None
-        self.val_dataset: Optional[object] = None
+        self.train_dataset: object | None = None
+        self.val_dataset: object | None = None
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: str | None = None) -> None:
         from h5_dataset import H5VolumeDataset
 
         data_config = self.config["data_args"]
@@ -224,9 +228,10 @@ class H5DataModule(pl.LightningDataModule):
 
 # ── Strategy helper (copied from MOTFM trainer.py) ──────────────────────
 
+
 def _resolve_strategy(
-    accelerator: Union[str, int, list, tuple],
-    devices: Union[str, int, list, tuple],
+    accelerator: str | int | list | tuple,
+    devices: str | int | list | tuple,
 ) -> object:
     """Use DDP only for true multi-GPU execution."""
     if str(accelerator).lower() not in {"gpu", "cuda"}:
@@ -251,9 +256,10 @@ def _resolve_strategy(
 
 # ── Resume checkpoint helper (copied from MOTFM trainer.py) ─────────────
 
+
 def _resolve_resume_checkpoint(
-    explicit_ckpt_path: Optional[str], root_ckpt_dir: str, run_name: str
-) -> Optional[str]:
+    explicit_ckpt_path: str | None, root_ckpt_dir: str, run_name: str
+) -> str | None:
     """Return the checkpoint path to resume from, if any."""
     if explicit_ckpt_path:
         return explicit_ckpt_path
@@ -272,6 +278,7 @@ def _resolve_resume_checkpoint(
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     """Train MOTFM with HDF5-backed lazy data loading."""
@@ -294,8 +301,8 @@ def main() -> None:
     # Ensure MOTFM is importable
     _ensure_motfm_on_path()
 
-    from utils.general_utils import load_config
     from trainer import FlowMatchingLightningModule
+    from utils.general_utils import load_config
 
     config = load_config(args.config_path)
     run_name = os.path.splitext(os.path.basename(args.config_path))[0]
@@ -378,8 +385,7 @@ def main() -> None:
 
     # Precision
     _bf16_supported = (
-        torch.cuda.is_available()
-        and getattr(torch.cuda, "is_bf16_supported", lambda: False)()
+        torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)()
     )
     _fp16_supported = torch.cuda.is_available()
     default_precision = (
@@ -399,6 +405,23 @@ def main() -> None:
     devices = tr.get("devices", "auto")
     strategy = _resolve_strategy(accelerator, devices)
     deterministic = bool(tr.get("deterministic", False))
+
+    # Fix: Lightning auto-detects SLURMEnvironment when SLURM_JOB_ID is
+    # set, then reads SLURM_NTASKS for world_size. With --ntasks=1 (our
+    # launcher pattern), this forces world_size=1, ignoring devices=N.
+    # Override with LightningEnvironment so DDP spawns N local processes.
+    from pytorch_lightning.plugins.environments import LightningEnvironment
+
+    plugins: list = []
+    n_visible = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if n_visible > 1 and os.environ.get("SLURM_JOB_ID"):
+        plugins.append(LightningEnvironment())
+        logger.info(
+            "SLURM detected with ntasks=%s: overriding SLURMEnvironment "
+            "with LightningEnvironment for single-node DDP (%d GPUs visible)",
+            os.environ.get("SLURM_NTASKS", "?"),
+            n_visible,
+        )
 
     logger.info(
         "Trainer: accelerator=%s, devices=%s, strategy=%s, precision=%s",
@@ -425,6 +448,7 @@ def main() -> None:
         deterministic=deterministic,
         log_every_n_steps=tr.get("log_every_n_steps", 50),
         num_sanity_val_steps=tr.get("num_sanity_val_steps", 0),
+        plugins=plugins if plugins else None,
     )
 
     trainer.fit(model, datamodule=datamodule, ckpt_path=resume_ckpt)
