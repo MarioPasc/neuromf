@@ -29,62 +29,18 @@ echo ""
 
 # --- Activate conda env ---
 # On loginexa there is no 'module' command and conda is not in PATH.
-# Find the conda installation and source its init script directly.
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-neuromf}"
-echo "Activating conda environment '${CONDA_ENV_NAME}'..."
+# Use the env's bin/ directory directly.
+ENV_DIR="${CONDA_ENV_DIR:-/mnt/home/users/tic_163_uma/mpascual/fscratch/conda_envs/neuromf}"
+echo "Activating environment from: ${ENV_DIR}"
 
-conda_activated=0
-
-# 1. If conda is already in PATH (e.g. on compute nodes after module load)
-if command -v conda &>/dev/null; then
-    eval "$(conda shell.bash hook 2>/dev/null)" || true
-    conda activate "${CONDA_ENV_NAME}" && conda_activated=1
-fi
-
-# 2. Search common conda install locations under home
-if [ "$conda_activated" -eq 0 ]; then
-    HOME_DIR="${HOME:-/mnt/home/users/tic_163_uma/mpascual}"
-    for candidate in \
-        "${HOME_DIR}/miniconda3" \
-        "${HOME_DIR}/miniforge3" \
-        "${HOME_DIR}/mambaforge" \
-        "${HOME_DIR}/anaconda3" \
-        "${HOME_DIR}/.conda" \
-        "/opt/conda" \
-        "/opt/miniconda3"; do
-        if [ -f "${candidate}/etc/profile.d/conda.sh" ]; then
-            echo "  Found conda at: ${candidate}"
-            source "${candidate}/etc/profile.d/conda.sh"
-            conda activate "${CONDA_ENV_NAME}" && conda_activated=1
-            break
-        fi
-    done
-fi
-
-# 3. Last resort: look for the environment's python directly
-if [ "$conda_activated" -eq 0 ]; then
-    echo "  WARNING: Could not find conda installation."
-    echo "  Searching for environment python directly..."
-    for candidate in \
-        "${HOME_DIR:-$HOME}/miniconda3/envs/${CONDA_ENV_NAME}/bin" \
-        "${HOME_DIR:-$HOME}/miniforge3/envs/${CONDA_ENV_NAME}/bin" \
-        "${HOME_DIR:-$HOME}/mambaforge/envs/${CONDA_ENV_NAME}/bin" \
-        "${HOME_DIR:-$HOME}/anaconda3/envs/${CONDA_ENV_NAME}/bin"; do
-        if [ -x "${candidate}/python" ]; then
-            echo "  Found env python at: ${candidate}/python"
-            export PATH="${candidate}:${PATH}"
-            conda_activated=1
-            break
-        fi
-    done
-fi
-
-if [ "$conda_activated" -eq 0 ]; then
-    echo "ERROR: Could not activate conda environment '${CONDA_ENV_NAME}'." >&2
-    echo "Please set CONDA_PREFIX to your conda installation path and retry:" >&2
-    echo "  CONDA_PREFIX=/path/to/miniconda3 bash scripts/test_ddp_on_loginexa.sh" >&2
+if [ ! -x "${ENV_DIR}/bin/python" ]; then
+    echo "ERROR: Python not found at ${ENV_DIR}/bin/python" >&2
+    echo "Set CONDA_ENV_DIR to the correct path and retry." >&2
     exit 1
 fi
+
+export PATH="${ENV_DIR}/bin:${PATH}"
+export CONDA_PREFIX="${ENV_DIR}"
 
 echo "Python:   $(which python)"
 echo "PyTorch:  $(python -c 'import torch; print(torch.__version__)')"
