@@ -42,7 +42,6 @@ JOB_ID=$(sbatch --parsable \
     --output="${REPO_SRC}/ddp_test_%j.out" \
     --error="${REPO_SRC}/ddp_test_%j.err" \
     --wrap="
-set -euo pipefail
 echo '=== SLURM ENVIRONMENT ==='
 echo \"SLURM_JOB_ID=\${SLURM_JOB_ID}\"
 echo \"SLURM_NTASKS=\${SLURM_NTASKS}\"
