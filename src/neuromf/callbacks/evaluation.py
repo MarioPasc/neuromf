@@ -197,36 +197,48 @@ class EvaluationCallback(pl.Callback):
         Always runs on the first validation epoch (baseline). Real latent
         caching happens lazily on the first call (deferred from
         ``on_fit_start`` for DDP compatibility).
-        """
-        if not trainer.is_global_zero:
-            return
 
+        All ranks must participate in the ``pl_module.log`` call so that
+        ``ModelCheckpoint(monitor='val/fid_3d')`` finds the metric on every
+        rank. FID computation itself runs only on rank 0; the result is
+        broadcast to all other ranks before logging.
+        """
         # Skip during sanity check — no meaningful eval before any training
         if trainer.sanity_checking:
             return
 
-        # Lazy-init: cache real latents on first val epoch
-        if self._real_latents is None:
-            self._cache_real_latents(trainer, pl_module)
+        # --- Rank-0 gated: caching and scheduling logic ---
+        fid_results: dict[str, float] | None = None
+
+        if trainer.is_global_zero:
+            # Lazy-init: cache real latents on first val epoch
             if self._real_latents is None:
-                logger.warning("Still no real latents after caching attempt; skipping eval")
-                return
+                self._cache_real_latents(trainer, pl_module)
 
-        self._val_epoch_count += 1
-        is_first = self._val_epoch_count == 1
+            self._val_epoch_count += 1
+            is_first = self._val_epoch_count == 1
 
-        # Tier 2: FID (every N-th val epoch, OR first epoch for baseline)
-        is_fid_epoch = (self._val_epoch_count % self._fid_every_n_val == 0) or is_first
-        if not is_fid_epoch:
-            return
+            # Tier 2: FID (every N-th val epoch, OR first epoch for baseline)
+            is_fid_epoch = (self._val_epoch_count % self._fid_every_n_val == 0) or is_first
 
-        fid_results = self._compute_fid(pl_module)
+            if is_fid_epoch and self._real_latents is not None:
+                fid_results = self._compute_fid(pl_module)
+
+        # --- Broadcast FID results to all ranks (DDP) ---
+        fid_results = self._broadcast_fid_results(trainer, fid_results)
+
         if fid_results is None:
             return
 
         fid_key = self._fid_key
         for key, val in fid_results.items():
-            pl_module.log(f"val/{key}", val, rank_zero_only=True, prog_bar=(key == fid_key))
+            pl_module.log(f"val/{key}", val, sync_dist=False, prog_bar=(key == fid_key))
+
+        # --- Rank-0 only: history, logging, early stopping ---
+        if not trainer.is_global_zero:
+            return
+
+        is_first = self._val_epoch_count == 1
 
         # Attach FID to the most recent eval_history record (from on_train_epoch_end)
         fid_record = {
@@ -353,6 +365,67 @@ class EvaluationCallback(pl.Callback):
                 min(fid_values),
                 fid_values[-1],
             )
+
+    @staticmethod
+    def _broadcast_fid_results(
+        trainer: pl.Trainer,
+        fid_results: dict[str, float] | None,
+    ) -> dict[str, float] | None:
+        """Broadcast FID results from rank 0 to all ranks.
+
+        In single-GPU mode this is a no-op. In DDP, rank 0 sends the number
+        of result keys (0 = None) followed by key-value pairs so that every
+        rank ends up with an identical ``fid_results`` dict.
+
+        Args:
+            trainer: Lightning trainer (for world_size check).
+            fid_results: FID dict on rank 0, ``None`` on other ranks.
+
+        Returns:
+            FID dict on all ranks, or ``None`` if rank 0 had no results.
+        """
+        if trainer.world_size <= 1:
+            return fid_results
+
+        import torch.distributed as dist
+
+        device = trainer.strategy.root_device
+
+        # Broadcast n_keys first so non-zero ranks know the buffer size
+        if trainer.is_global_zero:
+            n_keys = 0 if fid_results is None else len(fid_results)
+        else:
+            n_keys = 0
+        n_keys_t = torch.tensor([n_keys], device=device, dtype=torch.float64)
+        dist.broadcast(n_keys_t, src=0)
+        n_keys = int(n_keys_t.item())
+
+        if n_keys == 0:
+            return None
+
+        # Broadcast the values
+        if trainer.is_global_zero:
+            keys = sorted(fid_results.keys())  # type: ignore[union-attr]
+            buf = torch.tensor(
+                [fid_results[k] for k in keys],  # type: ignore[union-attr]
+                device=device,
+                dtype=torch.float64,
+            )
+        else:
+            buf = torch.zeros(n_keys, device=device, dtype=torch.float64)
+        dist.broadcast(buf, src=0)
+
+        # Unpack — keys must match what rank 0 used (sorted order)
+        if trainer.is_global_zero:
+            return fid_results
+        # Non-zero ranks reconstruct the dict
+        # Keys are deterministic: "3d" → ["fid_3d"], "2d5" → ["fid_avg","fid_xy","fid_yz","fid_zx"]
+        vals = buf.tolist()
+        if n_keys == 1:
+            keys = ["fid_3d"]
+        else:
+            keys = ["fid_avg", "fid_xy", "fid_yz", "fid_zx"]  # sorted
+        return dict(zip(keys, vals))
 
     def _cache_real_latents(
         self,
