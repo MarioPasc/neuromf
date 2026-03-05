@@ -138,6 +138,11 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._epoch_cosine_V_vc_bins: list[list[float]] = [[], [], []]
         self._epoch_cosine_vtilde_vc_bins: list[list[float]] = [[], [], []]
 
+        # Progressive gap curriculum state (last step's values)
+        self._last_curriculum_alpha: float = 0.0
+        self._last_curriculum_dp: float = 0.5
+        self._last_curriculum_max_gap: float = 1.0
+
         # Parameter snapshot for relative update norm
         self._param_snapshot: dict[str, torch.Tensor] = {}
 
@@ -324,6 +329,12 @@ class TrainingDiagnosticsCallback(pl.Callback):
             self._epoch_t_values.extend(diag["t"].detach().cpu().tolist())
         if "r" in diag:
             self._epoch_r_values.extend(diag["r"].detach().cpu().tolist())
+
+        # Progressive gap curriculum state (keep last step's values)
+        if "curriculum_alpha" in diag:
+            self._last_curriculum_alpha = float(diag["curriculum_alpha"])
+            self._last_curriculum_dp = float(diag["effective_data_proportion"])
+            self._last_curriculum_max_gap = float(diag["effective_max_gap"])
 
         # Accumulate per-channel loss for periodic logging
         if "diag_loss_per_channel" in diag:
@@ -639,11 +650,33 @@ class TrainingDiagnosticsCallback(pl.Callback):
             pl_module.log("train/sampling/h_mean", float(h_tensor.mean()), sync_dist=True)
             h_zero_frac = float((h_tensor < 1e-6).float().mean())
             pl_module.log("train/sampling/h_zero_frac", h_zero_frac, sync_dist=True)
-            summary["sampling"] = {
+            sampling_dict: dict[str, Any] = {
                 "t_mean": float(t_tensor.mean()),
                 "t_std": float(t_tensor.std()),
                 "h_mean": float(h_tensor.mean()),
                 "h_zero_frac": h_zero_frac,
+            }
+
+            # Histograms for t, r, h (50 bins in [0, 1]) — allows offline
+            # plotting of distribution evolution across training
+            n_bins = 50
+            for name, tensor in (("t", t_tensor), ("r", r_tensor), ("h", h_tensor)):
+                counts = torch.histc(tensor, bins=n_bins, min=0.0, max=1.0)
+                sampling_dict[f"{name}_hist_counts"] = counts.long().tolist()
+            sampling_dict["hist_bin_edges"] = torch.linspace(0.0, 1.0, n_bins + 1).tolist()
+
+            summary["sampling"] = sampling_dict
+
+        # --- Progressive gap curriculum state ---
+        if getattr(pl_module, "_pg_enabled", False):
+            # Read last-step values from accumulated diagnostics
+            alpha = self._last_curriculum_alpha
+            eff_dp = self._last_curriculum_dp
+            eff_max_gap = self._last_curriculum_max_gap
+            summary["curriculum"] = {
+                "alpha": alpha,
+                "effective_data_proportion": eff_dp,
+                "effective_max_gap": eff_max_gap,
             }
 
         # --- Tier 3: Periodic diagnostics ---

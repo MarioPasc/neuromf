@@ -54,7 +54,7 @@ training:
   betas: [0.9, 0.95]            # reference: adam_beta2=0.95
   max_epochs: 3000              # v2: 4.3× v1 budget → ~126K optimizer steps
   warmup_steps: 1000            # v2: linear warmup (addresses 90% grad clipping at epoch 0)
-  lr_schedule: cosine            # "constant" | "cosine" | "linear"
+  lr_schedule: constant           # "constant" | "cosine" | "linear"
   gradient_clip_norm: 1.0
   gradient_checkpointing: false  # must be false for exact JVP
   mixed_precision: bf16
@@ -90,7 +90,7 @@ meanflow:
   jvp_strategy: exact             # exact JVP via torch.func.jvp
   fd_step_size: 1.0e-3
   channel_weights: null
-  norm_p: 1.0                     # adaptive weight exponent (1.0 = log-loss)
+  norm_p: 0.5                     # adaptive weight exponent (0.5 = stronger gradient signal)
   spatial_mask_ratio: 0.0         # Phase C (0.0=off)
   use_v_head: true                # must match unet.use_v_head
 
@@ -113,12 +113,21 @@ time_sampling:
   sigma: 1.0
   t_min: 0.001
   data_proportion: 0.5           # match iMF reference: 50% FM, 50% MF
-  boundary_fraction: 0.1         # v2: fraction of batch from boundary region (t≈1, r≈0)
-  boundary_delta: 0.05           # v2: boundary width around (t=1, r=0)
+  boundary_fraction: 0.0         # v3: disabled, subsumed by progressive gap curriculum
+  boundary_delta: 0.05           # boundary width (unused when boundary_fraction=0)
+  progressive_gap:               # v3: progressive gap curriculum (DTD)
+    enabled: true
+    warmup_fraction: 0.07        # ramp over first 7% of steps (~200 epochs of 3000)
+    initial_data_proportion: 0.9 # start FM-heavy (90% r=t)
+    final_data_proportion: 0.5   # end at standard 50/50
+    initial_max_gap: 0.1         # start with small gaps
+    final_max_gap: 1.0           # end with full 1-NFE regime
 
 # EMA
 ema:
-  decay: 0.9999
+  decays: [0.999, 0.9995, 0.9999]  # v3: multiple EMA trackers
+  active_index: 2                    # highest decay = most smoothing (inference)
+  decay: 0.9999                      # backward compat fallback
 
 # Sampling (inference)
 sampling:

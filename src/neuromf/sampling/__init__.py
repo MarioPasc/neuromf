@@ -6,5 +6,6 @@ multi-step Euler integration for NFE ablation studies.
 
 from neuromf.sampling.multi_step import sample_euler
 from neuromf.sampling.one_step import sample_one_step
+from neuromf.sampling.variance_rescaling import variance_rescale
 
-__all__ = ["sample_one_step", "sample_euler"]
+__all__ = ["sample_one_step", "sample_euler", "variance_rescale"]

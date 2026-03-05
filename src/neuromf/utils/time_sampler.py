@@ -42,6 +42,7 @@ def sample_t_and_r(
     data_proportion: float = 0.5,
     boundary_fraction: float = 0.0,
     boundary_delta: float = 0.05,
+    max_gap: float | None = None,
     device: torch.device | str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sample (t, r) pairs following MeanFlow-PyTorch convention.
@@ -63,6 +64,9 @@ def sample_t_and_r(
         data_proportion: Fraction of standard batch where r = t.
         boundary_fraction: Fraction of batch sampled from boundary region.
         boundary_delta: Width of the boundary region around (t=1, r=0).
+        max_gap: Maximum allowed gap h = t - r. If None, no clamping.
+            Used by progressive gap curriculum to start FM-heavy and
+            gradually widen to full 1-NFE regime.
         device: Target device.
 
     Returns:
@@ -79,6 +83,12 @@ def sample_t_and_r(
     t_std = torch.maximum(t_raw, r_raw)
     r_std = torch.minimum(t_raw, r_raw)
 
+    # Clamp gap h = t - r to max_gap (progressive curriculum)
+    if max_gap is not None and max_gap < 1.0:
+        h = t_std - r_std
+        excess = (h - max_gap).clamp(min=0.0)
+        r_std = r_std + excess  # shrink gap by pushing r toward t
+
     # For data_proportion of the standard batch, set r = t
     data_size = int(n_standard * data_proportion)
     mask = torch.arange(n_standard, device=device) < data_size
@@ -86,12 +96,8 @@ def sample_t_and_r(
 
     if n_boundary > 0:
         # Boundary sampling: (t, r) near (1, 0) for 1-NFE signal
-        t_bnd = torch.empty(n_boundary, device=device).uniform_(
-            1.0 - boundary_delta, 1.0
-        )
-        r_bnd = torch.empty(n_boundary, device=device).uniform_(
-            t_min, boundary_delta
-        )
+        t_bnd = torch.empty(n_boundary, device=device).uniform_(1.0 - boundary_delta, 1.0)
+        r_bnd = torch.empty(n_boundary, device=device).uniform_(t_min, boundary_delta)
 
         t = torch.cat([t_std, t_bnd])
         r = torch.cat([r_std, r_bnd])

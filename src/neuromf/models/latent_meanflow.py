@@ -82,8 +82,19 @@ class LatentMeanFlow(pl.LightningModule):
         )
         self.loss_pipeline = MeanFlowPipeline(pipeline_config)
 
-        # EMA
-        self.ema = EMAModel(self.net, decay=float(config.ema.decay))
+        # EMA (auto-detect multi-EMA from config)
+        ema_cfg = config.ema
+        ema_decays = ema_cfg.get("decays", None)
+        if ema_decays is not None:
+            from neuromf.utils.ema import MultiEMAModel
+
+            self.ema = MultiEMAModel(
+                self.net,
+                decays=list(ema_decays),
+                active_index=int(ema_cfg.get("active_index", -1)),
+            )
+        else:
+            self.ema = EMAModel(self.net, decay=float(ema_cfg.decay))
 
         # Time sampling params
         ts = config.time_sampling
@@ -93,6 +104,15 @@ class LatentMeanFlow(pl.LightningModule):
         self._ts_data_proportion = float(ts.data_proportion)
         self._ts_boundary_fraction = float(ts.get("boundary_fraction", 0.0))
         self._ts_boundary_delta = float(ts.get("boundary_delta", 0.05))
+
+        # Progressive gap curriculum (DTD)
+        pg = ts.get("progressive_gap", {})
+        self._pg_enabled = bool(pg.get("enabled", False))
+        self._pg_warmup_frac = float(pg.get("warmup_fraction", 0.3))
+        self._pg_init_dp = float(pg.get("initial_data_proportion", 0.9))
+        self._pg_final_dp = float(pg.get("final_data_proportion", 0.5))
+        self._pg_init_gap = float(pg.get("initial_max_gap", 0.1))
+        self._pg_final_gap = float(pg.get("final_max_gap", 1.0))
 
         # Smoothness regularizer config (doc2)
         smooth_cfg = config.get("smoothness", {})
@@ -192,14 +212,28 @@ class LatentMeanFlow(pl.LightningModule):
         B = z_0.shape[0]
         eps = torch.randn_like(z_0)
 
+        # Progressive gap curriculum: ramp data_proportion and max_gap
+        if self._pg_enabled:
+            total_steps = max(self.trainer.estimated_stepping_batches, 1)
+            progress = self.global_step / total_steps
+            alpha = min(1.0, progress / max(self._pg_warmup_frac, 1e-8))
+            eff_dp = self._pg_init_dp + alpha * (self._pg_final_dp - self._pg_init_dp)
+            eff_max_gap = self._pg_init_gap + alpha * (self._pg_final_gap - self._pg_init_gap)
+            boundary_frac = 0.0  # subsumed by curriculum
+        else:
+            eff_dp = self._ts_data_proportion
+            eff_max_gap = None
+            boundary_frac = self._ts_boundary_fraction
+
         t, r = sample_t_and_r(
             B,
             mu=self._ts_mu,
             sigma=self._ts_sigma,
             t_min=self._ts_t_min,
-            data_proportion=self._ts_data_proportion,
-            boundary_fraction=self._ts_boundary_fraction,
+            data_proportion=eff_dp,
+            boundary_fraction=boundary_frac,
             boundary_delta=self._ts_boundary_delta,
+            max_gap=eff_max_gap,
             device=z_0.device,
         )
 
@@ -305,10 +339,20 @@ class LatentMeanFlow(pl.LightningModule):
         self.log("train/ema_raw_loss", self._ema_raw_loss, sync_dist=True)
         self.log("train/min_ema_raw_loss", self._min_ema_raw_loss, sync_dist=True)
 
+        # Progressive gap curriculum logging
+        if self._pg_enabled:
+            self.log("train/curriculum_alpha", alpha, sync_dist=True)
+            self.log("train/effective_data_proportion", eff_dp, sync_dist=True)
+            self.log("train/effective_max_gap", eff_max_gap, sync_dist=True)
+
         if self._diag_enabled:
             self._step_diagnostics = result
             self._step_diagnostics["t"] = t.detach()
             self._step_diagnostics["r"] = r.detach()
+            if self._pg_enabled:
+                self._step_diagnostics["curriculum_alpha"] = alpha
+                self._step_diagnostics["effective_data_proportion"] = eff_dp
+                self._step_diagnostics["effective_max_gap"] = eff_max_gap
 
         return loss
 

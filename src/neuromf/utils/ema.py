@@ -8,10 +8,13 @@ Reference: Polyak & Juditsky (1992), widely used in diffusion models.
 """
 
 import copy
+import logging
 
 import torch
 import torch.nn as nn
 from torch import Tensor
+
+logger = logging.getLogger(__name__)
 
 
 class EMAModel:
@@ -99,3 +102,115 @@ class EMAModel:
         """
         self.decay = state["decay"]
         self.shadow = {k: v.detach().clone() for k, v in state["shadow"].items()}
+
+
+class MultiEMAModel:
+    """Multiple EMA trackers with a single-EMA-compatible interface.
+
+    Maintains several EMA copies at different decay rates. All copies are
+    updated on every ``update()`` call. ``apply_shadow`` / ``restore`` delegate
+    to the *active* EMA (selected by ``active_index``).
+
+    Args:
+        model: The model whose parameters to track.
+        decays: List of decay rates (e.g. ``[0.999, 0.9995, 0.9999]``).
+        active_index: Index into ``decays`` for the primary EMA used at
+            inference time. Defaults to the last (highest decay).
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        decays: list[float] | None = None,
+        active_index: int = -1,
+    ) -> None:
+        if decays is None:
+            decays = [0.999, 0.9995, 0.9999]
+        self.decays = list(decays)
+        self.active_index = active_index
+        self.emas = [EMAModel(model, decay=d) for d in self.decays]
+        logger.info(
+            "MultiEMAModel: %d trackers, decays=%s, active=%d",
+            len(self.decays),
+            self.decays,
+            self.active_index,
+        )
+
+    @property
+    def shadow(self) -> dict[str, Tensor]:
+        """Shadow parameters of the active EMA."""
+        return self.emas[self.active_index].shadow
+
+    @property
+    def decay(self) -> float:
+        """Decay rate of the active EMA."""
+        return self.emas[self.active_index].decay
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        """Update all EMA trackers with current model parameters.
+
+        Args:
+            model: Model with current parameters.
+        """
+        for ema in self.emas:
+            ema.update(model)
+
+    def apply_shadow(self, model: nn.Module) -> None:
+        """Replace model parameters with active EMA shadow.
+
+        Args:
+            model: Model to update in-place.
+        """
+        self.emas[self.active_index].apply_shadow(model)
+
+    def restore(self, model: nn.Module) -> None:
+        """Restore model parameters from backup (undo ``apply_shadow``).
+
+        Args:
+            model: Model to restore in-place.
+        """
+        self.emas[self.active_index].restore(model)
+
+    def state_dict(self) -> dict:
+        """Serialize all EMA states."""
+        return {
+            "decays": self.decays,
+            "active_index": self.active_index,
+            "emas": [ema.state_dict() for ema in self.emas],
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Load EMA state, supporting both multi-EMA and legacy formats.
+
+        Legacy format (single EMA): ``{"decay": float, "shadow": {...}}``.
+        Multi-EMA format: ``{"decays": [...], "emas": [...]}``.
+
+        For legacy checkpoints, the shadow is loaded into the EMA slot
+        whose decay matches (or the active slot if no match).
+
+        Args:
+            state: Saved state dict.
+        """
+        if "emas" in state:
+            # Multi-EMA format
+            self.decays = state["decays"]
+            self.active_index = state.get("active_index", self.active_index)
+            for ema, ema_state in zip(self.emas, state["emas"]):
+                ema.load_state_dict(ema_state)
+        elif "decay" in state and "shadow" in state:
+            # Legacy single-EMA format: load into matching decay slot
+            legacy_decay = state["decay"]
+            loaded = False
+            for ema in self.emas:
+                if abs(ema.decay - legacy_decay) < 1e-8:
+                    ema.load_state_dict(state)
+                    loaded = True
+                    break
+            if not loaded:
+                # No exact match — load into active slot
+                self.emas[self.active_index].load_state_dict(state)
+            logger.info(
+                "Loaded legacy single-EMA checkpoint (decay=%.6f) into MultiEMAModel",
+                legacy_decay,
+            )
