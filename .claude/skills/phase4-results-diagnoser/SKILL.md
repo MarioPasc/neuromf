@@ -262,7 +262,7 @@ The gradient clip threshold is `gradient_clip_norm: 1.0`.
 | `val_loss` | Validation set adaptive-weighted loss |
 | `val_raw_loss` | Validation set raw loss (pre-adaptive) |
 
-Validation runs every `val_every_n_epochs` (default: 10). Available only at those epochs. Compare `val_raw_loss` vs `raw_loss_mean` to detect overfitting. In a dataset of ~1,117 training samples, overfitting is a real concern.
+Validation runs every `val_every_n_epochs` (default: 10). Available only at those epochs. Compare `val_raw_loss` vs `raw_loss_mean` to detect overfitting. In a dataset of ~4,650 training samples (from 5,471 total), overfitting risk is lower but still present.
 
 ### Sampling Stats
 
@@ -411,21 +411,22 @@ For older runs that lack the new fields (velocity_norms, cosine similarities, et
 
 ## Training Config Context
 
-The training config uses:
+The training config uses (v1 best run — xpred_exact_jvp ablation):
 - AdamW, lr=1e-4, beta1=0.9, **beta2=0.95**, weight_decay=0.0
 - gradient_clip_norm=1.0
-- batch_size=16 per GPU, 2 GPUs (DDP), accumulate_grad_batches=4 -> **effective batch=128**
-- data_proportion=0.75 (75% FM, 25% MF samples)
-- EMA decay=0.999
+- batch_size=2 per GPU, 6 GPUs (DDP), accumulate_grad_batches=11 -> **effective batch=132**
+- data_proportion=0.5 (50% FM, 50% MF samples)
+- EMA decays=[0.999, 0.9995, 0.9999]
 - Mixed precision bf16
 - Logit-normal time sampling: mu=-0.4, sigma=1.0
-- Lp loss with p=2.0, adaptive weighting, **norm_eps=1.0**
+- Lp loss with p=2.0, adaptive weighting, **norm_eps=1.0**, norm_p=1.0
 - x-prediction type, t_min=0.05
-- lr_schedule=constant (no warmup)
+- lr_schedule=constant (no warmup in v1; v2 adds warmup_steps=1000)
 - UNet: 178M params, channels=[64,128,256,512], attention at levels 2,3
-- JVP strategy: finite_difference (h=1e-3, required with gradient checkpointing)
-- max_epochs=500 -> ~4,500 optimizer steps total
-- ~1,117 training samples, ~124 validation samples
+- JVP strategy: exact (torch.func.jvp; no gradient checkpointing)
+- v-head: 1 ResBlock (~228K params), conditioning_mode: t_h
+- max_epochs=1500 (v1) / 3000 (v2); v1 early-stopped at epoch 690
+- ~5,471 total samples: ~4,650 train / ~674 val / ~326 test (8 FOMO-60K datasets)
 
 ---
 

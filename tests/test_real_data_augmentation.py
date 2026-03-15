@@ -308,6 +308,7 @@ class TestRealDataVAEDecode:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 class TestRealDataMasking:
     """Phase 4d masking integration with real latents."""
 
@@ -344,7 +345,7 @@ class TestRealDataMasking:
         # Unmasked pipeline
         pipeline_unmasked = MeanFlowPipeline(
             MeanFlowPipelineConfig(
-                jvp_strategy="finite_difference",
+                jvp_strategy="exact",
                 norm_eps=1.0,
                 spatial_mask_ratio=0.0,
             )
@@ -352,7 +353,7 @@ class TestRealDataMasking:
         # Masked pipeline
         pipeline_masked = MeanFlowPipeline(
             MeanFlowPipelineConfig(
-                jvp_strategy="finite_difference",
+                jvp_strategy="exact",
                 norm_eps=1.0,
                 spatial_mask_ratio=0.5,
             )

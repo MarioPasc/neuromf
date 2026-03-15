@@ -88,6 +88,8 @@ def sample_inputs() -> tuple[torch.Tensor, torch.Tensor]:
 # SM-T1: FD mode returns correct keys with finite positive values
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T1SMFdReturnsCorrectKeys:
     def test_P6_T1_SM_fd_returns_correct_keys(
         self,
@@ -121,6 +123,8 @@ class TestP6T1SMFdReturnsCorrectKeys:
 # SM-T2: FD mode — gradient flows to v-head params
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T2SMGradientFlows:
     def test_P6_T2_SM_gradient_flows_to_model(
         self,
@@ -158,6 +162,8 @@ class TestP6T2SMGradientFlows:
 # SM-T3: Hutchinson unbiased for known linear model
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T3SMHutchinsonUnbiasedLinear:
     def test_P6_T3_SM_hutchinson_unbiased_linear(self) -> None:
         torch.manual_seed(0)
@@ -203,6 +209,8 @@ class TestP6T3SMHutchinsonUnbiasedLinear:
 # SM-T4: Exact JVP mode returns correct keys with finite values
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T4SMExactJvpReturnsCorrectKeys:
     def test_P6_T4_SM_exact_jvp_returns_correct_keys(
         self,
@@ -232,6 +240,8 @@ class TestP6T4SMExactJvpReturnsCorrectKeys:
 # SM-T5: Exact JVP mode — gradient flows to model
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T5SMExactJvpGradientFlows:
     def test_P6_T5_SM_exact_jvp_gradient_flows(
         self,
@@ -267,6 +277,8 @@ class TestP6T5SMExactJvpGradientFlows:
 # SM-T6: Rademacher probe distribution works
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T6SMRademacherProbes:
     def test_P6_T6_SM_rademacher_probes(
         self,
@@ -294,6 +306,8 @@ class TestP6T6SMRademacherProbes:
 # SM-T7: More probes reduce variance
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T7SMNProbesVariance:
     def test_P6_T7_SM_n_probes_variance(
         self,
@@ -336,6 +350,8 @@ class TestP6T7SMNProbesVariance:
 # SM-T8: FD fp32 subtraction avoids catastrophic cancellation with bf16
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T8SMFdFp32Subtraction:
     def test_P6_T8_SM_fd_fp32_subtraction(self) -> None:
         torch.manual_seed(42)
@@ -373,6 +389,8 @@ class TestP6T8SMFdFp32Subtraction:
 # SM-T9: lambda=0 means smoothness doesn't alter loss
 # -----------------------------------------------------------------------
 @pytest.mark.phase6
+@pytest.mark.informational
+@pytest.mark.slow
 class TestP6T9SMZeroLambdaBaseline:
     def test_P6_T9_SM_zero_lambda_baseline(
         self,

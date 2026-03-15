@@ -34,6 +34,7 @@ def _make_tiny_model() -> MAISIUNetWrapper:
 class TestSpatialMasking:
     """Phase 4d spatial masking tests."""
 
+    @pytest.mark.slow
     def test_P4d_T7_mask_ratio_zero_no_effect(self) -> None:
         """P4d-T7: spatial_mask_ratio=0.0 gives same loss as default config."""
         model = _make_tiny_model()
@@ -42,7 +43,7 @@ class TestSpatialMasking:
         # Pipeline with mask_ratio=0 (disabled)
         pipeline_off = MeanFlowPipeline(
             MeanFlowPipelineConfig(
-                jvp_strategy="finite_difference",
+                jvp_strategy="exact",
                 norm_eps=1.0,
                 spatial_mask_ratio=0.0,
             )
@@ -50,7 +51,7 @@ class TestSpatialMasking:
         # Pipeline with default config (should also be 0)
         pipeline_default = MeanFlowPipeline(
             MeanFlowPipelineConfig(
-                jvp_strategy="finite_difference",
+                jvp_strategy="exact",
                 norm_eps=1.0,
             )
         )
@@ -68,6 +69,7 @@ class TestSpatialMasking:
 
         assert torch.allclose(result_off["raw_loss"], result_default["raw_loss"], atol=1e-5)
 
+    @pytest.mark.slow
     def test_P4d_T8_mask_ratio_nonzero_works(self) -> None:
         """P4d-T8: spatial_mask_ratio=0.5 produces finite, normalized loss."""
         model = _make_tiny_model()
@@ -75,7 +77,7 @@ class TestSpatialMasking:
 
         pipeline = MeanFlowPipeline(
             MeanFlowPipelineConfig(
-                jvp_strategy="finite_difference",
+                jvp_strategy="exact",
                 norm_eps=1.0,
                 spatial_mask_ratio=0.5,
             )

@@ -23,11 +23,14 @@ from neuromf.metrics.ms_ssim_3d import compute_ms_ssim_3d
 from neuromf.metrics.pairing import compute_nn_pairs
 from neuromf.metrics.spectral import compute_hf_energy_ratio
 from neuromf.metrics.swd import compute_swd
-from neuromf.metrics.synthseg_metrics import (
-    SynthSegConfig,
-    check_synthseg_available,
-    run_synthseg_evaluation,
-)
+def __getattr__(name: str) -> object:
+    """Lazy-import synthseg_metrics to avoid hard nibabel dependency."""
+    _synthseg_names = {"SynthSegConfig", "check_synthseg_available", "run_synthseg_evaluation"}
+    if name in _synthseg_names:
+        from neuromf.metrics import synthseg_metrics as _sm
+
+        return getattr(_sm, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "compute_mmd",

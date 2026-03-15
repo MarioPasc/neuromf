@@ -1,10 +1,13 @@
 """Tests for MMD metric."""
 
+import pytest
 import torch
 
 from neuromf.metrics.mmd import compute_mmd
 
 
+@pytest.mark.phase5
+@pytest.mark.informational
 class TestMMD:
     """Unit tests for MMD computation."""
 

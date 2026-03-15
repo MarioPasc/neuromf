@@ -249,32 +249,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Config loading — supports N config layers merged left-to-right
     # ------------------------------------------------------------------
+    from neuromf.config import load_merged_config
+
     config_paths = [Path(p) for p in args.config]
-    configs_dir = Path(args.configs_dir) if args.configs_dir else config_paths[0].parent
+    configs_dir = Path(args.configs_dir) if args.configs_dir else None
 
-    base_path = configs_dir / "base.yaml"
-    if not base_path.exists():
-        logger.error("base.yaml not found at %s", base_path)
-        sys.exit(1)
-
-    # Merge chain: base.yaml → main train config → config_1 → config_2 → ...
-    # The main train_meanflow.yaml provides defaults; additional configs
-    # (Picasso overlay, ablation diff) override only the keys they specify.
-    project_root = Path(__file__).resolve().parent.parent.parent
-    main_train_path = project_root / "configs" / "train_meanflow.yaml"
-
-    layers = [OmegaConf.load(base_path)]
-    # Add main config if it isn't the first --config arg (avoids double-loading)
-    if main_train_path.exists() and main_train_path.resolve() != config_paths[0].resolve():
-        layers.append(OmegaConf.load(main_train_path))
-    for cp in config_paths:
-        layers.append(OmegaConf.load(cp))
-
-    config = OmegaConf.merge(*layers)
-    OmegaConf.resolve(config)
-
-    loaded = " + ".join(str(p) for p in [base_path, main_train_path, *config_paths] if p.exists())
-    logger.info("Config loaded: %s", loaded)
+    config = load_merged_config(
+        config_paths,
+        configs_dir=configs_dir,
+        require_base=True,
+    )
 
     # ------------------------------------------------------------------
     # Run directory — isolate each training run's outputs

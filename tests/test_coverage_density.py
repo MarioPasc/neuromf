@@ -1,10 +1,13 @@
 """Tests for coverage and density metrics."""
 
+import pytest
 import torch
 
 from neuromf.metrics.coverage_density import compute_coverage, compute_density
 
 
+@pytest.mark.phase5
+@pytest.mark.informational
 class TestCoverage:
     """Unit tests for coverage metric."""
 
@@ -24,6 +27,8 @@ class TestCoverage:
         assert cov < 0.1, f"Coverage of disjoint distributions: {cov}"
 
 
+@pytest.mark.phase5
+@pytest.mark.informational
 class TestDensity:
     """Unit tests for density metric."""
 

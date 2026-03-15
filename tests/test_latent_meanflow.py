@@ -121,6 +121,7 @@ def _fake_batch(batch_size: int = 2, spatial: int = 16) -> dict[str, torch.Tenso
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 class TestLatentMeanFlow:
     """Phase 4 local tests with tiny UNet."""
 
@@ -346,6 +347,7 @@ class TestLatentMeanFlow:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 class TestLatentMeanFlowExtended:
     """Phase 4 extended tests for configurability."""
 

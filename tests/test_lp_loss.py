@@ -1,10 +1,13 @@
 """Tests for per-channel Lp loss."""
 
+import pytest
 import torch
 
 from neuromf.losses.lp_loss import lp_loss
 
 
+@pytest.mark.phase3
+@pytest.mark.informational
 class TestLpLoss:
     """Tests for lp_loss function."""
 

@@ -162,7 +162,7 @@ def _tiny_config(**overrides: object) -> OmegaConf:
                 "lambda_mf": 1.0,
                 "prediction_type": "x",
                 "t_min": 0.05,
-                "jvp_strategy": "finite_difference",
+                "jvp_strategy": "exact",
                 "fd_step_size": 1e-3,
                 "channel_weights": None,
                 "norm_p": 1.0,
@@ -199,6 +199,7 @@ def _tiny_config(**overrides: object) -> OmegaConf:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 class TestMockCheckpointStructure:
     """Verify the mock rflow checkpoint has expected structure."""
 
@@ -248,6 +249,7 @@ class TestMockCheckpointStructure:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 class TestPretrainedLoading:
     """Critical tests for the pretrained weight loading utility."""
 
@@ -478,6 +480,7 @@ class TestPretrainedLoading:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 class TestParamGroups:
     """Critical tests for differential learning rate parameter groups."""
 
@@ -523,6 +526,7 @@ class TestParamGroups:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 class TestErrorHandling:
     """Critical tests for error handling in pretrained loading."""
 
@@ -556,6 +560,7 @@ class TestErrorHandling:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 class TestLatentMeanFlowIntegration:
     """Integration tests for pretrained loading in the full Lightning module."""
 
@@ -680,6 +685,7 @@ _skip_no_real_ckpt = pytest.mark.skipif(
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 @_skip_no_real_ckpt
 class TestRealCheckpoint:
     """Validate transfer loading against the real 2GB MAISI rflow checkpoint.

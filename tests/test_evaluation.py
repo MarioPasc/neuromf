@@ -19,6 +19,7 @@ from torch import Tensor
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T1_swd_identical_distributions() -> None:
     """SWD of identical distributions should be approximately zero."""
@@ -31,6 +32,7 @@ def test_P4h_T1_swd_identical_distributions() -> None:
     assert swd < 0.01, f"SWD of identical distributions should be ~0, got {swd}"
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T2_swd_shifted_distributions() -> None:
     """SWD of shifted distributions should be much larger than identical."""
@@ -62,6 +64,7 @@ class MockFeatureNet(nn.Module):
         return torch.randn(B, 2048, 1, 1)
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T3_extract_2d5_features_shapes() -> None:
     """extract_2d5_features returns (N_slices, 2048) per plane."""
@@ -80,6 +83,7 @@ def test_P4h_T3_extract_2d5_features_shapes() -> None:
         assert feat.shape[0] > 0, f"{name} should have >0 slices"
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T4_fid_identical_features() -> None:
     """FID of identical feature sets should be approximately zero."""
@@ -159,6 +163,7 @@ def _make_mock_trainer(val_data: Tensor) -> MagicMock:
     return trainer
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T5_callback_logs_swd() -> None:
     """EvaluationCallback logs train/swd every training epoch."""
@@ -187,7 +192,9 @@ def test_P4h_T5_callback_logs_swd() -> None:
     assert "train/swd" in logged_keys, f"Expected train/swd in logged keys: {logged_keys}"
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4h_T6_callback_logs_fid_at_interval() -> None:
     """EvaluationCallback logs val/fid_avg at configured FID interval."""
     from neuromf.callbacks.evaluation import EvaluationCallback
@@ -229,6 +236,7 @@ def test_P4h_T6_callback_logs_fid_at_interval() -> None:
         assert "val/fid_xy" in logged_keys
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T7_early_stopping_triggers() -> None:
     """Early stopping triggers after patience exceeded with non-improving FID."""
@@ -280,6 +288,7 @@ def test_P4h_T7_early_stopping_triggers() -> None:
     assert stop_tracker.should_stop is True, "Early stopping should have triggered"
 
 
+@pytest.mark.phase4
 @pytest.mark.informational
 def test_P4h_T8_callback_handles_vhead_model() -> None:
     """Callback handles models that return (u, v) tuples."""
@@ -313,6 +322,7 @@ def test_P4h_T8_callback_handles_vhead_model() -> None:
     assert "train/swd" in logged_keys
 
 
+@pytest.mark.phase4
 @pytest.mark.informational
 def test_P4h_T9_fid_cache_reuse() -> None:
     """Real features are cached to disk and reused on second call."""
@@ -350,6 +360,7 @@ def test_P4h_T9_fid_cache_reuse() -> None:
         assert torch.allclose(result[0], fake_feats[0])
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T11_first_epoch_baseline_fid() -> None:
     """Both SWD and FID run on first val epoch regardless of fid_every_n setting."""
@@ -387,6 +398,7 @@ def test_P4h_T11_first_epoch_baseline_fid() -> None:
     assert fid_record[0]["fid_avg"] == 52.33
 
 
+@pytest.mark.phase4
 @pytest.mark.critical
 def test_P4h_T12_on_fit_end_writes_summary() -> None:
     """on_fit_end writes eval_summary.json with aggregate metrics."""
@@ -446,7 +458,9 @@ def test_P4h_T12_on_fit_end_writes_summary() -> None:
         assert len(fid_records) == 3
 
 
+@pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4h_T10_load_radimagenet_from_state_dict() -> None:
     """load_radimagenet_resnet50 produces (B, 2048, H', W') from local state dict."""
     from radimagenet_models.models.resnet import ResNet50
@@ -471,7 +485,9 @@ def test_P4h_T10_load_radimagenet_from_state_dict() -> None:
         assert pooled.shape == (2, 2048), f"Expected (2, 2048), got {pooled.shape}"
 
 
+@pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4h_T13_load_radimagenet_offline() -> None:
     """load_radimagenet_resnet50 works without internet access (Picasso offline)."""
     import socket

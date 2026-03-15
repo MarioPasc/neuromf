@@ -23,6 +23,7 @@ def small_model() -> MAISIUNetWrapper:
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T1_unet_dual_time_conditioning(small_model: MAISIUNetWrapper) -> None:
     """P3-T1: UNet accepts (r, t) conditioning without error."""
     B, C, D, H, W = 2, 4, 16, 16, 16
@@ -39,6 +40,7 @@ def test_P3_T1_unet_dual_time_conditioning(small_model: MAISIUNetWrapper) -> Non
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T2_output_shape_matches_input(small_model: MAISIUNetWrapper) -> None:
     """P3-T2: Output shape matches input latent shape."""
     B, C, D, H, W = 2, 4, 16, 16, 16
@@ -54,6 +56,7 @@ def test_P3_T2_output_shape_matches_input(small_model: MAISIUNetWrapper) -> None
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_T11_full_size_forward_pass(device: torch.device) -> None:
     """P3-T11: Full-size forward pass at (1, 4, 48, 48, 48).
 
@@ -83,6 +86,7 @@ def test_P3_T11_full_size_forward_pass(device: torch.device) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_u_from_x_conversion(small_model: MAISIUNetWrapper) -> None:
     """Verify u_from_x correctly converts x-prediction to velocity."""
     B, C, D, H, W = 2, 4, 8, 8, 8
@@ -100,6 +104,7 @@ def test_P3_u_from_x_conversion(small_model: MAISIUNetWrapper) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_u_from_x_t_min_clamping(small_model: MAISIUNetWrapper) -> None:
     """Verify t_min clamping prevents division by zero."""
     B, C, D, H, W = 1, 4, 8, 8, 8
@@ -118,6 +123,7 @@ def test_P3_u_from_x_t_min_clamping(small_model: MAISIUNetWrapper) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4_t_h_conditioning_mode() -> None:
     """Verify (t, h) conditioning mode produces valid output."""
     torch.manual_seed(42)
@@ -141,6 +147,7 @@ def test_P4_t_h_conditioning_mode() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4_t_h_differs_from_h_only() -> None:
     """(t, h) conditioning should differ from h-only (adds absolute time t)."""
     torch.manual_seed(42)
@@ -180,6 +187,7 @@ def test_P4_t_h_differs_from_h_only() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4g_T10_h_conditioning_differs_from_dual() -> None:
     """P4g-T10: h-conditioning produces different embeddings than dual for r != t."""
     torch.manual_seed(42)

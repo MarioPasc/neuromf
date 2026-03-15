@@ -38,6 +38,7 @@ def _make_u_fn(model: MAISIUNetWrapper, t_min: float = 0.05):
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T3a_jvp_executes_on_unet(small_model: MAISIUNetWrapper) -> None:
     """P3-T3a: torch.func.jvp executes at (1, 4, 16, 16, 16) without error."""
     B, C, D, H, W = 1, 4, _S, _S, _S
@@ -59,6 +60,7 @@ def test_P3_T3a_jvp_executes_on_unet(small_model: MAISIUNetWrapper) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T3b_jvp_matches_finite_difference(small_model: MAISIUNetWrapper) -> None:
     """P3-T3b: JVP matches finite-difference at (1, 4, 16, 16, 16).
 
@@ -91,6 +93,7 @@ def test_P3_T3b_jvp_matches_finite_difference(small_model: MAISIUNetWrapper) -> 
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_T12_full_size_finite_diff_jvp(device: torch.device) -> None:
     """P3-T12: Full-size finite-diff JVP at (1, 4, 48, 48, 48).
 
@@ -126,6 +129,7 @@ def test_P3_T12_full_size_finite_diff_jvp(device: torch.device) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_jvp_r_equals_t_reduces_to_fm() -> None:
     """When r == t, JVP term vanishes and V == u (standard FM)."""
     torch.manual_seed(42)

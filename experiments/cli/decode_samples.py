@@ -107,23 +107,13 @@ def _load_config(config_path: Path, configs_dir: Path | None) -> OmegaConf:
     Returns:
         Merged OmegaConf config.
     """
-    if configs_dir is None:
-        configs_dir = config_path.parent
+    from neuromf.config import load_merged_config
 
-    base_path = configs_dir / "base.yaml"
-    layers = []
-    if base_path.exists():
-        layers.append(OmegaConf.load(base_path))
-
-    project_root = Path(__file__).resolve().parent.parent.parent
-    main_train_path = project_root / "configs" / "train_meanflow.yaml"
-    if main_train_path.exists() and main_train_path.resolve() != config_path.resolve():
-        layers.append(OmegaConf.load(main_train_path))
-
-    layers.append(OmegaConf.load(config_path))
-    config = OmegaConf.merge(*layers)
-    OmegaConf.resolve(config)
-    return config
+    return load_merged_config(
+        config_path,
+        configs_dir=configs_dir,
+        require_base=False,
+    )
 
 
 def _load_archives(samples_dir: Path) -> list[dict]:

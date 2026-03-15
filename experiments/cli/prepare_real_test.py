@@ -79,29 +79,17 @@ def parse_args() -> argparse.Namespace:
 
 def _load_config(args: argparse.Namespace) -> OmegaConf:
     """Load and merge config layers."""
+    from neuromf.config import load_merged_config
+
     config_paths = [Path(p) for p in args.config]
-    configs_dir = Path(args.configs_dir) if args.configs_dir else config_paths[0].parent
+    configs_dir = Path(args.configs_dir) if args.configs_dir else None
 
-    base_path = configs_dir / "base.yaml"
-    project_root = Path(__file__).resolve().parent.parent.parent
-    main_train_path = project_root / "configs" / "train_meanflow.yaml"
-    main_gen_path = project_root / "configs" / "generate.yaml"
-
-    layers = []
-    if base_path.exists():
-        layers.append(OmegaConf.load(base_path))
-    if main_train_path.exists():
-        layers.append(OmegaConf.load(main_train_path))
-    if main_gen_path.exists() and main_gen_path.resolve() not in [
-        p.resolve() for p in config_paths
-    ]:
-        layers.append(OmegaConf.load(main_gen_path))
-    for cp in config_paths:
-        layers.append(OmegaConf.load(cp))
-
-    config = OmegaConf.merge(*layers)
-    OmegaConf.resolve(config)
-    return config
+    return load_merged_config(
+        config_paths,
+        configs_dir=configs_dir,
+        include_generate=True,
+        require_base=False,
+    )
 
 
 def _load_or_create_manifest(

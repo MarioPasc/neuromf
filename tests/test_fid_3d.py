@@ -17,6 +17,7 @@ import torch.nn.functional as F
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T1_load_r3d18() -> None:
     """load_fid3d_feature_net loads R3D-18 in eval mode with correct output dim."""
@@ -55,6 +56,7 @@ def test_fid3d_T1_load_r3d18() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T2_backward_compat_alias() -> None:
     """load_med3d_resnet50 alias loads R3D-18 and warns about ignored weights_path."""
@@ -76,6 +78,7 @@ def test_fid3d_T2_backward_compat_alias() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T3_forward_shape(device: torch.device) -> None:
     """R3D-18 produces (B, 512) output for various volume sizes."""
@@ -96,6 +99,7 @@ def test_fid3d_T3_forward_shape(device: torch.device) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T4_extract_features_deterministic(device: torch.device) -> None:
     """extract_3d_features is deterministic for a fixed input."""
@@ -118,6 +122,7 @@ def test_fid3d_T4_extract_features_deterministic(device: torch.device) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T5_per_set_normalization() -> None:
     """Per-set min-max normalisation spans all volumes jointly."""
@@ -145,6 +150,7 @@ def test_fid3d_T5_per_set_normalization() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T6_fid_zero_identical_features(device: torch.device) -> None:
     """FID = 0.0 when real and fake features are identical."""
@@ -171,6 +177,7 @@ def test_fid3d_T6_fid_zero_identical_features(device: torch.device) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T7_fid_positive_different_features(device: torch.device) -> None:
     """FID > 0 for different distributions, verifying no feature collapse."""
@@ -207,6 +214,7 @@ def test_fid3d_T7_fid_positive_different_features(device: torch.device) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T8_channel_replication() -> None:
     """_to_three_channels correctly handles 1ch and 3ch inputs."""
@@ -234,6 +242,7 @@ def test_fid3d_T8_channel_replication() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.phase5
 @pytest.mark.critical
 def test_fid3d_T9_input_shape_flexibility(device: torch.device) -> None:
     """extract_3d_features accepts various input shapes."""

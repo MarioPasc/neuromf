@@ -1,10 +1,13 @@
 """Tests for logit-normal time sampling utilities."""
 
+import pytest
 import torch
 
 from neuromf.utils.time_sampler import sample_logit_normal, sample_t_and_r
 
 
+@pytest.mark.phase3
+@pytest.mark.informational
 class TestSampleLogitNormal:
     """Tests for sample_logit_normal."""
 
@@ -34,6 +37,8 @@ class TestSampleLogitNormal:
         assert (t >= 0.1).all()
 
 
+@pytest.mark.phase3
+@pytest.mark.informational
 class TestSampleTandR:
     """Tests for sample_t_and_r."""
 
@@ -72,7 +77,6 @@ class TestSampleTandR:
         assert torch.isfinite(r).all()
 
 
-import pytest
 from scipy import stats
 
 

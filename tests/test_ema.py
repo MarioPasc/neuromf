@@ -3,12 +3,15 @@
 P3-T8: EMA updates correctly with UNet wrapper.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 
 from neuromf.utils.ema import EMAModel
 
 
+@pytest.mark.phase3
+@pytest.mark.informational
 class TestEMAModel:
     """Unit tests for EMAModel."""
 
@@ -93,13 +96,12 @@ class TestEMAModel:
             assert torch.allclose(ema.shadow[name], ema2.shadow[name])
 
 
-import pytest
-
 from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
 
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T8_ema_with_unet_wrapper() -> None:
     """P3-T8: EMA updates correctly with MAISIUNetWrapper.
 

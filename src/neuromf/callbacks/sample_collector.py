@@ -132,10 +132,30 @@ class SampleCollectorCallback(pl.Callback):
         Ensures the archive includes the final model state even when
         training ends via early stopping. Then auto-generates all evolution
         plots and decoded NFE comparison figures to ``figures_dir``.
-        """
-        if not trainer.is_global_zero:
-            return
 
+        DDP safety: rank 0 does all VAE decode and figure generation work.
+        A barrier at the end ensures non-zero ranks wait instead of
+        advancing to implicit collectives and triggering NCCL timeouts.
+        """
+        if trainer.is_global_zero:
+            self._on_fit_end_rank0(trainer, pl_module)
+
+        # DDP barrier: non-zero ranks wait here while rank 0 finishes
+        # VAE decode and figure generation. Without this, non-zero ranks
+        # return immediately and hit implicit collectives, causing NCCL
+        # timeout after 30 minutes.
+        if trainer.world_size > 1:
+            import torch.distributed as dist
+
+            if dist.is_initialized():
+                dist.barrier()
+
+    def _on_fit_end_rank0(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+    ) -> None:
+        """Rank-0 work for on_fit_end: sample collection, VAE decode, figures."""
         # 1. Force final sample collection
         epoch = trainer.current_epoch
         last = getattr(self, "_last_collected_epoch", -1)
@@ -157,14 +177,16 @@ class SampleCollectorCallback(pl.Callback):
             n_epochs = len(archive.get("epochs", []))
             logger.info("Generating figures from archive (%d epochs)...", n_epochs)
 
-            # Decode last epoch's samples through VAE (if configured)
+            # Decode last epoch's samples through VAE (if configured).
+            # Use CPU to avoid bf16/autocast conflicts from the training
+            # precision context that may still be active during on_fit_end.
             decoded_nfe: dict[int, np.ndarray] = {}
             decoded_1nfe_by_epoch: dict[int, np.ndarray] = {}
             if self._vae_config:
-                device = pl_module.device
+                decode_device = torch.device("cpu")
                 decoded_nfe, decoded_1nfe_by_epoch = self._decode_archive_samples(
                     archive,
-                    device,
+                    decode_device,
                 )
 
             self._generate_all_figures(archive, decoded_nfe, decoded_1nfe_by_epoch)
@@ -400,11 +422,9 @@ class SampleCollectorCallback(pl.Callback):
                 continue
             z_norm = archive[last_key][nfe_key]  # (N, C, D, H, W)
             z_denorm = (z_norm[0:1] * latent_std + latent_mean).float().to(device)
-            decoded = self._vae.decode(z_denorm).cpu().float()
-            decoded_nfe[nfe] = decoded[0, 0].numpy()  # (D, H, W)
+            decoded = self._vae.decode(z_denorm).float()
+            decoded_nfe[nfe] = decoded[0, 0].cpu().numpy()  # (D, H, W)
             del z_denorm, decoded
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             logger.info("Decoded last epoch NFE=%d", nfe)
 
         # 2. Decode 1-NFE sample #0 for all epochs (for comparison grid row)
@@ -415,11 +435,9 @@ class SampleCollectorCallback(pl.Callback):
                 continue
             z_norm = archive[epoch_key]["nfe_1"]
             z_denorm = (z_norm[0:1] * latent_std + latent_mean).float().to(device)
-            decoded = self._vae.decode(z_denorm).cpu().float()
-            decoded_1nfe_by_epoch[ep] = decoded[0, 0].numpy()
+            decoded = self._vae.decode(z_denorm).float()
+            decoded_1nfe_by_epoch[ep] = decoded[0, 0].cpu().numpy()
             del z_denorm, decoded
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
         logger.info(
             "Decoded %d NFE levels (last epoch) + %d epochs (1-NFE)",

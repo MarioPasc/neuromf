@@ -1,5 +1,6 @@
 """Tests for v3 enhancements: MultiEMA, progressive gap, variance rescaling."""
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -18,6 +19,8 @@ class _TinyModel(nn.Module):
         self.linear = nn.Linear(4, 4)
 
 
+@pytest.mark.phase4
+@pytest.mark.informational
 class TestMultiEMA:
     """Tests for MultiEMAModel."""
 
@@ -133,6 +136,8 @@ class TestMultiEMA:
 # ======================================================================
 
 
+@pytest.mark.phase4
+@pytest.mark.informational
 class TestProgressiveGap:
     """Tests for max_gap parameter in sample_t_and_r."""
 
@@ -191,6 +196,8 @@ class TestProgressiveGap:
 # ======================================================================
 
 
+@pytest.mark.phase4
+@pytest.mark.informational
 class TestVarianceRescaling:
     """Tests for variance_rescale utility."""
 

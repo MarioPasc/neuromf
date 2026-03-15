@@ -18,6 +18,9 @@ from neuromf.wrappers.maisi_vae import MAISIVAEConfig, MAISIVAEWrapper
 
 logger = logging.getLogger(__name__)
 
+# All Phase 0 tests require real VAE weights and GPU — mark as slow
+pytestmark = pytest.mark.slow
+
 
 # ---------------------------------------------------------------------------
 # Module-scoped fixtures (load VAE once, share across all tests)

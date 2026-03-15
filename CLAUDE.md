@@ -43,6 +43,19 @@ Synthetic MRI (1×192³) ◄── Frozen MAISI VAE Decoder ◄─┘
 
 MeanFlow learns the **average velocity** `u(z_t, t, r)` instead of the instantaneous velocity `v(z_t, t)`. The MeanFlow Identity enforces self-consistency via a JVP (Jacobian-vector product). At inference, a single forward pass produces a sample: `z_0 = eps - u_θ(eps, 0, 1)`. Training uses the iMF dual-head architecture: a u-head for the compound velocity loss and a v-head that provides the JVP tangent (disabled at inference). Both losses are independently adaptive-weighted.
 
+### Current Status (as of 2026-03-15)
+
+**Phases 0-5 COMPLETE.** Best v1 model trained 690 epochs (28,980 steps), early-stopped (patience=10).
+
+| Metric | NFE=1 | NFE=10 | NFE=50 |
+|--------|-------|--------|--------|
+| FID-3D | 73.85 | 7.34 | 6.14 |
+| MOTFM baseline | 32.10 | 9.27 | 7.93 |
+
+**Known issues:** Variance under-estimation at 1-NFE (std ~0.75 vs ~1.0 real), over-smoothed outputs. NeuroMF loses to MOTFM at NFE=1 but wins at NFE>=10.
+
+**Remaining:** Phase 6 PARTIAL (Lp sweep pending). Phases 7-8 NOT STARTED.
+
 ---
 
 ## 2. Critical Constants
@@ -58,7 +71,9 @@ These are verified values from checkpoint and dataset inspection. Use them direc
 | VAE attention | **None** | All `attention_levels=false`, no nonlocal attention |
 | VAE memory splits | `num_splits=6, dim_split=1` | Enables 192³ on 8GB VRAM |
 | VAE checkpoint format | Wrapped in `"unet_state_dict"` key | Must unwrap before `load_state_dict` |
-| FOMO-60K subset | ~1,379 T1 sessions (3 datasets) | PT001_OASIS1, PT002_OASIS2, PT005_IXI |
+| FOMO-60K subset | 5,471 train / 674 val / 326 test T1 scans (8 datasets) | Stratified split, seed=42 |
+| Best v1 model | Epoch 388 (step 16,338) | x-pred + exact JVP, v-head, (t,h) conditioning |
+| Effective batch size | 132 (2/GPU × 6 GPUs × 11 accum) | Picasso A100 training config |
 | FOMO-60K status | Skull-stripped, RAS, co-registered | Shapes/spacing vary by dataset |
 | Hardware (local) | RTX 4060 Laptop, 8GB VRAM | CPU-only tests, stats, figures, code dev |
 | Hardware (Picasso) | 4 nodes × 8×A100 40GB VRAM, 500GB RAM, 128 cores | VAE encode/decode, training, evaluation |
@@ -86,17 +101,17 @@ These are verified values from checkpoint and dataset inspection. Use them direc
 
 The project is implemented in **9 gated phases** (Phase 0 through Phase 8). **Phase N+1 cannot start until Phase N's CRITICAL tests all pass.** Use `/check-gate N` to verify.
 
-| Phase | Title | Key Output |
-|-------|-------|------------|
-| 0 | Environment Bootstrap & VAE Validation | `maisi_vae.py` wrapper, reconstruction metrics |
-| 1 | Latent Pre-computation Pipeline | `.pt` latent files, per-channel stats |
-| 2 | Toy Experiment — MeanFlow on Toroid | Validated MeanFlow on known manifold |
-| 3 | MeanFlow Loss + 3D UNet | JVP-compatible wrapper, MeanFlow loss |
-| 4 | Training on Brain MRI Latents | Trained model, EMA checkpoints |
-| 5 | Generation Pipeline + Evaluation | Latent generation, VAE decoding, FID/MMD/MS-SSIM/spectral metrics |
-| 6 | Ablation Runs | x-pred vs u-pred, Lp sweep, NFE steps |
-| 7 | LoRA Fine-Tuning for FCD | Joint image-mask synthesis |
-| 8 | Paper Figures and Tables | Publication-ready figures (PDF+PNG) |
+| Phase | Title | Key Output | Status |
+|-------|-------|------------|--------|
+| 0 | Environment Bootstrap & VAE Validation | `maisi_vae.py` wrapper, reconstruction metrics | COMPLETE |
+| 1 | Latent Pre-computation Pipeline | `.pt` latent files, per-channel stats | COMPLETE |
+| 2 | Toy Experiment — MeanFlow on Toroid | Validated MeanFlow on known manifold | COMPLETE |
+| 3 | MeanFlow Loss + 3D UNet | JVP-compatible wrapper, MeanFlow loss | COMPLETE |
+| 4 | Training on Brain MRI Latents | Trained model, EMA checkpoints | COMPLETE |
+| 5 | Generation Pipeline + Evaluation | Latent generation, VAE decoding, FID/MMD/MS-SSIM/spectral metrics | COMPLETE |
+| 6 | Ablation Runs | x-pred vs u-pred, Lp sweep, NFE steps | PARTIAL |
+| 7 | LoRA Fine-Tuning for FCD | Joint image-mask synthesis | NOT STARTED |
+| 8 | Paper Figures and Tables | Publication-ready figures (PDF+PNG) | NOT STARTED |
 
 **Before starting any phase**, read its split document at the path below.
 
@@ -150,7 +165,22 @@ All paths are absolute. The agent environment is `~/.conda/envs/neuromf/` (Pytho
 | MOTFM | `src/external/MOTFM/` | Medical OT flow matching: trainer, inferer, UNet wrapper |
 | pMF | `src/external/pmf/` | Progressive MeanFlow: x-prediction, compound V, perceptual losses |
 
-### 5.5 Slash Commands
+### 5.5 When to Use What
+
+| You want to... | Use | Trigger |
+|----------------|-----|---------|
+| Write code for a phase | `/implement-phase N` | "implement phase 3", "build the loss function" |
+| Run tests after code changes | `/test` | "run tests", "check if tests pass", after any code edit |
+| Validate before training submission | `/pre-flight` | "ready to train?", "check config", before any SLURM job |
+| Analyze a completed training run | `/analyze-run <dir>` | "analyze results", "how did training go?", "compare to MOTFM" |
+| Diagnose training dynamics | `/phase4-results-diagnoser` | "check training progress", "diagnose loss curves", "why is FID high?" |
+| Understand metrics scientifically | `/dl-scientist` | "why is 1-NFE bad?", "propose improvements", "root cause analysis" |
+| Check if a phase gate is open | `/check-gate N` | "is phase 3 done?", "can I start phase 4?" |
+| Explore codebase | `/explore` | "how does X work?", "where is Y implemented?" |
+| Review external paper code | `/review-external` | "compare MeanFlow JAX to our code" |
+| Generate publication figures | Launch `paper-figure-generator` | "make figures for the paper", "plot FID comparison" |
+
+### 5.6 Slash Commands
 
 | Command | Usage | What it does |
 |---------|-------|-------------|
@@ -158,15 +188,21 @@ All paths are absolute. The agent environment is `~/.conda/envs/neuromf/` (Pytho
 | `/run-tests` | `/run-tests 2` | Launches test-runner (Haiku) for phase verification |
 | `/check-gate` | `/check-gate 1` | Reads verification report, reports OPEN/BLOCKED |
 | `/review-external` | `/review-external meanflow_2025 MeanFlow` | Launches code-reviewer (Sonnet) to produce insights doc |
+| `/dl-scientist` | `/dl-scientist` | Rigorous analysis of training results with literature grounding |
+| `/pre-flight` | `/pre-flight configs/picasso/train_meanflow.yaml` | Validates config + code before multi-day training submission |
+| `/analyze-run` | `/analyze-run /path/to/run_dir` | Post-training analysis: compare vs MOTFM, propose next experiments |
+| `/test` | `/test -m "not slow"` | Quick test runner (default: fast suite, ~40s) |
 
-### 5.6 Subagents
+### 5.7 Subagents
 
 | Agent | Model | Purpose |
 |-------|-------|---------|
 | `phase-implementer` | Opus | Reads phase split, writes code + tests, runs verification |
-| `test-runner` | Haiku | Runs pytest, reports pass/fail |
+| `test-runner` | Haiku | Runs pytest with slow/fast awareness, reports pass/fail with gate status |
+| `pre-flight-validator` | Opus | Validates config + code before expensive GPU training runs |
+| `results-analyst` | Opus | Analyzes completed runs vs MOTFM baseline, proposes improvements |
 | `external-code-reviewer` | Sonnet | Reviews external code against paper, produces insights |
-| `paper-figure-generator` | Sonnet | Generates publication figures from experiment results |
+| `paper-figure-generator` | Sonnet | Generates publication figures with MOTFM comparison baselines |
 
 ---
 
@@ -281,3 +317,11 @@ Full standards are in `.claude/rules/coding-standards.md` (auto-loaded). The ess
 | 6 | `phase_6.md` | `methodology_expanded.md` §9 |
 | 7 | `phase_7.md` | `lora_2022/lora.pdf` |
 | 8 | `phase_8.md` | All previous experiment results |
+
+### v1 Results Summary
+
+| Metric | NFE=1 | NFE=10 | NFE=50 | MOTFM NFE=10 |
+|--------|-------|--------|--------|--------------|
+| FID-3D | 73.85 | 7.34 | 6.14 | 9.27 |
+| MMD | 0.99 | 0.23 | 0.17 | 0.25 |
+| MS-SSIM | 0.33 | 0.66 | 0.66 | 0.77 |

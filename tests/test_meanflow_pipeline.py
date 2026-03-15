@@ -34,16 +34,16 @@ def model_and_pipeline():
 
 @pytest.fixture(scope="module")
 def fd_model_and_pipeline():
-    """Create model + finite-difference pipeline for testing."""
+    """Create model + finite-difference pipeline for testing (u-pred, safe combo)."""
     torch.manual_seed(42)
-    config = MAISIUNetConfig(prediction_type="x")
+    config = MAISIUNetConfig(prediction_type="u")
     model = MAISIUNetWrapper(config)
     model.train()
 
     pipeline_config = MeanFlowPipelineConfig(
         p=2.0,
         adaptive=True,
-        prediction_type="x",
+        prediction_type="u",
         jvp_strategy="finite_difference",
         fd_step_size=1e-3,
     )
@@ -53,6 +53,7 @@ def fd_model_and_pipeline():
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T4_meanflow_loss_finite_positive(model_and_pipeline) -> None:
     """P3-T4: MeanFlow loss is finite and positive at (2, 4, 16, 16, 16)."""
     model, pipeline = model_and_pipeline
@@ -75,6 +76,7 @@ def test_P3_T4_meanflow_loss_finite_positive(model_and_pipeline) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T5_gradients_flow_to_all_params() -> None:
     """P3-T5: Gradients flow to all UNet params after loss.backward().
 
@@ -127,6 +129,7 @@ def test_P3_T5_gradients_flow_to_all_params() -> None:
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T9_unified_loss(model_and_pipeline) -> None:
     """P3-T9: Unified MeanFlow loss computes for both FM (r=t) and MF (r<t) samples."""
     model, pipeline = model_and_pipeline
@@ -146,18 +149,23 @@ def test_P3_T9_unified_loss(model_and_pipeline) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P3_T10_bf16_mixed_precision() -> None:
-    """P3-T10: JVP and loss work with bf16 mixed precision."""
+    """P3-T10: JVP and loss work with bf16 mixed precision.
+
+    Uses u-pred + FD-JVP because exact JVP (torch.func.jvp) does not
+    support bf16 autocast on CPU. The safe u-pred + FD combo validates
+    that the loss pipeline handles mixed precision correctly.
+    """
     torch.manual_seed(42)
-    config = MAISIUNetConfig(prediction_type="x")
+    config = MAISIUNetConfig(prediction_type="u")
     model = MAISIUNetWrapper(config)
     model.train()
 
-    # Use finite-difference for bf16 test (more robust than exact JVP in fp16)
     pipeline_config = MeanFlowPipelineConfig(
         p=2.0,
         adaptive=True,
-        prediction_type="x",
+        prediction_type="u",
         jvp_strategy="finite_difference",
         fd_step_size=1e-3,
     )
@@ -179,6 +187,7 @@ def test_P3_T10_bf16_mixed_precision() -> None:
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_fd_pipeline_produces_finite_loss(fd_model_and_pipeline) -> None:
     """Finite-difference pipeline produces finite loss."""
     model, pipeline = fd_model_and_pipeline
@@ -196,6 +205,7 @@ def test_P3_fd_pipeline_produces_finite_loss(fd_model_and_pipeline) -> None:
 
 @pytest.mark.phase3
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P3_adaptive_weighting_normalises_loss() -> None:
     """Adaptive weighting normalises per-sample loss to ~1.0."""
     torch.manual_seed(42)
@@ -207,8 +217,7 @@ def test_P3_adaptive_weighting_normalises_loss() -> None:
         p=2.0,
         adaptive=True,
         prediction_type="x",
-        jvp_strategy="finite_difference",
-        fd_step_size=1e-3,
+        jvp_strategy="exact",
     )
     pipeline = MeanFlowPipeline(pipeline_config)
 
@@ -253,6 +262,7 @@ def u_pred_fd_model_and_pipeline():
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4f_T1_u_prediction_pipeline_runs(u_pred_fd_model_and_pipeline) -> None:
     """P4f-T1: u-prediction + FD-JVP produces finite loss."""
     model, pipeline = u_pred_fd_model_and_pipeline
@@ -271,6 +281,7 @@ def test_P4f_T1_u_prediction_pipeline_runs(u_pred_fd_model_and_pipeline) -> None
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4f_T2_u_pred_fm_reduces_to_u(u_pred_fd_model_and_pipeline) -> None:
     """P4f-T2: For FM samples (r=t), compound V equals u (no JVP correction).
 
@@ -293,6 +304,7 @@ def test_P4f_T2_u_pred_fm_reduces_to_u(u_pred_fd_model_and_pipeline) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4f_T3_u_pred_fd_jvp_bounded() -> None:
     """P4f-T3: FD-JVP norm stays bounded with u-prediction (key regression test).
 
@@ -351,6 +363,7 @@ def test_P4f_T3_u_pred_fd_jvp_bounded() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4f_u_pred_diagnostics_keys(u_pred_fd_model_and_pipeline) -> None:
     """u-prediction diagnostics include u_pred_* keys instead of x_hat_*."""
     model, pipeline = u_pred_fd_model_and_pipeline
@@ -397,6 +410,7 @@ def x_pred_exact_model_and_pipeline():
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4f_T4_xpred_exact_jvp_stable(x_pred_exact_model_and_pipeline) -> None:
     """P4f-T4: x-prediction + exact JVP produces finite loss (ablation arm validation).
 
@@ -434,6 +448,7 @@ def test_P4f_T4_xpred_exact_jvp_stable(x_pred_exact_model_and_pipeline) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4f_T5_xpred_exact_jvp_gradients_flow(x_pred_exact_model_and_pipeline) -> None:
     """P4f-T5: Gradients flow through x-pred + exact JVP pipeline."""
     model, pipeline = x_pred_exact_model_and_pipeline
@@ -483,6 +498,7 @@ def v_head_fd_pipeline():
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T1_v_head_dual_output_shapes(v_head_model) -> None:
     """P4g-T1: use_v_head=True model returns (u, v) tuple with correct shapes."""
     B, C, D, H, W = 2, 4, 16, 16, 16
@@ -504,6 +520,7 @@ def test_P4g_T1_v_head_dual_output_shapes(v_head_model) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T2_v_head_zero_init(v_head_model) -> None:
     """P4g-T2: Fresh v-head output is all zeros (zero-init conv)."""
     B, C, D, H, W = 1, 4, 16, 16, 16
@@ -521,6 +538,7 @@ def test_P4g_T2_v_head_zero_init(v_head_model) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T3_dual_loss_pipeline(v_head_model, v_head_fd_pipeline) -> None:
     """P4g-T3: Dual loss pipeline produces finite loss with both raw_loss_u and raw_loss_v."""
     B, C, D, H, W = 2, 4, 16, 16, 16
@@ -543,6 +561,7 @@ def test_P4g_T3_dual_loss_pipeline(v_head_model, v_head_fd_pipeline) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T4_v_head_gradients_flow() -> None:
     """P4g-T4: Gradients flow to v-head parameters through loss_v."""
     torch.manual_seed(42)
@@ -587,6 +606,7 @@ def test_P4g_T4_v_head_gradients_flow() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T5_fd_jvp_v_head_tangent_bounded() -> None:
     """P4g-T5: FD-JVP with v-head tangent has bounded JVP norms."""
     torch.manual_seed(42)
@@ -628,6 +648,7 @@ def test_P4g_T5_fd_jvp_v_head_tangent_bounded() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T5b_exact_jvp_v_head_dual_output() -> None:
     """P4g-T5b: Exact JVP with v-head (compute_dual) produces finite loss.
 
@@ -669,6 +690,7 @@ def test_P4g_T5b_exact_jvp_v_head_dual_output() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T6_h_conditioning() -> None:
     """P4g-T6: h-conditioning produces finite output."""
     torch.manual_seed(42)
@@ -692,6 +714,7 @@ def test_P4g_T6_h_conditioning() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P4g_T7_backward_compat_no_v_head() -> None:
     """P4g-T7: use_v_head=False produces single tensor output (backward compat)."""
     torch.manual_seed(42)
@@ -731,6 +754,7 @@ def test_P4g_T7_backward_compat_no_v_head() -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4g_T8_dual_loss_diagnostics(v_head_model, v_head_fd_pipeline) -> None:
     """P4g-T8: Dual loss diagnostics include all v-head keys."""
     B, C, D, H, W = 2, 4, 16, 16, 16
@@ -757,6 +781,7 @@ def test_P4g_T8_dual_loss_diagnostics(v_head_model, v_head_fd_pipeline) -> None:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 def test_P4g_T9_sampling_with_v_head() -> None:
     """P4g-T9: sample_one_step and sample_euler work with v-head model."""
     from neuromf.sampling.multi_step import sample_euler

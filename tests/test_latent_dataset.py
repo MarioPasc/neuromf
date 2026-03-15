@@ -248,6 +248,7 @@ def test_P1_T6_latent_dataset_loads_correctly(tmp_path: Path) -> None:
 
 @pytest.mark.phase1
 @pytest.mark.critical
+@pytest.mark.slow
 def test_P1_T7_round_trip_ssim(
     latent_dir: Path,
     merged_config: OmegaConf,

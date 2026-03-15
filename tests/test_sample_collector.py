@@ -1,8 +1,7 @@
 """Phase 4 tests: SampleCollectorCallback + decode_samples CLI.
 
 All tests use a tiny UNet (channels=[8,16,32,64], spatial=16) so they run
-in <10s on CPU. Uses ``jvp_strategy="finite_difference"`` to avoid
-``torch.func`` overhead on small tensors.
+in <10s on CPU. Uses ``jvp_strategy="exact"`` (required for x-prediction).
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ def _tiny_config(**overrides) -> OmegaConf:
                 "lambda_mf": 1.0,
                 "prediction_type": "x",
                 "t_min": 0.05,
-                "jvp_strategy": "finite_difference",
+                "jvp_strategy": "exact",
                 "fd_step_size": 1e-3,
                 "channel_weights": None,
                 "norm_p": 1.0,
@@ -129,6 +128,7 @@ def _make_mock_trainer(epoch: int = 0, global_step: int = 100) -> MagicMock:
 
 @pytest.mark.phase4
 @pytest.mark.critical
+@pytest.mark.slow
 class TestSampleCollector:
     """Phase 4 sample collector tests."""
 
@@ -292,6 +292,7 @@ class TestSampleCollector:
 
 @pytest.mark.phase4
 @pytest.mark.informational
+@pytest.mark.slow
 class TestSampleCollectorExtended:
     """Phase 4 sample collector extended tests."""
 
