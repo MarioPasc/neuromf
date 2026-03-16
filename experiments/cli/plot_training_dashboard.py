@@ -50,6 +50,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output directory for dashboard figure. Defaults to {results-dir}/figures/.",
     )
+    parser.add_argument(
+        "--eval-summary",
+        type=str,
+        default=None,
+        help="Path to eval_summary.json for FID-3D data. Auto-discovered if not set.",
+    )
     return parser.parse_args()
 
 
@@ -68,7 +74,8 @@ def main() -> None:
 
     from neuromf.utils.training_dashboard import plot_training_dashboard
 
-    out_path = plot_training_dashboard(summary_path, output_dir)
+    eval_summary = Path(args.eval_summary) if args.eval_summary else None
+    out_path = plot_training_dashboard(summary_path, output_dir, eval_summary)
     logger.info("Dashboard saved to %s", out_path)
 
 
