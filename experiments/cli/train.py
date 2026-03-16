@@ -371,6 +371,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Save config snapshot to results folder
     # ------------------------------------------------------------------
+    # Reconstruct source paths (same logic as load_merged_config)
+    effective_configs_dir = configs_dir if configs_dir is not None else config_paths[0].parent
+    base_path = effective_configs_dir / "base.yaml"
+    project_root = Path(__file__).resolve().parent.parent.parent
+    main_train_path = project_root / "configs" / "train_meanflow.yaml"
     _save_config_snapshot(config, config_paths, base_path, main_train_path)
 
     # ------------------------------------------------------------------
