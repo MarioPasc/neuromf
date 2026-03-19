@@ -30,6 +30,7 @@ data_args:
   h5_path: "/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/FOMO60K/FOMO60K_MOTFM/fomo60k_3d.h5"
   split_train: "train"
   split_val: "valid"
+  volume_size: 192                     # FOMO-60K volumes are 192^3
   image_norm: "minmax_0_1"
   norm_scope: "global"
 

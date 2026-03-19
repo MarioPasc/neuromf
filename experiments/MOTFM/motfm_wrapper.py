@@ -60,6 +60,9 @@ class MOTFMGenerator:
         checkpoint_path: Path to Lightning .ckpt file.
         device: Torch device for inference.
         repo_root: Project root (to locate src/external/MOTFM).
+        volume_size: Spatial size per axis for generation. If None, read from
+            ``data_args.volume_size`` in config (default 192 for FOMO-60K,
+            96 for pretrained MSD Brain checkpoint).
     """
 
     def __init__(
@@ -68,6 +71,7 @@ class MOTFMGenerator:
         checkpoint_path: str | Path,
         device: torch.device,
         repo_root: Path | None = None,
+        volume_size: int | None = None,
     ) -> None:
         _ensure_motfm_on_path(repo_root)
 
@@ -100,7 +104,13 @@ class MOTFMGenerator:
             self._data_range = (0.0, 1.0)
         else:
             self._data_range = (-1.0, 1.0)
-        logger.info("Data range: %s", self._data_range)
+
+        # Spatial size: CLI override > config > default 192
+        if volume_size is not None:
+            self._volume_size = volume_size
+        else:
+            self._volume_size = int(self.config.get("data_args", {}).get("volume_size", 192))
+        logger.info("Data range: %s, volume_size: %d", self._data_range, self._volume_size)
 
     def _make_solver_config(self, nfe: int) -> dict:
         """Build solver config for a given number of function evaluations."""
@@ -124,19 +134,20 @@ class MOTFMGenerator:
             seed: Base random seed (per-sample seeds = seed, seed+1, ...).
 
         Returns:
-            Tensor of shape (n_samples, 192, 192, 192) float32 in [0, 1].
+            Tensor of shape ``(n_samples, S, S, S)`` float32 in [0, 1],
+            where S = ``self._volume_size``.
         """
         from utils.utils_fm import sample_with_solver
 
         solver_config = self._make_solver_config(nfe)
         spatial_dims = self.config["model_args"].get("spatial_dims", 3)
         in_channels = self.config["model_args"].get("in_channels", 1)
+        s = self._volume_size
 
-        # Determine volume shape from config or default 192^3
         if spatial_dims == 3:
-            vol_shape = (in_channels, 192, 192, 192)
+            vol_shape = (in_channels, s, s, s)
         else:
-            vol_shape = (in_channels, 192, 192)
+            vol_shape = (in_channels, s, s)
 
         logger.info(
             "Generating %d volumes at NFE=%d (batch_size=%d, solver=%s)",

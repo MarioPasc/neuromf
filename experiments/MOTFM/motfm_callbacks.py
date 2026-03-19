@@ -104,9 +104,10 @@ class MOTFMTrainingMonitor(pl.Callback):
                 logger.warning("Could not parse existing history; starting fresh")
                 self._loss_history = []
 
-        # Fixed noise: (n_samples, 1, 192, 192, 192) — pixel-space MOTFM
+        # Fixed noise: (n_samples, 1, S, S, S) — pixel-space MOTFM
+        vol_s = int(self._config.get("data_args", {}).get("volume_size", 192))
         gen = torch.Generator().manual_seed(self._seed)
-        self._fixed_noise = torch.randn(self._n_samples, 1, 192, 192, 192, generator=gen)
+        self._fixed_noise = torch.randn(self._n_samples, 1, vol_s, vol_s, vol_s, generator=gen)
         logger.info(
             "MOTFMTrainingMonitor: output=%s, NFE=%s, %d samples, seed=%d",
             self._output_dir,

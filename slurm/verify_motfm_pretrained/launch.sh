@@ -4,6 +4,10 @@
 #
 # Generates a small number of volumes from the author-provided MOTFM checkpoint
 # at multiple NFE levels to verify output quality.
+# 
+# bash slurm/verify_motfm_pretrained/launch.sh \
+#   --checkpoint /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/MOTFM/epoch119-valloss0.040524.ckpt \
+#   --config /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/MOTFM/config_3D.yaml
 #
 # Usage (from login node):
 #   bash slurm/verify_motfm_pretrained/launch.sh

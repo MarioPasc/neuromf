@@ -28,6 +28,7 @@ data_args:
   pickle_path: "unused_for_inference"
   split_train: "train"
   split_val: "train"
+  volume_size: 96                    # MSD Brain volumes are 96^3 (from MOTFM GitHub)
   image_norm:
     mode: "auto"
     scope: "sample"
