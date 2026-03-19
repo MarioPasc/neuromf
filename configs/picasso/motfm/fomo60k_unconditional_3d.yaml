@@ -1,26 +1,27 @@
 # MOTFM Training Config — FOMO-60K Unconditional 3D (192^3)
 #
-# Based on MOTFM's config_3D.yaml but unconditional (no masks, no classes).
-# For fair comparison with NeuroMF on the same dataset.
+# Uses the FULL MOTFM paper architecture (132.5M params) for a fair comparison.
+# Architecture matches the pretrained checkpoint exactly: num_channels=[32,64,160,480],
+# transformer_num_layers=6. Fits within A100 40GB (~12 GB training, ~6 GB inference).
 #
 # Step-matched to the paper: 750 scans × 200 epochs × accum=1 = 150,000 optimizer
 # steps. With 5,471 scans and 3 GPUs (accum=1, no gradient accumulation — matches
 # paper), each epoch = ceil(5471/3) = 1,824 steps → 83 epochs × 1,824 = 151,392
-# steps ≈ 150K. (~2.9 days on 3 GPUs — wall time is GPU-count-invariant.)
+# steps ≈ 150K.
 #
-# Train: python -u src/external/MOTFM/trainer.py --config_path <this_file>
+# Train: python -u experiments/MOTFM/train_motfm.py --config_path <this_file>
 
 model_args:
   spatial_dims: 3
   in_channels: 1
   out_channels: 1
   num_res_blocks: [2, 2, 2, 2]
-  num_channels: [32, 64, 128, 256]
+  num_channels: [32, 64, 160, 480]           # match MOTFM paper architecture (132.5M params)
   attention_levels: [False, False, False, True]
   norm_num_groups: 32
   resblock_updown: True
-  num_head_channels: [32, 64, 128, 256]
-  transformer_num_layers: 1
+  num_head_channels: [32, 64, 160, 480]      # match MOTFM paper architecture
+  transformer_num_layers: 6                   # match MOTFM paper architecture
   use_flash_attention: true
   with_conditioning: False
   mask_conditioning: False

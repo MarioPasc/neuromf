@@ -679,6 +679,31 @@ Generated samples at NFE $\in \{1, 2, 5, 10\}$ using shared noise, compared via:
 - Per-sample $L_2$ distance between NFE=1 and NFE=$K$ (convergence measure)
 - FID at each NFE level (quality vs compute trade-off)
 
+### 9.5 MOTFM Baseline Comparison: Fairness and Caveats
+
+NeuroMF is benchmarked against MOTFM (Yazdani et al., 2025) as the primary baseline. Both are trained on our FOMO-60K dataset and generate at the same output resolution (192$^3$ at 1mm isotropic). However, several fairness caveats must be disclosed.
+
+**Spatial resolution mismatch with the MOTFM paper.** MOTFM was designed, trained, and validated at **96$^3$** voxel resolution on the MSD Brain Tumour dataset (750 T1-weighted glioma scans). Our FOMO-60K comparison uses **192$^3$** — 8$\times$ more voxels per volume. This higher resolution is necessary for capturing cortical detail in healthy brain MRI. The MOTFM paper's reported metrics (FID=9.27 at 10-NFE on 96$^3$ MSD Brain) are **not directly comparable** to our 192$^3$ FOMO-60K results due to differences in both resolution and dataset.
+
+**Architecture.** We use the **full** MOTFM paper architecture (`num_channels=[32, 64, 160, 480]`, `transformer_num_layers=6`, ~132.5M params) for our FOMO-60K training. At 192$^3$, this requires ~12 GB VRAM for training, well within the A100 40GB budget. Using the identical architecture eliminates model capacity as a confound — any performance difference reflects the method, not the model size.
+
+**Latent vs pixel space.** NeuroMF operates in a 4$\times$-compressed latent space (4$\times$48$^3$) while MOTFM operates directly in pixel space (192$^3$). These are different design choices with distinct trade-offs: latent-space methods benefit from a more compact representation but are bounded by the VAE reconstruction ceiling and train on a lossy compressed signal. Pixel-space methods avoid VAE artefacts but must learn the velocity field over a higher-dimensional space. This difference should be considered when interpreting metrics — for instance, the VAE's inherent smoothing limits the maximum achievable MS-SSIM for NeuroMF.
+
+**1-NFE semantics.** NeuroMF's 1-NFE is a learned single-step prediction via the average velocity $u(\varepsilon, 0, 1)$, specifically trained for the 1-step regime through the MeanFlow identity. MOTFM's 1-NFE is a single Euler step $x_1 = x_0 + v(x_0, 0)$, i.e., a linear extrapolation from noise using a locally-trained velocity field. These are fundamentally different: MeanFlow trains for 1-step quality by construction, while ODE-based flow matching optimises for small-step accuracy and relies on multi-step integration for high quality. Low 1-NFE quality for MOTFM is expected and does not indicate a deficiency in the method — it reflects the nature of single-step ODE integration.
+
+**ODE solver off-by-one bug.** During verification, we discovered that MOTFM's vendored `build_solver_config()` sets `time_points = nfe`, but `torch.linspace(0, 1, 1)` produces a degenerate single-point grid `[0.0]` with no integration interval. For NFE=1, the ODE solver returns the initial noise unchanged. We fixed this in our wrapper by clamping `time_points >= 2`. For NFE$\geq$2, `step_size = 1/\text{nfe}` correctly controls the number of function evaluations via sub-stepping, so NFE=10 and NFE=50 results were unaffected by this bug.
+
+**Summary of comparison conditions:**
+
+| Aspect | NeuroMF | MOTFM (ours) | MOTFM (paper) |
+|--------|---------|-------------|---------------|
+| Dataset | FOMO-60K (5,471 T1) | FOMO-60K (5,471 T1) | MSD Brain (750 T1) |
+| Output resolution | 192$^3$ | 192$^3$ | 96$^3$ |
+| Generative space | Latent (4$\times$48$^3$) | Pixel (192$^3$) | Pixel (96$^3$) |
+| Model params | ~178M | ~132.5M | ~132.5M |
+| 1-NFE mechanism | Learned average velocity | Single Euler step | Single Euler step |
+| Normalisation | [0, 1] per-channel | [0, 1] global minmax | [-1, 1] per-sample auto |
+
 ---
 
 ## 10. Implementation Details
