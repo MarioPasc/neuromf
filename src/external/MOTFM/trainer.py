@@ -29,6 +29,9 @@ class FlowMatchingDataModule(pl.LightningDataModule):
         self.config = config
         self.train_data: Optional[dict] = None
         self.val_data: Optional[dict] = None
+        model_config = self.config.get("model_args", {})
+        self.mask_conditioning = bool(model_config.get("mask_conditioning", False))
+        self.class_conditioning = bool(model_config.get("with_conditioning", False))
 
     def setup(self, stage: Optional[str] = None) -> None:
         data_config = self.config["data_args"]
@@ -72,7 +75,7 @@ class FlowMatchingDataModule(pl.LightningDataModule):
             return load_and_prepare_data(
                 pickle_path=data_config["pickle_path"],
                 split=split,
-                convert_classes_to_onehot=True,
+                convert_classes_to_onehot=self.class_conditioning,
                 spatial_dims=spatial_dims,
                 image_norm=image_norm,
                 mask_norm=mask_norm,
@@ -84,14 +87,12 @@ class FlowMatchingDataModule(pl.LightningDataModule):
                 class_mapping_split=data_config.get("split_train", "train"),
             )
 
-        mask_conditioning = bool(model_config.get("mask_conditioning", False))
-
         def _assert_required_keys(data: dict, *, split_name: str) -> None:
-            if mask_conditioning and "masks" not in data:
+            if self.mask_conditioning and "masks" not in data:
                 raise ValueError(
                     f"`model_args.mask_conditioning` is True but split '{split_name}' has no masks."
                 )
-            if class_conditioning and "classes" not in data:
+            if self.class_conditioning and "classes" not in data:
                 raise ValueError(
                     f"`model_args.with_conditioning` is True but split '{split_name}' has no classes."
                 )
@@ -136,6 +137,7 @@ class FlowMatchingDataModule(pl.LightningDataModule):
                         "expected [N] indices or [N, K] one-hot."
                     )
 
+                # Inverse-frequency weighting with optional tempering via class_balance_power.
                 counts = torch.bincount(class_idxs, minlength=num_classes).to(dtype=torch.float32)
                 power = float(tr_args.get("class_balance_power", 1.0))
                 class_weights = counts.clamp_min(1.0).pow(-power)
@@ -152,8 +154,8 @@ class FlowMatchingDataModule(pl.LightningDataModule):
 
         return create_dataloader(
             Images=self.train_data["images"],
-            Masks=self.train_data.get("masks"),
-            classes=self.train_data.get("classes"),
+            Masks=self.train_data.get("masks") if self.mask_conditioning else None,
+            classes=self.train_data.get("classes") if self.class_conditioning else None,
             batch_size=tr_args["batch_size"],
             shuffle=shuffle,
             sampler=sampler,
@@ -167,8 +169,8 @@ class FlowMatchingDataModule(pl.LightningDataModule):
         tr_args = self.config["train_args"]
         return create_dataloader(
             Images=self.val_data["images"],
-            Masks=self.val_data.get("masks"),
-            classes=self.val_data.get("classes"),
+            Masks=self.val_data.get("masks") if self.mask_conditioning else None,
+            classes=self.val_data.get("classes") if self.class_conditioning else None,
             batch_size=tr_args["batch_size"],
             shuffle=False,
             num_workers=int(tr_args.get("num_workers", 0)),
@@ -209,6 +211,7 @@ class FlowMatchingLightningModule(pl.LightningModule):
         else:
             class_batch = None
 
+        # Flow-matching target: learn velocity at a random interpolation point between noise and data.
         x_0 = torch.randn_like(im_batch)
         t = torch.rand(im_batch.shape[0], device=im_batch.device)
         sample_info = self.path.sample(t=t, x_0=x_0, x_1=im_batch)
@@ -283,10 +286,12 @@ def _resolve_resume_checkpoint(
     if not os.path.isdir(ckpt_dir):
         return None
 
+    # Prefer Lightning's rolling checkpoint for exact resume state.
     last_ckpt = os.path.join(ckpt_dir, "last.ckpt")
     if os.path.isfile(last_ckpt):
         return last_ckpt
 
+    # Fallback for older/manual checkpoint naming: pick the newest .ckpt file.
     _candidates = [
         os.path.join(ckpt_dir, fname)
         for fname in os.listdir(ckpt_dir)
@@ -306,7 +311,13 @@ def _resolve_strategy(
     Use DDP only for true multi-GPU execution.
     For single device (or CPU), keep strategy="auto" to avoid needless overhead.
     """
-    if str(accelerator).lower() not in {"gpu", "cuda"}:
+    accelerator_name = str(accelerator).lower()
+    gpu_available = torch.cuda.is_available()
+    use_gpu = accelerator_name in {"gpu", "cuda"} or (
+        accelerator_name == "auto" and gpu_available
+    )
+
+    if not use_gpu:
         return "auto"
 
     if isinstance(devices, int):
@@ -315,8 +326,12 @@ def _resolve_strategy(
         return DDPStrategy(find_unused_parameters=True) if len(devices) > 1 else "auto"
     if isinstance(devices, str):
         d = devices.strip().lower()
-        if d in {"auto", "1"}:
+        if d == "auto":
+            return DDPStrategy(find_unused_parameters=True) if torch.cuda.device_count() > 1 else "auto"
+        if d == "1":
             return "auto"
+        if d.isdigit():
+            return DDPStrategy(find_unused_parameters=True) if int(d) > 1 else "auto"
         # Comma-separated ids, e.g. "0,1"
         if "," in d:
             ids = [x for x in d.split(",") if x.strip() != ""]

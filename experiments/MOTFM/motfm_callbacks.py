@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -92,9 +93,7 @@ class MOTFMTrainingMonitor(pl.Callback):
             try:
                 with open(history_path) as f:
                     self._loss_history = json.load(f)
-                logger.info(
-                    "Resumed loss history: %d entries", len(self._loss_history)
-                )
+                logger.info("Resumed loss history: %d entries", len(self._loss_history))
                 # Restore best val tracking
                 for entry in self._loss_history:
                     vl = entry.get("val_loss")
@@ -107,9 +106,7 @@ class MOTFMTrainingMonitor(pl.Callback):
 
         # Fixed noise: (n_samples, 1, 192, 192, 192) — pixel-space MOTFM
         gen = torch.Generator().manual_seed(self._seed)
-        self._fixed_noise = torch.randn(
-            self._n_samples, 1, 192, 192, 192, generator=gen
-        )
+        self._fixed_noise = torch.randn(self._n_samples, 1, 192, 192, 192, generator=gen)
         logger.info(
             "MOTFMTrainingMonitor: output=%s, NFE=%s, %d samples, seed=%d",
             self._output_dir,
@@ -165,9 +162,7 @@ class MOTFMTrainingMonitor(pl.Callback):
             if val_loss_f < self._best_val_loss:
                 self._best_val_loss = val_loss_f
                 self._best_val_epoch = epoch
-                logger.info(
-                    "New best val_loss=%.6f at epoch %d", val_loss_f, epoch
-                )
+                logger.info("New best val_loss=%.6f at epoch %d", val_loss_f, epoch)
         self._save_history()
 
         # Generate multi-NFE samples
@@ -188,8 +183,9 @@ class MOTFMTrainingMonitor(pl.Callback):
             return
 
         try:
-            from utils.utils_fm import sample_with_solver
             from inferer import build_solver_config
+            from motfm_wrapper import _fix_solver_time_points
+            from utils.utils_fm import sample_with_solver
         except ImportError:
             logger.warning("Cannot import MOTFM sampling utils; skipping sample generation")
             return
@@ -209,13 +205,16 @@ class MOTFMTrainingMonitor(pl.Callback):
 
         for nfe in self._nfe_list:
             solver_config = build_solver_config(self._config, num_inference_steps=nfe)
+            _fix_solver_time_points(solver_config)
             nfe_slices_axial: list[np.ndarray] = []
             nfe_slices_coronal: list[np.ndarray] = []
 
             for s_idx in range(self._n_samples):
                 noise_s = self._fixed_noise[s_idx : s_idx + 1].to(device)
 
-                with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=torch.cuda.is_available()):
+                with torch.amp.autocast(
+                    "cuda", dtype=torch.bfloat16, enabled=torch.cuda.is_available()
+                ):
                     sol = sample_with_solver(
                         model=model,
                         x_init=noise_s,
@@ -372,7 +371,9 @@ class MOTFMTrainingMonitor(pl.Callback):
         n_cols = n_nfe * 2  # axial + coronal per NFE
 
         fig, axes = plt.subplots(
-            n_epochs, n_cols, figsize=(3 * n_cols, 2.5 * n_epochs),
+            n_epochs,
+            n_cols,
+            figsize=(3 * n_cols, 2.5 * n_epochs),
             squeeze=False,
         )
 
@@ -393,12 +394,8 @@ class MOTFMTrainingMonitor(pl.Callback):
 
                 if nfe in self._slice_cache[epoch]:
                     slices = self._slice_cache[epoch][nfe]
-                    axes[row, col_ax].imshow(
-                        slices["axial"], cmap="gray", vmin=vmin, vmax=vmax
-                    )
-                    axes[row, col_cor].imshow(
-                        slices["coronal"], cmap="gray", vmin=vmin, vmax=vmax
-                    )
+                    axes[row, col_ax].imshow(slices["axial"], cmap="gray", vmin=vmin, vmax=vmax)
+                    axes[row, col_cor].imshow(slices["coronal"], cmap="gray", vmin=vmin, vmax=vmax)
                 else:
                     axes[row, col_ax].text(0.5, 0.5, "N/A", ha="center", va="center")
                     axes[row, col_cor].text(0.5, 0.5, "N/A", ha="center", va="center")
@@ -465,7 +462,9 @@ class MOTFMTrainingMonitor(pl.Callback):
                 continue
             ep_list, mse_list = zip(*data)
             ax.plot(
-                ep_list, mse_list, "-o",
+                ep_list,
+                mse_list,
+                "-o",
                 color=colors[i % len(colors)],
                 markersize=4,
                 linewidth=1.5,

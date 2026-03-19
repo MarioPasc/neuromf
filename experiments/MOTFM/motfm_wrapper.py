@@ -13,20 +13,40 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 import torch
 
 logger = logging.getLogger(__name__)
 
 
-def _ensure_motfm_on_path(repo_root: Optional[Path] = None) -> None:
+def _ensure_motfm_on_path(repo_root: Path | None = None) -> None:
     """Add MOTFM external code to sys.path if not already present."""
     if repo_root is None:
         repo_root = Path(__file__).resolve().parents[2]
     motfm_dir = str(repo_root / "src" / "external" / "MOTFM")
     if motfm_dir not in sys.path:
         sys.path.insert(0, motfm_dir)
+
+
+def _fix_solver_time_points(solver_config: dict) -> dict:
+    """Ensure at least 2 time grid points for a valid integration interval.
+
+    The vendored ``build_solver_config()`` sets ``time_points = nfe``, but
+    ``torch.linspace(0, 1, 1)`` produces ``[0.0]`` — a single point with no
+    interval.  The ODE solver returns the initial noise unchanged (0 steps).
+    With ``time_points >= 2``, ``linspace`` gives ``[0.0, ..., 1.0]`` and the
+    solver integrates across that interval (actual NFE controlled by
+    ``step_size``).
+
+    Args:
+        solver_config: Solver config dict (mutated in-place and returned).
+
+    Returns:
+        The same dict with ``time_points`` clamped to >= 2.
+    """
+    if solver_config.get("time_points", 0) < 2:
+        solver_config["time_points"] = 2
+    return solver_config
 
 
 class MOTFMGenerator:
@@ -47,7 +67,7 @@ class MOTFMGenerator:
         config_path: str | Path,
         checkpoint_path: str | Path,
         device: torch.device,
-        repo_root: Optional[Path] = None,
+        repo_root: Path | None = None,
     ) -> None:
         _ensure_motfm_on_path(repo_root)
 
@@ -72,9 +92,20 @@ class MOTFMGenerator:
         # Cache builder for solver configs
         self._build_solver_config = build_solver_config
 
+        # Detect output data range from config for correct post-processing
+        norm_cfg = self.config.get("data_args", {}).get("image_norm", {})
+        if isinstance(norm_cfg, dict):
+            self._data_range = tuple(norm_cfg.get("range", [0.0, 1.0]))
+        elif norm_cfg == "minmax_0_1":
+            self._data_range = (0.0, 1.0)
+        else:
+            self._data_range = (-1.0, 1.0)
+        logger.info("Data range: %s", self._data_range)
+
     def _make_solver_config(self, nfe: int) -> dict:
         """Build solver config for a given number of function evaluations."""
-        return self._build_solver_config(self.config, num_inference_steps=nfe)
+        solver_config = self._build_solver_config(self.config, num_inference_steps=nfe)
+        return _fix_solver_time_points(solver_config)
 
     @torch.no_grad()
     def generate(
@@ -143,10 +174,13 @@ class MOTFMGenerator:
             else:
                 final = sol
 
-            # Remove channel dim (1-channel MRI) and clip to [0, 1]
+            # Remove channel dim (1-channel MRI) and normalize to [0, 1]
             if final.shape[1] == 1:
                 final = final.squeeze(1)
-            final = final.clamp(0.0, 1.0).float().cpu()
+            lo, hi = self._data_range
+            final = final.clamp(lo, hi).float()
+            final = (final - lo) / (hi - lo)
+            final = final.cpu()
 
             all_volumes.append(final)
             n_generated += bs
