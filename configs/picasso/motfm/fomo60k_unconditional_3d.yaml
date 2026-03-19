@@ -43,7 +43,9 @@ train_args:
   grad_clip_norm: 1.0
   device: "cuda"
   checkpoint_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/motfm/checkpoints"
+  pretrained_checkpoint_path: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/MOTFM/epoch119-valloss0.040524.ckpt"     # set to MOTFM ckpt path for transfer learning
   val_freq: 10
+  early_stop_patience: 5              # stop after 5 val epochs (=50 train epochs) without improvement
   num_val_samples: 4
   seed: 42
   precision: "bf16-mixed"

@@ -85,6 +85,13 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed (default: 42).",
     )
+    parser.add_argument(
+        "--volume-size",
+        type=int,
+        default=None,
+        help="Spatial size per axis (overrides config). "
+        "96 for pretrained MSD Brain, 192 for FOMO-60K.",
+    )
     return parser.parse_args()
 
 
@@ -113,6 +120,7 @@ def main() -> None:
         config_path=args.config,
         checkpoint_path=args.checkpoint,
         device=device,
+        volume_size=args.volume_size,
     )
 
     output_dir = Path(args.output_dir)

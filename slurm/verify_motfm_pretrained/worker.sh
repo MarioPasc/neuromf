@@ -97,12 +97,16 @@ echo "=========================================="
 echo "GENERATING VERIFICATION VOLUMES"
 echo "=========================================="
 
+VOLUME_SIZE="${VERIFY_VOLUME_SIZE:-96}"
+echo "Volume size: ${VOLUME_SIZE}"
+
 python -u experiments/MOTFM/verify_pretrained.py \
     --config "${VERIFY_CONFIG}" \
     --checkpoint "${VERIFY_CHECKPOINT}" \
     --nfe 1 2 5 10 50 \
     --n-samples 4 \
     --output-dir "${VERIFY_OUTPUT}" \
+    --volume-size "${VOLUME_SIZE}" \
     --device auto
 
 # ========================================================================

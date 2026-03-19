@@ -341,6 +341,29 @@ def main() -> None:
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("Model: %d trainable params (%.1f MB)", n_params, n_params * 4 / 1e6)
 
+    # Transfer learning: load pretrained weights only (no optimizer/scheduler/epoch)
+    pretrained_path = tr.get("pretrained_checkpoint_path")
+    if pretrained_path and Path(pretrained_path).is_file():
+        logger.info("Loading pretrained weights from: %s", pretrained_path)
+        ckpt = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+        state_dict = ckpt["state_dict"]
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        logger.info(
+            "Pretrained weights loaded: %d keys matched, %d missing, %d unexpected",
+            len(state_dict) - len(unexpected),
+            len(missing),
+            len(unexpected),
+        )
+        if missing:
+            logger.warning("Missing keys: %s", missing[:10])
+        if unexpected:
+            logger.warning("Unexpected keys: %s", unexpected[:10])
+        del ckpt, state_dict
+    elif pretrained_path:
+        logger.warning(
+            "Pretrained checkpoint not found: %s — training from scratch", pretrained_path
+        )
+
     # Enable gradient checkpointing to fit 192³ volumes on A100 40GB
     n_wrapped = _enable_gradient_checkpointing(model)
     logger.info("Gradient checkpointing enabled on %d UNet blocks", n_wrapped)
@@ -369,6 +392,25 @@ def main() -> None:
         every_n_epochs=ckpt_every,
     )
     lr_cb = LearningRateMonitor(logging_interval="step")
+
+    # Early stopping (patience in val epochs; val runs every ckpt_every training epochs)
+    early_stop_patience = int(tr.get("early_stop_patience", 0))
+    callbacks_list: list = [ckpt_cb, lr_cb]
+    if early_stop_patience > 0:
+        from pytorch_lightning.callbacks import EarlyStopping
+
+        early_stop_cb = EarlyStopping(
+            monitor="val/loss",
+            mode="min",
+            patience=early_stop_patience,
+            verbose=True,
+        )
+        callbacks_list.append(early_stop_cb)
+        logger.info(
+            "Early stopping enabled: patience=%d val epochs (=%d training epochs)",
+            early_stop_patience,
+            early_stop_patience * ckpt_every,
+        )
 
     # Training monitor: loss JSON, multi-NFE samples, end-of-training figures
     from motfm_callbacks import MOTFMTrainingMonitor
@@ -441,7 +483,7 @@ def main() -> None:
         check_val_every_n_epoch=ckpt_every,
         enable_progress_bar=True,
         logger=tb_logger,
-        callbacks=[ckpt_cb, lr_cb, monitor_cb],
+        callbacks=callbacks_list + [monitor_cb],
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
