@@ -155,6 +155,39 @@ All paths are absolute. The agent environment is `~/.conda/envs/neuromf/` (Pytho
 | Configs | `/home/mpascual/research/code/neuromf/configs/` |
 | Experiments/CLI | `/home/mpascual/research/code/neuromf/experiments/cli/` |
 
+### 5.3b Competitor Model System
+
+The project uses an extensible competitor framework for evaluating pixel-space generative models against NeuroiMF. **To add a new competitor, see `docs/adding_competitors.md`.**
+
+| Resource | Path |
+|----------|------|
+| Competitor base class | `src/neuromf/competitors/base.py` |
+| Model registry | `src/neuromf/competitors/registry.py` |
+| Shared HDF5 writer | `src/neuromf/competitors/io.py` |
+| Style registry | `src/neuromf/competitors/styles.py` |
+| MOTFM implementation | `src/neuromf/competitors/motfm_gen.py` |
+| DDPM implementation | `src/neuromf/competitors/ddpm_gen.py` |
+| Unified generation CLI | `experiments/cli/generate_competitor.py` |
+| Generic SLURM launcher | `slurm/generate_competitor/launch.sh` |
+| Multi-model comparison CLI | `experiments/cli/run_comparison.py` |
+| Comparison figures | `experiments/analysis/comparison_figures.py` |
+| Adding competitors guide | `docs/adding_competitors.md` |
+
+**Key commands:**
+```bash
+# List registered competitors:
+python experiments/cli/generate_competitor.py --list-models
+
+# Generate for any registered model:
+python experiments/cli/generate_competitor.py --model motfm --config ... --checkpoint ...
+
+# Multi-model comparison (extensible):
+python experiments/cli/run_comparison.py --neuroimf-dir PATH --competitor MOTFM:PATH --competitor DDPM:PATH
+
+# Full orchestration:
+bash slurm/orchestrate_evaluation/launch.sh --neuroimf-checkpoint ... --competitor motfm:CKPT --competitor ddpm:CKPT
+```
+
 ### 5.4 External Vendored Repos (READ-ONLY)
 
 | Repo | Path | What it contains |

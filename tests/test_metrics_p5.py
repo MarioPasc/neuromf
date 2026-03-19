@@ -154,6 +154,7 @@ def test_P5_T9_feature_extractor_mock(tmp_path: Path) -> None:
     # Mock the R3D-18 loading and extraction (now returns 512-d features)
     mock_model = MagicMock()
     mock_model.parameters.return_value = iter([torch.zeros(1)])
+    mock_model.return_value = torch.randn(1, 512)
 
     def mock_extract_3d(volumes, model, normalize=True, batch_size=8):
         B = volumes.shape[0]

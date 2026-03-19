@@ -14,13 +14,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime
 import logging
 import time
 from pathlib import Path
 
 import h5py
-import numpy as np
 import torch
 
 logging.basicConfig(
@@ -101,53 +99,21 @@ def write_volumes_h5(
     checkpoint_path: str,
     seed: int,
 ) -> None:
-    """Write generated volumes to HDF5 in the same format as NeuroMF.
+    """Write generated volumes to HDF5 — delegates to canonical location.
 
-    Args:
-        output_path: Path to write the .h5 file.
-        volumes: Tensor of shape (N, 192, 192, 192) float32.
-        nfe: Number of function evaluations used.
-        checkpoint_path: Source checkpoint path for metadata.
-        seed: Random seed used for generation.
+    Kept here for backward compatibility (``experiments/DDPM/generate_volumes.py``
+    imports this via ``from generate_volumes import write_volumes_h5``).
     """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    from neuromf.competitors.io import write_volumes_h5 as _write
 
-    n_samples = volumes.shape[0]
-    vol_shape = volumes.shape[1:]  # (D, H, W)
-
-    with h5py.File(str(output_path), "w") as f:
-        f.create_dataset(
-            "volumes",
-            shape=(n_samples, *vol_shape),
-            dtype=np.float32,
-            chunks=(1, *vol_shape),
-            compression="gzip",
-            compression_opts=4,
-        )
-
-        f.create_dataset(
-            "decode_timing_ms",
-            shape=(n_samples,),
-            dtype=np.float32,
-        )
-
-        # Write data
-        vols_np = volumes.numpy()
-        f["volumes"][:] = vols_np
-        f["decode_timing_ms"][:] = 0.0  # No separate decode step for MOTFM
-
-        # Metadata (matches NeuroMF convention)
-        f.attrs["n_samples"] = n_samples
-        f.attrs["n_written"] = n_samples
-        f.attrs["nfe"] = nfe
-        f.attrs["model"] = "motfm"
-        f.attrs["checkpoint_path"] = str(checkpoint_path)
-        f.attrs["seed"] = seed
-        f.attrs["timestamp"] = datetime.datetime.now().isoformat()
-
-    size_gb = output_path.stat().st_size / 1e9
-    logger.info("Saved %s: %d volumes, %.2f GB", output_path.name, n_samples, size_gb)
+    _write(
+        output_path=output_path,
+        volumes=volumes,
+        nfe=nfe,
+        checkpoint_path=checkpoint_path,
+        seed=seed,
+        model_name="motfm",
+    )
 
 
 def main() -> None:

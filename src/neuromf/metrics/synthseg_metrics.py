@@ -201,12 +201,16 @@ def run_synthseg(
 
     logger.info("Running SynthSeg: %s", " ".join(cmd))
 
+    # Scale timeout by number of input volumes (default 7200s for ~500 vols)
+    n_inputs = len(list(input_dir.glob("*.nii.gz")))
+    timeout_s = max(3600, n_inputs * 360)  # ~6 min/vol budget
+
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=7200,  # 2-hour timeout for 500 volumes
+            timeout=timeout_s,
         )
         if result.returncode != 0:
             logger.error(
@@ -222,7 +226,10 @@ def run_synthseg(
         logger.error("SynthSeg command not found: %s", config.command)
         return False
     except subprocess.TimeoutExpired:
-        logger.error("SynthSeg timed out after 4 hours")
+        logger.error(
+            "SynthSeg timed out after %d seconds (%d volumes)",
+            timeout_s, n_inputs,
+        )
         return False
 
 
@@ -556,6 +563,7 @@ def run_synthseg_evaluation(
     nn_indices: Tensor | None = None,
     config: SynthSegConfig | None = None,
     nfe: int = 0,
+    max_volumes: int | None = None,
 ) -> dict | None:
     """Run full SynthSeg evaluation pipeline.
 
@@ -569,6 +577,10 @@ def run_synthseg_evaluation(
         nn_indices: NN pairing indices for paired metrics.
         config: SynthSeg configuration.
         nfe: NFE level (for directory naming).
+        max_volumes: Maximum number of volumes to convert to NIfTI and
+            segment.  If None, all volumes are processed.  Use this to
+            limit SynthSeg runtime on large archives (e.g. 100 volumes
+            instead of 500 saves ~33 hours per NFE level).
 
     Returns:
         Dict with morphological metrics, or None if SynthSeg is unavailable.
@@ -596,10 +608,16 @@ def run_synthseg_evaluation(
 
     # Convert HDF5 -> NIfTI
     logger.info("Converting real volumes to NIfTI...")
-    _h5_volumes_to_nifti(real_volumes_h5, real_nifti_dir, config.voxel_size_mm)
+    _h5_volumes_to_nifti(
+        real_volumes_h5, real_nifti_dir, config.voxel_size_mm,
+        max_volumes=max_volumes,
+    )
 
     logger.info("Converting generated volumes to NIfTI...")
-    _h5_volumes_to_nifti(gen_volumes_h5, gen_nifti_dir, config.voxel_size_mm)
+    _h5_volumes_to_nifti(
+        gen_volumes_h5, gen_nifti_dir, config.voxel_size_mm,
+        max_volumes=max_volumes,
+    )
 
     # Run SynthSeg on real (skip if already done — shared across NFE levels)
     if not real_vol_csv.exists():

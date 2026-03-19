@@ -18,7 +18,8 @@ def sample_euler(
     n_steps: int = 50,
     prediction_type: str = "u",
     norm_correction: float = 1.0,
-) -> Tensor:
+    return_trajectory: bool = False,
+) -> Tensor | list[tuple[float, Tensor]]:
     """Multi-step Euler sampling from t=1 to t=0.
 
     For u-prediction: z_{t-dt} = z_t - dt * u_theta(z_t, r=t-dt, t=t) / gamma.
@@ -33,9 +34,14 @@ def sample_euler(
         norm_correction: Scalar correction factor gamma. Divides the
             velocity by gamma to compensate for compound velocity norm
             overshoot. Default 1.0 (no correction).
+        return_trajectory: If True, return a list of ``(t, z_t)`` tuples
+            at each step instead of just the final sample. Useful for
+            latent space visualization.
 
     Returns:
-        Generated samples of same shape as noise.
+        If ``return_trajectory=False``: generated samples ``(B, C, ...)``.
+        If ``return_trajectory=True``: list of ``(t_value, z_t_tensor)``
+        tuples from ``t=1`` (noise) to ``t=0`` (data).
     """
     B = noise.shape[0]
     device = noise.device
@@ -43,6 +49,11 @@ def sample_euler(
     t_steps = torch.linspace(1.0, 0.0, n_steps + 1, device=device)
 
     z = noise.clone()
+    trajectory: list[tuple[float, Tensor]] = []
+
+    if return_trajectory:
+        trajectory.append((1.0, z.clone().cpu()))
+
     for i in range(n_steps):
         t_curr = t_steps[i]
         t_next = t_steps[i + 1]
@@ -66,4 +77,9 @@ def sample_euler(
 
         z = z - dt * u / norm_correction
 
+        if return_trajectory:
+            trajectory.append((float(t_next.item()), z.clone().cpu()))
+
+    if return_trajectory:
+        return trajectory
     return z

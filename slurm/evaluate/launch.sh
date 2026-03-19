@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ========================================================================
 DEPENDS_ON=""
 RUN_DIR_ARG=""
+SYNTHSEG_MAX_VOLUMES_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,13 +31,18 @@ while [[ $# -gt 0 ]]; do
             DEPENDS_ON="$2"
             shift 2
             ;;
+        --synthseg-max-volumes)
+            SYNTHSEG_MAX_VOLUMES_ARG="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1" >&2
             echo "Usage: bash slurm/evaluate/launch.sh --run-dir PATH [OPTIONS]" >&2
             echo "" >&2
             echo "Options:" >&2
-            echo "  --run-dir PATH      Results directory to evaluate (required)" >&2
-            echo "  --depends-on ID     Wait for job ID to finish" >&2
+            echo "  --run-dir PATH              Results directory to evaluate (required)" >&2
+            echo "  --depends-on ID             Wait for job ID to finish" >&2
+            echo "  --synthseg-max-volumes N    Limit SynthSeg to first N volumes (default: 100)" >&2
             exit 1
             ;;
     esac
@@ -54,6 +60,7 @@ export CONDA_ENV_NAME="${CONDA_ENV_NAME:-neuromf}"
 export REPO_SRC="${REPO_SRC:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf}"
 export CONFIGS_DIR="${CONFIGS_DIR:-${REPO_SRC}/configs/picasso}"
 export RUN_DIR="${RUN_DIR_ARG}"
+export SYNTHSEG_MAX_VOLUMES="${SYNTHSEG_MAX_VOLUMES_ARG:-100}"
 
 echo "==========================================" >&2
 echo "EVALUATION LAUNCHER" >&2

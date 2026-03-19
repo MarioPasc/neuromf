@@ -118,6 +118,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip SynthSeg morphological evaluation.",
     )
+    parser.add_argument(
+        "--synthseg-max-volumes",
+        type=int,
+        default=None,
+        help="Maximum number of volumes to segment with SynthSeg. "
+        "Limits NIfTI conversion and segmentation to the first N volumes "
+        "per archive. Default: None (process all).",
+    )
     return parser.parse_args()
 
 
@@ -342,6 +350,7 @@ def main() -> None:
                 nn_indices=nn_indices,
                 config=synthseg_config,
                 nfe=nfe,
+                max_volumes=args.synthseg_max_volumes,
             )
             if synthseg_result is not None:
                 morphological_results = synthseg_result

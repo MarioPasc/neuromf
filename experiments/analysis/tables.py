@@ -2,6 +2,11 @@
 
 Produces IEEE TMI-quality tables comparing NeuroiMF against MOTFM and DDPM
 baselines, SynthSeg regional volume statistics, and statistical tests.
+
+Includes both single-model tables (``generate_main_results_table``, using
+hardcoded baselines) and multi-model comparison tables
+(``generate_comparison_results_table``) that use actual computed metrics
+from all models.
 """
 
 from __future__ import annotations
@@ -365,6 +370,306 @@ def generate_statistical_table(
         "\\bottomrule\n"
         "\\end{tabular}}\n"
         "\\end{table}"
+    )
+
+    return header + "\n".join(rows) + "\n" + footer
+
+
+# ---------------------------------------------------------------------------
+# Multi-model comparison tables (use actual computed data, not baselines)
+# ---------------------------------------------------------------------------
+
+
+def _extract_metric_value(
+    metrics_json: dict[str, Any],
+    section: str,
+    key: str,
+    subkey: str = "value",
+) -> float:
+    """Safely extract a metric from the nested JSON structure.
+
+    Args:
+        metrics_json: Parsed metrics JSON for one NFE level.
+        section: Top-level section (``"distributional"``, ``"per_volume"``).
+        key: Metric key (``"fid_3d"``, ``"mmd"``).
+        subkey: Value key (``"value"``, ``"mean"``).
+
+    Returns:
+        Extracted float, or ``nan`` if path doesn't exist.
+    """
+    try:
+        return float(metrics_json[section][key][subkey])
+    except (KeyError, TypeError):
+        return float("nan")
+
+
+def generate_comparison_results_table(
+    all_results: dict[str, Any],
+    nfe_levels: list[int],
+) -> str:
+    """Generate main results table comparing all models with actual data.
+
+    Unlike ``generate_main_results_table`` which uses hardcoded baselines
+    for MOTFM/DDPM, this function reads computed metrics from all models'
+    ``ModelResults.metrics`` dicts.
+
+    Args:
+        all_results: ``{model_name: ModelResults}`` with actual metrics.
+        nfe_levels: NFE values to include.
+
+    Returns:
+        LaTeX ``table*`` string with bold best / underlined second-best.
+    """
+    model_names = list(all_results.keys())
+
+    # Metric definitions: (section, key, subkey, label, lower_is_better, precision)
+    metric_defs = [
+        ("distributional", "fid_3d", "value", "FID-3D $\\downarrow$", True, 2),
+        ("distributional", "mmd", "value", "MMD $\\downarrow$", True, 2),
+        ("distributional", "coverage_k5", "value", "Cov $\\uparrow$", False, 2),
+        ("distributional", "density_k5", "value", "Den $\\uparrow$", False, 2),
+        ("per_volume", "ms_ssim", "mean", "MS-SSIM $\\uparrow$", False, 2),
+        ("per_volume", "psnr_db", "mean", "PSNR $\\uparrow$", False, 1),
+        ("spectral", "hf_energy_ratio", "mean", "HF $\\downarrow$", True, 4),
+    ]
+
+    col_labels = " & ".join(md[3] for md in metric_defs)
+    n_cols = len(metric_defs)
+
+    header = (
+        "\\begin{table*}[t]\n"
+        "\\centering\n"
+        "\\caption{Quantitative comparison of 3D brain MRI synthesis methods. "
+        "Best in \\textbf{bold}, second-best \\underline{underlined}.}\n"
+        "\\label{tab:comparison_results}\n"
+        f"\\begin{{tabular}}{{ll{'c' * n_cols}}}\n"
+        "\\toprule\n"
+        f"Method & NFE & {col_labels} \\\\\n"
+        "\\midrule\n"
+    )
+
+    rows: list[str] = []
+
+    for nfe in nfe_levels:
+        # Collect values for ranking
+        all_vals: dict[int, dict[str, float]] = {}
+        for mi in range(n_cols):
+            all_vals[mi] = {}
+            for model_name, mr in all_results.items():
+                if nfe in mr.metrics:
+                    sec, key, subkey = metric_defs[mi][:3]
+                    val = _extract_metric_value(mr.metrics[nfe], sec, key, subkey)
+                    if not np.isnan(val):
+                        all_vals[mi][model_name] = val
+
+        # Rank per metric
+        ranks: dict[int, dict[str, int]] = {}
+        for mi in range(n_cols):
+            lower_better = metric_defs[mi][4]
+            vals = all_vals[mi]
+            sorted_models = sorted(
+                vals, key=lambda m: vals[m], reverse=not lower_better
+            )
+            ranks[mi] = {m: i for i, m in enumerate(sorted_models)}
+
+        for model_name in model_names:
+            mr = all_results[model_name]
+            if nfe not in mr.metrics:
+                continue
+
+            cells: list[str] = []
+            for mi in range(n_cols):
+                sec, key, subkey, _, _, prec = metric_defs[mi]
+                val = _extract_metric_value(mr.metrics[nfe], sec, key, subkey)
+
+                if np.isnan(val):
+                    cells.append("---")
+                    continue
+
+                # Format with CI from bootstrap if available
+                bs = mr.bootstrap_results.get(key, {}).get(nfe, {})
+                if bs:
+                    cell = _format_metric(
+                        val, bs.get("ci_lower"), bs.get("ci_upper"), prec
+                    )
+                else:
+                    cell = f"{val:.{prec}f}"
+
+                # Bold/underline ranking
+                rank = ranks[mi].get(model_name, 99)
+                if rank == 0:
+                    cell = _bold(cell)
+                elif rank == 1:
+                    cell = _underline(cell)
+
+                cells.append(cell)
+
+            row = f"{model_name} & {nfe} & " + " & ".join(cells) + " \\\\"
+            rows.append(row)
+
+        if nfe != nfe_levels[-1]:
+            rows.append("\\midrule")
+
+    footer = (
+        "\\bottomrule\n"
+        f"\\end{{tabular}}\n"
+        "\\end{table*}"
+    )
+
+    return header + "\n".join(rows) + "\n" + footer
+
+
+def generate_pairwise_statistical_table(
+    paired_results: dict[tuple[str, str], dict[str, dict[int, dict[str, Any]]]],
+    nfe_levels: list[int],
+) -> str:
+    """Generate table of pairwise statistical tests between models.
+
+    Args:
+        paired_results: ``{(model_a, model_b): {metric: {nfe: result_dict}}}``.
+            Each ``result_dict`` has keys: ``delta``, ``ci_lower``,
+            ``ci_upper``, ``p_value``.
+        nfe_levels: NFE values to include.
+
+    Returns:
+        LaTeX table string with delta, CI, p-value, and significance stars.
+    """
+    from experiments.utils.settings import get_significance_stars
+
+    header = (
+        "\\begin{table*}[t]\n"
+        "\\centering\n"
+        "\\caption{Pairwise statistical comparison (paired bootstrap, "
+        "$n=1000$). Holm-Bonferroni corrected $p$-values.}\n"
+        "\\label{tab:pairwise_stats}\n"
+        "\\begin{tabular}{llccccl}\n"
+        "\\toprule\n"
+        "Comparison & NFE & Metric & $\\Delta$ & 95\\% CI & "
+        "$p$-value & Sig. \\\\\n"
+        "\\midrule\n"
+    )
+
+    metric_labels = {
+        "fid_3d": "FID-3D",
+        "mmd": "MMD",
+        "coverage": "Coverage",
+        "density": "Density",
+    }
+
+    rows: list[str] = []
+    for (model_a, model_b), metric_results in paired_results.items():
+        comparison = f"{model_a} vs {model_b}"
+        first_row = True
+
+        for nfe in nfe_levels:
+            for metric_key, metric_label in metric_labels.items():
+                res = metric_results.get(metric_key, {}).get(nfe)
+                if res is None:
+                    continue
+
+                comp_str = comparison if first_row else ""
+                first_row = False
+
+                delta_str = f"{res['delta']:+.2f}"
+                ci_str = f"[{res['ci_lower']:.2f}, {res['ci_upper']:.2f}]"
+                p_str = f"{res['p_value']:.4f}"
+                stars = get_significance_stars(res["p_value"])
+
+                rows.append(
+                    f"{comp_str} & {nfe} & {metric_label} & "
+                    f"{delta_str} & {ci_str} & {p_str} & {stars} \\\\"
+                )
+
+        rows.append("\\midrule")
+
+    # Remove trailing midrule
+    if rows and rows[-1] == "\\midrule":
+        rows[-1] = "\\bottomrule"
+
+    footer = "\\end{tabular}\n\\end{table*}"
+
+    return header + "\n".join(rows) + "\n" + footer
+
+
+def generate_comparison_synthseg_table(
+    all_results: dict[str, Any],
+    nfe: int = 50,
+) -> str:
+    """Generate SynthSeg table comparing regional volumes across all models.
+
+    Args:
+        all_results: ``{model_name: ModelResults}`` with SynthSeg data.
+        nfe: NFE level for generated data.
+
+    Returns:
+        LaTeX table string.
+    """
+    model_names = list(all_results.keys())
+
+    # Build column headers
+    model_cols = " & ".join(f"{m}" for m in model_names)
+    n_model_cols = len(model_names)
+
+    header = (
+        "\\begin{table*}[t]\n"
+        "\\centering\n"
+        f"\\caption{{SynthSeg regional volumes (NFE={nfe}). "
+        "Volumes in mm$^3$ (mean $\\pm$ std).}}\n"
+        "\\label{tab:comparison_synthseg}\n"
+        f"\\begin{{tabular}}{{l{'c' * (n_model_cols + 1)}}}\n"
+        "\\toprule\n"
+        f"Region & Real & {model_cols} \\\\\n"
+        "\\midrule\n"
+    )
+
+    # Find real volumes from first model that has them
+    real_df = None
+    gen_dfs: dict[str, pd.DataFrame | None] = {}
+    for model_name, mr in all_results.items():
+        if real_df is None and mr.synthseg_data.get("real_volumes") is not None:
+            real_df = mr.synthseg_data["real_volumes"]
+        gen_dfs[model_name] = mr.synthseg_data.get(f"gen_volumes_{nfe}")
+
+    if real_df is None:
+        return "% No SynthSeg data available\n"
+
+    # Get volume columns
+    skip_cols = {"subject", "total intracranial"}
+    vol_columns = [c for c in real_df.columns if c.lower() not in skip_cols]
+
+    rows: list[str] = []
+    for region in vol_columns[:15]:  # Limit to avoid overly long table
+        real_vals = real_df[region].dropna()
+        real_str = _format_mean_std(
+            float(real_vals.mean()), float(real_vals.std()), precision=0
+        )
+
+        model_strs: list[str] = []
+        for model_name in model_names:
+            gdf = gen_dfs.get(model_name)
+            if gdf is not None and region in gdf.columns:
+                gen_vals = gdf[region].dropna()
+                model_strs.append(
+                    _format_mean_std(
+                        float(gen_vals.mean()),
+                        float(gen_vals.std()),
+                        precision=0,
+                    )
+                )
+            else:
+                model_strs.append("---")
+
+        display_name = region.replace("left ", "L-").replace("right ", "R-")
+        if len(display_name) > 22:
+            display_name = display_name[:19] + "..."
+
+        row_cells = " & ".join(model_strs)
+        rows.append(f"{display_name} & {real_str} & {row_cells} \\\\")
+
+    footer = (
+        "\\bottomrule\n"
+        f"\\end{{tabular}}\n"
+        "\\end{table*}"
     )
 
     return header + "\n".join(rows) + "\n" + footer

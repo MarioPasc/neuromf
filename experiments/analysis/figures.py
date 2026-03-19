@@ -33,11 +33,12 @@ NFE_COLORS: dict[int, str] = {
     50: PAUL_TOL_BRIGHT["green"],
 }
 
-METHOD_STYLES: dict[str, dict[str, Any]] = {
-    "NeuroiMF": {"color": PAUL_TOL_BRIGHT["blue"], "marker": "o", "ls": "-"},
-    "MOTFM": {"color": PAUL_TOL_BRIGHT["red"], "marker": "^", "ls": "--"},
-    "DDPM": {"color": PAUL_TOL_BRIGHT["grey"], "marker": "s", "ls": ":"},
-}
+# Import centralized style registry — extensible for new competitors.
+# get_method_style() auto-assigns fallback colors for unknown models.
+from neuromf.competitors.styles import (
+    DEFAULT_METHOD_STYLES as METHOD_STYLES,
+    get_method_style,
+)
 
 # Bilateral region pairs for SynthSeg analysis
 BILATERAL_REGIONS: list[tuple[str, str, str]] = [

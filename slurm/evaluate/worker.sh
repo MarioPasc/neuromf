@@ -208,14 +208,25 @@ echo "=========================================="
 echo "STAGE 2: METRICS COMPUTATION"
 echo "=========================================="
 
-python -u experiments/cli/compute_metrics.py \
-    --config "${CONFIGS_DIR}/generate.yaml" \
-    --configs-dir "${CONFIGS_DIR}" \
-    --volumes-dir "${GEN_DIR}/volumes" \
-    --real-features-dir "${FEAT_DIR}" \
-    --real-volumes-h5 "${GEN_DIR}/real_test.h5" \
-    --nfe 1 10 50 \
+# Build metrics CLI args
+METRICS_ARGS=(
+    experiments/cli/compute_metrics.py
+    --config "${CONFIGS_DIR}/generate.yaml"
+    --configs-dir "${CONFIGS_DIR}"
+    --volumes-dir "${GEN_DIR}/volumes"
+    --real-features-dir "${FEAT_DIR}"
+    --real-volumes-h5 "${GEN_DIR}/real_test.h5"
+    --nfe 1 10 50
     --output-dir "${METRICS_DIR}"
+)
+
+# Limit SynthSeg to N volumes (default 100) to save compute
+if [ -n "${SYNTHSEG_MAX_VOLUMES:-}" ] && [ "${SYNTHSEG_MAX_VOLUMES}" -gt 0 ] 2>/dev/null; then
+    METRICS_ARGS+=(--synthseg-max-volumes "${SYNTHSEG_MAX_VOLUMES}")
+    echo "SynthSeg limited to ${SYNTHSEG_MAX_VOLUMES} volumes per NFE level."
+fi
+
+python -u "${METRICS_ARGS[@]}"
 
 echo "Metrics computation complete."
 

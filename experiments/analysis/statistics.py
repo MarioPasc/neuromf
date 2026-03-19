@@ -2,7 +2,8 @@
 
 Provides bootstrap CIs for distributional metrics (FID, MMD, coverage,
 density), per-volume CIs from t-distribution, Cohen's d effect sizes,
-KS tests with Bonferroni correction, and regional correlation analysis.
+KS tests with Holm-Bonferroni correction, paired bootstrap tests for
+multi-model comparison, and Friedman tests for per-volume metrics.
 """
 
 from __future__ import annotations
@@ -300,5 +301,209 @@ def compute_wilcoxon_across_nfe(
                     "p_value": 1.0,
                     "stars": "n.s.",
                 })
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Multi-model comparison statistics
+# ---------------------------------------------------------------------------
+
+
+def paired_bootstrap_test(
+    real_feats: Tensor,
+    gen_feats_a: Tensor,
+    gen_feats_b: Tensor,
+    metric_fn: Callable[[Tensor, Tensor], float],
+    n_bootstrap: int = 1000,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Paired bootstrap test for comparing two generative models.
+
+    Resamples the *same* indices from both generated sets so that each
+    bootstrap iteration computes ``metric(real, gen_a[idx]) - metric(real,
+    gen_b[idx])``.  The p-value is the proportion of bootstrap deltas
+    whose sign differs from the point-estimate delta (two-sided).
+
+    Args:
+        real_feats: Real feature vectors ``(N_real, D)``.
+        gen_feats_a: Generated features from model A ``(N_gen, D)``.
+        gen_feats_b: Generated features from model B ``(N_gen, D)``.
+        metric_fn: ``metric_fn(real, gen) -> float``.
+        n_bootstrap: Number of bootstrap iterations.
+        seed: Random seed.
+
+    Returns:
+        Dict with ``delta`` (point estimate A-B), ``ci_lower``,
+        ``ci_upper``, ``p_value``, ``samples`` (array of deltas).
+    """
+    rng = np.random.RandomState(seed)
+    n_gen = min(gen_feats_a.shape[0], gen_feats_b.shape[0])
+
+    point_a = metric_fn(real_feats, gen_feats_a[:n_gen])
+    point_b = metric_fn(real_feats, gen_feats_b[:n_gen])
+    delta_point = point_a - point_b
+
+    deltas = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        idx = rng.randint(0, n_gen, size=n_gen)
+        val_a = metric_fn(real_feats, gen_feats_a[idx])
+        val_b = metric_fn(real_feats, gen_feats_b[idx])
+        deltas[i] = val_a - val_b
+
+    ci_lower, ci_upper = np.percentile(deltas, [2.5, 97.5])
+
+    # Two-sided p-value: proportion of bootstrap deltas that cross zero
+    # If all deltas are zero (identical models), p-value is 1.0
+    if np.all(np.abs(deltas) < 1e-12):
+        p_value = 1.0
+    elif delta_point >= 0:
+        p_value = min(float(np.mean(deltas < 0)) * 2, 1.0)
+    else:
+        p_value = min(float(np.mean(deltas > 0)) * 2, 1.0)
+
+    return {
+        "delta": float(delta_point),
+        "ci_lower": float(ci_lower),
+        "ci_upper": float(ci_upper),
+        "p_value": p_value,
+        "samples": deltas,
+        "mean_a": float(point_a),
+        "mean_b": float(point_b),
+    }
+
+
+def holm_bonferroni_correction(
+    p_values: list[float],
+) -> list[float]:
+    """Holm-Bonferroni step-down correction for multiple comparisons.
+
+    More powerful than Bonferroni while still controlling FWER.
+
+    Args:
+        p_values: List of raw p-values.
+
+    Returns:
+        List of corrected p-values (same order as input).
+    """
+    n = len(p_values)
+    if n == 0:
+        return []
+
+    # Sort indices by p-value
+    sorted_idx = np.argsort(p_values)
+    sorted_p = np.array(p_values)[sorted_idx]
+
+    # Apply Holm step-down
+    corrected = np.empty(n)
+    for i, idx in enumerate(sorted_idx):
+        corrected[idx] = sorted_p[i] * (n - i)
+
+    # Enforce monotonicity: corrected[i] >= corrected[i-1] in sorted order
+    corrected_sorted = corrected[sorted_idx]
+    for i in range(1, n):
+        corrected_sorted[i] = max(corrected_sorted[i], corrected_sorted[i - 1])
+    corrected[sorted_idx] = corrected_sorted
+
+    return [min(float(p), 1.0) for p in corrected]
+
+
+def compute_friedman_test(
+    per_volume_values: dict[str, np.ndarray],
+) -> dict[str, Any]:
+    """Friedman test for comparing 3+ models on matched volumes.
+
+    Each array in ``per_volume_values`` must have the same length, with
+    element ``i`` corresponding to the same test volume across all models.
+
+    Args:
+        per_volume_values: ``{model_name: array(n_volumes,)}`` of
+            per-volume metric values (e.g. MS-SSIM).
+
+    Returns:
+        Dict with ``statistic``, ``p_value``, ``n_groups``, ``n_volumes``.
+    """
+    groups = list(per_volume_values.values())
+    names = list(per_volume_values.keys())
+
+    if len(groups) < 3:
+        logger.warning("Friedman test requires >= 3 groups, got %d", len(groups))
+        return {
+            "statistic": float("nan"),
+            "p_value": float("nan"),
+            "n_groups": len(groups),
+            "n_volumes": 0,
+            "model_names": names,
+        }
+
+    # Ensure equal lengths
+    min_n = min(len(g) for g in groups)
+    trimmed = [g[:min_n] for g in groups]
+
+    stat, p_val = stats.friedmanchisquare(*trimmed)
+    return {
+        "statistic": float(stat),
+        "p_value": float(p_val),
+        "n_groups": len(groups),
+        "n_volumes": min_n,
+        "model_names": names,
+    }
+
+
+def compute_nemenyi_posthoc(
+    per_volume_values: dict[str, np.ndarray],
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Nemenyi post-hoc test after significant Friedman test.
+
+    Uses rank-based pairwise comparison with critical difference from
+    Studentized range distribution.
+
+    Args:
+        per_volume_values: ``{model_name: array(n_volumes,)}`` — same
+            format as ``compute_friedman_test()``.
+        alpha: Significance level.
+
+    Returns:
+        DataFrame with columns: model_a, model_b, mean_rank_a, mean_rank_b,
+        rank_diff, cd (critical difference), significant.
+    """
+    from scipy.stats import rankdata
+
+    names = list(per_volume_values.keys())
+    groups = list(per_volume_values.values())
+    k = len(groups)
+    min_n = min(len(g) for g in groups)
+    trimmed = np.column_stack([g[:min_n] for g in groups])
+
+    # Compute ranks per row (volume)
+    ranks = np.apply_along_axis(rankdata, 1, trimmed)
+    mean_ranks = ranks.mean(axis=0)
+
+    # Critical difference (Nemenyi): CD = q_alpha * sqrt(k*(k+1) / (6*n))
+    q_alpha_table = {
+        (3, 0.05): 2.343,
+        (3, 0.01): 2.912,
+        (4, 0.05): 2.569,
+        (4, 0.01): 3.113,
+        (5, 0.05): 2.728,
+        (5, 0.01): 3.255,
+    }
+    q_alpha = q_alpha_table.get((k, alpha), 2.343)
+    cd = q_alpha * np.sqrt(k * (k + 1) / (6 * min_n))
+
+    rows: list[dict[str, Any]] = []
+    for i in range(k):
+        for j in range(i + 1, k):
+            rank_diff = abs(mean_ranks[i] - mean_ranks[j])
+            rows.append({
+                "model_a": names[i],
+                "model_b": names[j],
+                "mean_rank_a": float(mean_ranks[i]),
+                "mean_rank_b": float(mean_ranks[j]),
+                "rank_diff": float(rank_diff),
+                "cd": float(cd),
+                "significant": rank_diff > cd,
+            })
 
     return pd.DataFrame(rows)

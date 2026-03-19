@@ -2,12 +2,16 @@
 
 Loads feature caches, metrics JSONs, SynthSeg CSVs, and decoded volumes
 from the Phase 5 evaluation results directory.
+
+Supports both single-model analysis (``load_features``, ``load_metrics_jsons``)
+and multi-model comparison (``ModelResults``, ``load_multi_model_results``).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,20 +26,26 @@ from neuromf.metrics.feature_extractor import FeatureExtractor
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Baseline metrics from Yazdani et al. (MOTFM, MICCAI 2025)
+# Paper-reported baseline metrics (used by single-model analysis only).
+# For new competitors, add an entry to COMPETITOR_BASELINES.
 # ---------------------------------------------------------------------------
 
-MOTFM_BASELINES: dict[int, dict[str, float]] = {
-    1: {"fid_3d": 32.10, "ms_ssim": 0.66, "mmd": 0.51},
-    10: {"fid_3d": 9.27, "ms_ssim": 0.77, "mmd": 0.25},
-    50: {"fid_3d": 7.93, "ms_ssim": 0.77, "mmd": 0.22},
+COMPETITOR_BASELINES: dict[str, dict[int, dict[str, float]]] = {
+    "MOTFM": {
+        1: {"fid_3d": 32.10, "ms_ssim": 0.66, "mmd": 0.51},
+        10: {"fid_3d": 9.27, "ms_ssim": 0.77, "mmd": 0.25},
+        50: {"fid_3d": 7.93, "ms_ssim": 0.77, "mmd": 0.22},
+    },
+    "DDPM": {
+        1: {"fid_3d": 146.47, "ms_ssim": 0.06, "mmd": 39.80},
+        10: {"fid_3d": 51.68, "ms_ssim": 0.51, "mmd": 26.10},
+        50: {"fid_3d": 29.67, "ms_ssim": 0.59, "mmd": 4.28},
+    },
 }
 
-DDPM_BASELINES: dict[int, dict[str, float]] = {
-    1: {"fid_3d": 146.47, "ms_ssim": 0.06, "mmd": 39.80},
-    10: {"fid_3d": 51.68, "ms_ssim": 0.51, "mmd": 26.10},
-    50: {"fid_3d": 29.67, "ms_ssim": 0.59, "mmd": 4.28},
-}
+# Backward-compatible aliases
+MOTFM_BASELINES = COMPETITOR_BASELINES["MOTFM"]
+DDPM_BASELINES = COMPETITOR_BASELINES["DDPM"]
 
 
 def load_features(
@@ -262,3 +272,113 @@ def load_synthseg_labels(
             labels[f"gen_{nfe}"] = gen_list
 
     return labels if labels else None
+
+
+# ---------------------------------------------------------------------------
+# Multi-model comparison data structures and loaders
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ModelResults:
+    """Container for a single model's evaluation results.
+
+    Bundles all data needed by the comparison pipeline so that callers
+    don't need to thread 5+ separate dicts through every function.
+
+    Args:
+        name: Display name (e.g. ``"NeuroiMF"``, ``"MOTFM"``, ``"DDPM"``).
+        results_dir: Root directory for this model's evaluation outputs.
+        metrics: ``{nfe: parsed_metrics_json}`` from ``load_metrics_jsons()``.
+        features: ``{"real": Tensor, "gen_1": Tensor, ...}`` from
+            ``load_features()``.
+        synthseg_data: Dict from ``load_synthseg_data()``.
+        bootstrap_results: ``{metric_name: {nfe: bootstrap_dict}}``.
+            Populated later by the comparison pipeline.
+    """
+
+    name: str
+    results_dir: Path
+    metrics: dict[int, dict[str, Any]] = field(default_factory=dict)
+    features: dict[str, Tensor] = field(default_factory=dict)
+    synthseg_data: dict[str, Any] = field(default_factory=dict)
+    bootstrap_results: dict[str, dict[int, dict]] = field(default_factory=dict)
+
+
+def load_multi_model_results(
+    model_dirs: dict[str, Path],
+    nfe_levels: list[int],
+    *,
+    load_features_flag: bool = True,
+    load_synthseg_flag: bool = True,
+) -> dict[str, ModelResults]:
+    """Load evaluation data from multiple model result directories.
+
+    Real features are loaded once (from the first model that has them)
+    and shared across all ``ModelResults`` to avoid redundant I/O.
+
+    Args:
+        model_dirs: Mapping of model name to its results directory, e.g.
+            ``{"NeuroiMF": Path(...), "MOTFM": Path(...), "DDPM": Path(...)}``.
+        nfe_levels: NFE values to load (e.g. ``[1, 10, 50]``).
+        load_features_flag: Whether to load R3D-18 feature caches.
+        load_synthseg_flag: Whether to load SynthSeg CSV data.
+
+    Returns:
+        Dict mapping model name to populated ``ModelResults``.
+    """
+    all_results: dict[str, ModelResults] = {}
+    shared_real_feats: Tensor | None = None
+
+    for model_name, results_dir in model_dirs.items():
+        results_dir = Path(results_dir)
+        logger.info("Loading data for %s from %s", model_name, results_dir)
+
+        # Metrics JSONs (required)
+        metrics = load_metrics_jsons(results_dir, nfe_levels)
+        if not metrics:
+            logger.warning(
+                "No metrics found for %s at %s — skipping",
+                model_name, results_dir,
+            )
+
+        # Features (optional)
+        features: dict[str, Tensor] = {}
+        if load_features_flag:
+            features = load_features(results_dir, nfe_levels)
+            # Share real features across models
+            if "real" in features and shared_real_feats is None:
+                shared_real_feats = features["real"]
+                logger.info(
+                    "Shared real features loaded from %s: %s",
+                    model_name, shared_real_feats.shape,
+                )
+            elif shared_real_feats is not None and "real" not in features:
+                features["real"] = shared_real_feats
+
+        # SynthSeg data (optional)
+        synthseg_data: dict[str, Any] = {}
+        if load_synthseg_flag:
+            synthseg_data = load_synthseg_data(results_dir, nfe_levels)
+
+        all_results[model_name] = ModelResults(
+            name=model_name,
+            results_dir=results_dir,
+            metrics=metrics,
+            features=features,
+            synthseg_data=synthseg_data,
+        )
+
+    # Backfill shared real features for models that loaded them independently
+    if shared_real_feats is not None:
+        for mr in all_results.values():
+            if "real" not in mr.features and load_features_flag:
+                mr.features["real"] = shared_real_feats
+
+    n_models = len(all_results)
+    n_with_metrics = sum(1 for mr in all_results.values() if mr.metrics)
+    logger.info(
+        "Loaded %d models (%d with metrics): %s",
+        n_models, n_with_metrics, list(all_results.keys()),
+    )
+
+    return all_results
