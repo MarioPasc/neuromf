@@ -219,7 +219,7 @@ class LatentMeanFlow(pl.LightningModule):
             alpha = min(1.0, progress / max(self._pg_warmup_frac, 1e-8))
             eff_dp = self._pg_init_dp + alpha * (self._pg_final_dp - self._pg_init_dp)
             eff_max_gap = self._pg_init_gap + alpha * (self._pg_final_gap - self._pg_init_gap)
-            boundary_frac = 0.0  # subsumed by curriculum
+            boundary_frac = self._ts_boundary_fraction  # coexist with curriculum
         else:
             eff_dp = self._ts_data_proportion
             eff_max_gap = None

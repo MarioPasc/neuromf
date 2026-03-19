@@ -5,7 +5,7 @@
 #   - x-prediction + exact JVP (stable; u-pred + FD-JVP diverges)
 #   - (t, h) conditioning (MF Table 1c: FID 61.06 vs h-only 63.13)
 #   - v-head with 2 ResBlocks (tangent supervision + extra gradient signal)
-#   - L2 loss (p=2) with adaptive weighting (norm_p=1, norm_eps=1)
+#   - L2 loss (p=2) with adaptive weighting (norm_p=1.0, norm_eps=1)
 #
 # Picasso overlay overrides hardware settings (GPUs, batch, workers, augmentation).
 # Ablation overlays override only what they test (inheriting everything else).
@@ -43,7 +43,7 @@ unet:
     rflow_checkpoint_path: null        # path to diff_unet_3d_rflow-mr.pt (null = disabled)
     slice_time_emb_proj: true          # slice rflow time_emb_proj[:, :256] for our 256-dim
     reinit_output_conv: false          # re-init output conv (rflow predicts velocity, we use x-pred)
-    backbone_lr_factor: 0.1            # LR multiplier for pretrained params
+    backbone_lr_factor: 1.0            # uniform LR (no differential; only used with rflow_transfer)
 
 # Training
 training:
@@ -54,8 +54,8 @@ training:
   betas: [0.9, 0.95]            # reference: adam_beta2=0.95
   max_epochs: 3000              # v2: 4.3× v1 budget → ~126K optimizer steps
   warmup_steps: 1000            # v2: linear warmup (addresses 90% grad clipping at epoch 0)
-  lr_schedule: constant           # "constant" | "cosine" | "linear"
-  gradient_clip_norm: 1.0
+  lr_schedule: cosine              # cosine annealing (v1 proven; constant caused no fine-tuning)
+  gradient_clip_norm: 5.0          # v1 used 1.0 but 90% clipping at epoch 0; allow more gradient flow
   gradient_checkpointing: false  # must be false for exact JVP
   mixed_precision: bf16
   log_every_n_steps: 50
@@ -90,7 +90,7 @@ meanflow:
   jvp_strategy: exact             # exact JVP via torch.func.jvp
   fd_step_size: 1.0e-3
   channel_weights: null
-  norm_p: 0.5                     # adaptive weight exponent (0.5 = stronger gradient signal)
+  norm_p: 1.0                     # adaptive weight exponent (v2's 0.5 caused 100% grad clipping)
   spatial_mask_ratio: 0.0         # Phase C (0.0=off)
   use_v_head: true                # must match unet.use_v_head
 
@@ -113,10 +113,10 @@ time_sampling:
   sigma: 1.0
   t_min: 0.001
   data_proportion: 0.5           # match iMF reference: 50% FM, 50% MF
-  boundary_fraction: 0.0         # v3: disabled, subsumed by progressive gap curriculum
-  boundary_delta: 0.05           # boundary width (unused when boundary_fraction=0)
-  progressive_gap:               # v3: progressive gap curriculum (DTD)
-    enabled: true
+  boundary_fraction: 0.1         # inject 10% samples near t~1, r~0 for direct 1-NFE training signal
+  boundary_delta: 0.05           # boundary width: t in [1-delta, 1], r in [0, delta]
+  progressive_gap:               # progressive gap curriculum (test separately)
+    enabled: false
     warmup_fraction: 0.07        # ramp over first 7% of steps (~200 epochs of 3000)
     initial_data_proportion: 0.9 # start FM-heavy (90% r=t)
     final_data_proportion: 0.5   # end at standard 50/50
@@ -180,7 +180,7 @@ evaluation:
   center_slices_ratio: 0.6         # only used in 2d5 mode
   fid_weights_path: ""             # RadImageNet ResNet-50 (2d5 mode)
   fid_3d_weights_path: ""          # Deprecated (R3D-18 uses torchvision built-in weights)
-  early_stop_patience: 15          # 15 FID evals × 10 val_every = 150 training epochs; model peaks ~200
+  early_stop_patience: 30          # 30 FID evals × 10 val_every = 300 training epochs; generous for 3000-epoch budget
   seed: 42
 
 # Diagnostics

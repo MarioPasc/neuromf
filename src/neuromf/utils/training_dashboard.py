@@ -72,6 +72,7 @@ def _safe_get(entry: dict[str, Any], *keys: str) -> float | None:
 def plot_training_dashboard(
     training_summary_path: str | Path,
     output_dir: str | Path,
+    eval_summary_path: str | Path | None = None,
 ) -> Path:
     """Generate a 3x3 training performance dashboard.
 
@@ -79,6 +80,9 @@ def plot_training_dashboard(
         training_summary_path: Path to ``training_summary.json`` (list of
             per-epoch dicts).
         output_dir: Directory to save the output figure.
+        eval_summary_path: Optional path to ``eval_summary.json`` (contains
+            FID-3D entries when ``fid_mode="3d"``). If ``None``, auto-discovers
+            at ``{diagnostics_dir}/eval_cache/eval_summary.json``.
 
     Returns:
         Path to the saved PNG file.
@@ -96,6 +100,27 @@ def plot_training_dashboard(
         logger.warning("Empty training_summary.json; skipping dashboard.")
         return output_dir / "training_dashboard.png"
 
+    # Auto-discover eval_summary.json for FID-3D data
+    if eval_summary_path is None:
+        candidate = (
+            training_summary_path.parent.parent / "eval_cache" / "eval_summary.json"
+        )
+        if candidate.exists():
+            eval_summary_path = candidate
+            logger.info("Auto-discovered eval_summary at %s", candidate)
+
+    fid_3d_data: list[tuple[int, float]] = []
+    if eval_summary_path is not None:
+        eval_path = Path(eval_summary_path)
+        if eval_path.exists():
+            with open(eval_path) as f:
+                eval_data: dict[str, Any] = json.load(f)
+            fid_3d_data = [
+                (e["train_epoch"], e["fid_3d"])
+                for e in eval_data.get("per_epoch", [])
+                if "fid_3d" in e
+            ]
+
     epochs = [d["epoch"] for d in data]
 
     fig, axes = plt.subplots(3, 3, figsize=(14, 10))
@@ -103,22 +128,44 @@ def plot_training_dashboard(
 
     # ── (a) FID ──────────────────────────────────────────────────────────
     ax = axes[0, 0]
-    fid_avg = [(d["epoch"], d["val_fid_avg"]) for d in data if "val_fid_avg" in d]
-    fid_xy = [(d["epoch"], d["val_fid_xy"]) for d in data if "val_fid_xy" in d]
-    fid_yz = [(d["epoch"], d["val_fid_yz"]) for d in data if "val_fid_yz" in d]
-    fid_zx = [(d["epoch"], d["val_fid_zx"]) for d in data if "val_fid_zx" in d]
 
-    if fid_avg:
-        ep_fid, v_fid = zip(*fid_avg)
-        ax.plot(ep_fid, v_fid, color=_COLORS["blue"], linewidth=1.5, label="Avg")
-    if fid_xy:
-        ax.plot(*zip(*fid_xy), color=_COLORS["cyan"], linewidth=0.8, alpha=0.6, label="XY")
-    if fid_yz:
-        ax.plot(*zip(*fid_yz), color=_COLORS["green"], linewidth=0.8, alpha=0.6, label="YZ")
-    if fid_zx:
-        ax.plot(*zip(*fid_zx), color=_COLORS["yellow"], linewidth=0.8, alpha=0.6, label="ZX")
-    ax.set_ylabel("FID")
-    ax.set_title("(a) FID (2.5D)")
+    if fid_3d_data:
+        # FID-3D mode: single line with best-point annotation
+        ep_fid, v_fid = zip(*fid_3d_data)
+        ax.plot(ep_fid, v_fid, color=_COLORS["blue"], linewidth=1.5, label="FID-3D")
+        best_idx = int(min(range(len(v_fid)), key=lambda i: v_fid[i]))
+        best_ep, best_fid = ep_fid[best_idx], v_fid[best_idx]
+        ax.plot(best_ep, best_fid, marker="*", color=_COLORS["red"],
+                markersize=12, zorder=5)
+        ax.annotate(
+            f"Best: {best_fid:.1f} (ep {best_ep})",
+            xy=(best_ep, best_fid),
+            xytext=(10, 10),
+            textcoords="offset points",
+            fontsize=7,
+            color=_COLORS["red"],
+        )
+        ax.set_ylabel("FID-3D")
+        ax.set_title("(a) FID-3D (R3D-18)")
+    else:
+        # Fallback: 2.5D FID from training_summary
+        fid_avg = [(d["epoch"], d["val_fid_avg"]) for d in data if "val_fid_avg" in d]
+        fid_xy = [(d["epoch"], d["val_fid_xy"]) for d in data if "val_fid_xy" in d]
+        fid_yz = [(d["epoch"], d["val_fid_yz"]) for d in data if "val_fid_yz" in d]
+        fid_zx = [(d["epoch"], d["val_fid_zx"]) for d in data if "val_fid_zx" in d]
+
+        if fid_avg:
+            ep_fid, v_fid = zip(*fid_avg)
+            ax.plot(ep_fid, v_fid, color=_COLORS["blue"], linewidth=1.5, label="Avg")
+        if fid_xy:
+            ax.plot(*zip(*fid_xy), color=_COLORS["cyan"], linewidth=0.8, alpha=0.6, label="XY")
+        if fid_yz:
+            ax.plot(*zip(*fid_yz), color=_COLORS["green"], linewidth=0.8, alpha=0.6, label="YZ")
+        if fid_zx:
+            ax.plot(*zip(*fid_zx), color=_COLORS["yellow"], linewidth=0.8, alpha=0.6, label="ZX")
+        ax.set_ylabel("FID")
+        ax.set_title("(a) FID (2.5D)")
+
     ax.legend(ncol=2, loc="upper right")
     ax.grid(True, alpha=0.3)
 
