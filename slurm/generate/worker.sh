@@ -20,6 +20,8 @@
 # Expected env vars (exported by launch.sh):
 #   REPO_SRC, CONFIGS_DIR, RUN_DIR, RESULTS_DST, CONDA_ENV_NAME
 #   GEN_N_SAMPLES (optional override)
+#   CKPT_PATH (optional — checkpoint path override)
+#   ENHANCEMENT_FLAGS (optional — e.g. "--norm-correction 1.65 --auto-calibrate --variance-rescale --comparison")
 # =============================================================================
 
 set -euo pipefail
@@ -73,8 +75,8 @@ echo "=========================================="
 
 cd "${REPO_SRC}"
 
-# Verify checkpoint
-CKPT_PATH="${RESULTS_DST}/ablations/xpred_exact_jvp/checkpoints/best_raw_epoch=589_train/raw_loss=1295477.5000.ckpt"
+# Verify checkpoint (env var override or default)
+CKPT_PATH="${CKPT_PATH:-${RESULTS_DST}/ablations/xpred_exact_jvp/checkpoints/best_raw_epoch=589_train/raw_loss=1295477.5000.ckpt}"
 if [ -f "${CKPT_PATH}" ]; then
     echo "[OK]   Checkpoint: ${CKPT_PATH}"
 else
@@ -119,7 +121,8 @@ python experiments/cli/generate_latents.py \
     --nfe 1 2 5 10 25 50 \
     --n-samples "${N_SAMPLES}" \
     --batch-size 8 \
-    --output-dir "${GEN_DIR}"
+    --output-dir "${GEN_DIR}" \
+    ${ENHANCEMENT_FLAGS:-}
 
 echo "Stage 1 complete."
 
@@ -147,12 +150,30 @@ echo "=========================================="
 echo "STAGE 3: DECODING VOLUMES"
 echo "=========================================="
 
-python experiments/cli/decode_volumes.py \
-    --config "${CONFIGS_DIR}/generate.yaml" \
-    --configs-dir "${CONFIGS_DIR}" \
-    --nfe 1 10 50 \
-    --latent-dir "${GEN_DIR}/latents" \
-    --output-dir "${GEN_DIR}/volumes"
+# Decode from comparison dirs if they exist, otherwise standard latents/
+if [ -d "${GEN_DIR}/latents_baseline" ] && [ -d "${GEN_DIR}/latents_enhanced" ]; then
+    echo "Comparison mode detected — decoding both baseline and enhanced"
+    python experiments/cli/decode_volumes.py \
+        --config "${CONFIGS_DIR}/generate.yaml" \
+        --configs-dir "${CONFIGS_DIR}" \
+        --nfe 1 10 50 \
+        --latent-dir "${GEN_DIR}/latents_baseline" \
+        --output-dir "${GEN_DIR}/volumes_baseline"
+
+    python experiments/cli/decode_volumes.py \
+        --config "${CONFIGS_DIR}/generate.yaml" \
+        --configs-dir "${CONFIGS_DIR}" \
+        --nfe 1 10 50 \
+        --latent-dir "${GEN_DIR}/latents_enhanced" \
+        --output-dir "${GEN_DIR}/volumes_enhanced"
+else
+    python experiments/cli/decode_volumes.py \
+        --config "${CONFIGS_DIR}/generate.yaml" \
+        --configs-dir "${CONFIGS_DIR}" \
+        --nfe 1 10 50 \
+        --latent-dir "${GEN_DIR}/latents" \
+        --output-dir "${GEN_DIR}/volumes"
+fi
 
 echo "Stage 3 complete."
 
@@ -180,25 +201,51 @@ echo "=========================================="
 echo "OUTPUT VERIFICATION"
 echo "=========================================="
 
-for nfe in 1 2 5 10 25 50; do
-    f="${GEN_DIR}/latents/nfe_$(printf '%03d' $nfe).h5"
-    if [ -f "$f" ]; then
-        SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
-        echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (latent, ${SIZE} bytes)"
-    else
-        echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (latent)"
-    fi
-done
-
-for nfe in 1 10 50; do
-    f="${GEN_DIR}/volumes/nfe_$(printf '%03d' $nfe).h5"
-    if [ -f "$f" ]; then
-        SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
-        echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (volume, ${SIZE} bytes)"
-    else
-        echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (volume)"
-    fi
-done
+# Check latent archives (comparison or standard)
+if [ -d "${GEN_DIR}/latents_baseline" ] && [ -d "${GEN_DIR}/latents_enhanced" ]; then
+    for mode in baseline enhanced; do
+        echo "--- ${mode} ---"
+        for nfe in 1 2 5 10 25 50; do
+            f="${GEN_DIR}/latents_${mode}/nfe_$(printf '%03d' $nfe).h5"
+            if [ -f "$f" ]; then
+                SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+                echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (latent ${mode}, ${SIZE} bytes)"
+            else
+                echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (latent ${mode})"
+            fi
+        done
+    done
+    for mode in baseline enhanced; do
+        for nfe in 1 10 50; do
+            f="${GEN_DIR}/volumes_${mode}/nfe_$(printf '%03d' $nfe).h5"
+            if [ -f "$f" ]; then
+                SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+                echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (volume ${mode}, ${SIZE} bytes)"
+            else
+                echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (volume ${mode})"
+            fi
+        done
+    done
+else
+    for nfe in 1 2 5 10 25 50; do
+        f="${GEN_DIR}/latents/nfe_$(printf '%03d' $nfe).h5"
+        if [ -f "$f" ]; then
+            SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+            echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (latent, ${SIZE} bytes)"
+        else
+            echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (latent)"
+        fi
+    done
+    for nfe in 1 10 50; do
+        f="${GEN_DIR}/volumes/nfe_$(printf '%03d' $nfe).h5"
+        if [ -f "$f" ]; then
+            SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+            echo "[OK]   nfe_$(printf '%03d' $nfe).h5 (volume, ${SIZE} bytes)"
+        else
+            echo "[MISS] nfe_$(printf '%03d' $nfe).h5 (volume)"
+        fi
+    done
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

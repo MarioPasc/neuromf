@@ -9,6 +9,9 @@
 #   bash slurm/generate/launch.sh --run-dir /path/to/NeuroiMF_01032026
 #   bash slurm/generate/launch.sh --run-dir /path/to/run --n-samples 500
 #   bash slurm/generate/launch.sh --run-dir /path/to/run --depends-on 12345
+#   bash slurm/generate/launch.sh --run-dir /path/to/run \
+#       --checkpoint /path/to/best.ckpt \
+#       --norm-correction 1.65 --auto-calibrate --variance-rescale --comparison
 # =============================================================================
 
 set -euo pipefail
@@ -21,6 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPENDS_ON=""
 N_SAMPLES=""
 RUN_DIR_ARG=""
+CHECKPOINT_ARG=""
+ENHANCEMENT_PARTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -36,14 +41,43 @@ while [[ $# -gt 0 ]]; do
             DEPENDS_ON="$2"
             shift 2
             ;;
+        --checkpoint)
+            CHECKPOINT_ARG="$2"
+            shift 2
+            ;;
+        --norm-correction)
+            ENHANCEMENT_PARTS+=("--norm-correction" "$2")
+            shift 2
+            ;;
+        --sigma-inject)
+            ENHANCEMENT_PARTS+=("--sigma-inject" "$2" "$3" "$4" "$5")
+            shift 5
+            ;;
+        --auto-calibrate)
+            ENHANCEMENT_PARTS+=("--auto-calibrate")
+            shift
+            ;;
+        --variance-rescale)
+            ENHANCEMENT_PARTS+=("--variance-rescale")
+            shift
+            ;;
+        --comparison)
+            ENHANCEMENT_PARTS+=("--comparison")
+            shift
+            ;;
         *)
             echo "Unknown argument: $1" >&2
             echo "Usage: bash slurm/generate/launch.sh --run-dir PATH [OPTIONS]" >&2
             echo "" >&2
             echo "Options:" >&2
-            echo "  --run-dir PATH      Output directory for this run (required)" >&2
-            echo "  --n-samples N       Override number of samples (default: from config)" >&2
-            echo "  --depends-on ID     Wait for job ID to finish" >&2
+            echo "  --run-dir PATH       Output directory for this run (required)" >&2
+            echo "  --n-samples N        Override number of samples (default: from config)" >&2
+            echo "  --depends-on ID      Wait for job ID to finish" >&2
+            echo "  --checkpoint PATH    Override checkpoint path" >&2
+            echo "  --norm-correction F  Norm correction gamma (1.0 = no correction)" >&2
+            echo "  --auto-calibrate     Auto-compute sigma_inject from baseline" >&2
+            echo "  --variance-rescale   Enable per-channel variance rescaling" >&2
+            echo "  --comparison         Generate both baseline + enhanced" >&2
             exit 1
             ;;
     esac
@@ -68,6 +102,14 @@ fi
 export EXPERIMENT_NAME="phase_5_gen_neuromf"
 export GEN_N_SAMPLES="${N_SAMPLES}"
 
+# Checkpoint override
+if [ -n "${CHECKPOINT_ARG}" ]; then
+    export CKPT_PATH="${CHECKPOINT_ARG}"
+fi
+
+# Enhancement flags (passed through to generate_latents.py via worker.sh)
+export ENHANCEMENT_FLAGS="${ENHANCEMENT_PARTS[*]:-}"
+
 echo "==========================================" >&2
 echo "NEUROMF GENERATION LAUNCHER" >&2
 echo "==========================================" >&2
@@ -75,6 +117,12 @@ echo "Time: $(date)" >&2
 echo "Run directory: ${RUN_DIR}" >&2
 if [ -n "${N_SAMPLES}" ]; then
     echo "n_samples:     ${N_SAMPLES} (override)" >&2
+fi
+if [ -n "${CHECKPOINT_ARG}" ]; then
+    echo "checkpoint:    ${CHECKPOINT_ARG}" >&2
+fi
+if [ -n "${ENHANCEMENT_FLAGS}" ]; then
+    echo "enhancements:  ${ENHANCEMENT_FLAGS}" >&2
 fi
 echo "" >&2
 

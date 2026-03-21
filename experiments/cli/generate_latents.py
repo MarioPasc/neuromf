@@ -94,6 +94,36 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output directory for latent archives. Overrides config.",
     )
+    # Enhancement flags
+    parser.add_argument(
+        "--norm-correction",
+        type=float,
+        default=None,
+        help="Norm correction gamma (divides velocity). Default: from config or 1.0.",
+    )
+    parser.add_argument(
+        "--sigma-inject",
+        type=float,
+        nargs=4,
+        default=None,
+        metavar=("S0", "S1", "S2", "S3"),
+        help="Per-channel noise injection std (4 values). Overrides auto-calibration.",
+    )
+    parser.add_argument(
+        "--auto-calibrate",
+        action="store_true",
+        help="Auto-compute sigma_inject from NFE=1 vs NFE=50 baseline samples.",
+    )
+    parser.add_argument(
+        "--variance-rescale",
+        action="store_true",
+        help="Enable per-channel variance rescaling to match training data stats.",
+    )
+    parser.add_argument(
+        "--comparison",
+        action="store_true",
+        help="Generate both baseline (no enhancements) and enhanced with same noise.",
+    )
     return parser.parse_args()
 
 
@@ -150,11 +180,13 @@ def _load_checkpoint_and_apply_ema(
 
     # Extract model state dict from Lightning checkpoint
     state_dict = ckpt.get("state_dict", ckpt)
-    # Lightning prefixes keys with "model." — strip it
+    # Lightning prefixes keys with "model." or "net." — strip to match MAISIUNetWrapper
     cleaned = {}
     for k, v in state_dict.items():
         if k.startswith("model."):
             cleaned[k[len("model.") :]] = v
+        elif k.startswith("net."):
+            cleaned[k[len("net.") :]] = v
         else:
             cleaned[k] = v
 
@@ -164,14 +196,148 @@ def _load_checkpoint_and_apply_ema(
     epoch = ckpt.get("epoch", 0)
 
     if use_ema and "ema_state_dict" in ckpt:
-        ema = EMAModel(model)
-        ema.load_state_dict(ckpt["ema_state_dict"])
+        ema_state = ckpt["ema_state_dict"]
+        # Auto-detect multi-EMA vs single-EMA format
+        if "emas" in ema_state:
+            from neuromf.utils.ema import MultiEMAModel
+
+            ema = MultiEMAModel(
+                model, decays=ema_state["decays"], active_index=ema_state.get("active_index", -1)
+            )
+            ema.load_state_dict(ema_state)
+        else:
+            ema = EMAModel(model)
+            ema.load_state_dict(ema_state)
         ema.apply_shadow(model)
         logger.info("Applied EMA shadow weights (decay=%.4f)", ema.decay)
     elif use_ema:
         logger.warning("--use-ema specified but no ema_state_dict in checkpoint")
 
     return epoch
+
+
+def _auto_calibrate_sigma_inject(
+    model: MAISIUNetWrapper,
+    prediction_type: str,
+    device: torch.device,
+    latent_shape: tuple[int, ...],
+    n_cal: int = 50,
+    seed: int = 42,
+    batch_size: int = 8,
+) -> torch.Tensor:
+    """Compute per-channel sigma_inject from NFE=1 vs NFE=50 baseline variance.
+
+    sigma_inject_c = sqrt(max(0, sigma_50_c^2 - sigma_1_c^2))
+
+    Args:
+        model: Trained MeanFlow model.
+        prediction_type: ``"u"`` or ``"x"``.
+        device: Compute device.
+        latent_shape: Per-latent shape (e.g. ``(4, 48, 48, 48)``).
+        n_cal: Number of calibration samples.
+        seed: Random seed for calibration noise.
+        batch_size: Batch size for calibration forward passes.
+
+    Returns:
+        Per-channel sigma_inject tensor of shape ``(C,)``.
+    """
+    from neuromf.sampling.multi_step import sample_euler
+    from neuromf.sampling.one_step import sample_one_step
+
+    logger.info("Auto-calibrating sigma_inject with %d samples...", n_cal)
+    gen = torch.Generator(device="cpu").manual_seed(seed)
+    noise = torch.randn(n_cal, *latent_shape, generator=gen)
+
+    # NFE=1: deterministic 1-step (collapsed variance)
+    samples_1 = []
+    for i in range(0, n_cal, batch_size):
+        b = min(batch_size, n_cal - i)
+        with torch.no_grad():
+            s = sample_one_step(model, noise[i : i + b].to(device), prediction_type)
+        samples_1.append(s.cpu())
+    samples_1 = torch.cat(samples_1)
+
+    # NFE=50: multi-step (full variance)
+    samples_50 = []
+    for i in range(0, n_cal, batch_size):
+        b = min(batch_size, n_cal - i)
+        with torch.no_grad():
+            s = sample_euler(model, noise[i : i + b].to(device), 50, prediction_type)
+        samples_50.append(s.cpu())
+    samples_50 = torch.cat(samples_50)
+
+    # Per-channel std across batch and spatial dims
+    std_1 = samples_1.float().std(dim=(0, 2, 3, 4))
+    std_50 = samples_50.float().std(dim=(0, 2, 3, 4))
+    sigma_inject = torch.sqrt(torch.clamp(std_50**2 - std_1**2, min=0.0))
+
+    logger.info("  NFE=1  per-channel std: %s", [f"{s:.4f}" for s in std_1.tolist()])
+    logger.info("  NFE=50 per-channel std: %s", [f"{s:.4f}" for s in std_50.tolist()])
+    logger.info("  sigma_inject:           %s", [f"{s:.4f}" for s in sigma_inject.tolist()])
+    return sigma_inject
+
+
+def _make_post_process_fn(
+    sigma_inject: torch.Tensor | None,
+    mu_data: torch.Tensor | None,
+    sigma_data: torch.Tensor | None,
+    do_variance_rescale: bool,
+) -> callable | None:
+    """Build a composable post-processing function for enhancements.
+
+    Returns None if no enhancements are active.
+    """
+    from neuromf.sampling.variance_rescaling import stochastic_perturb, variance_rescale
+
+    if sigma_inject is None and not do_variance_rescale:
+        return None
+
+    def post_process(z: torch.Tensor) -> torch.Tensor:
+        if sigma_inject is not None:
+            z = stochastic_perturb(z, sigma_inject.to(z.device))
+        if do_variance_rescale and mu_data is not None and sigma_data is not None:
+            z = variance_rescale(z, mu_data.to(z.device), sigma_data.to(z.device))
+        return z
+
+    return post_process
+
+
+def _generate_for_nfe_levels(
+    generator: LatentGenerator,
+    nfe_levels: list[int],
+    output_dir: Path,
+    n_samples: int,
+    batch_size: int,
+    base_seed: int,
+    latent_stats: dict | None,
+    metadata: dict | None,
+    latent_shape: tuple[int, ...],
+    shared_noise: torch.Tensor,
+    post_process_fn: callable | None = None,
+) -> None:
+    """Generate latents for all NFE levels into output_dir."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for nfe in nfe_levels:
+        out_path = output_dir / f"nfe_{nfe:03d}.h5"
+        if out_path.exists() and _is_archive_complete(out_path):
+            logger.info("Skipping NFE=%d (already complete: %s)", nfe, out_path)
+            continue
+        elif out_path.exists():
+            logger.warning("Incomplete archive for NFE=%d, recreating: %s", nfe, out_path)
+            out_path.unlink()
+
+        generator.generate(
+            n_samples=n_samples,
+            nfe=nfe,
+            output_path=out_path,
+            batch_size=batch_size,
+            base_seed=base_seed,
+            latent_stats=latent_stats,
+            metadata=metadata,
+            latent_shape=latent_shape,
+            shared_noise=shared_noise,
+            post_process_fn=post_process_fn,
+        )
 
 
 def main() -> None:
@@ -195,8 +361,7 @@ def main() -> None:
         logger.error("Checkpoint not found: %s", checkpoint_path)
         sys.exit(1)
 
-    output_dir = Path(args.output_dir or config.paths.generation_dir) / "latents"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    gen_root = Path(args.output_dir or config.paths.generation_dir)
 
     # Load latent stats
     stats_path = Path(config.paths.latent_stats)
@@ -223,31 +388,141 @@ def main() -> None:
         "scale_factor": float(config.vae.scale_factor),
     }
 
-    # Pre-generate shared noise (same z_1 for all NFE levels)
-    generator = LatentGenerator(model, prediction_type, device)
-    shared_noise = generator._pre_generate_noise(n_samples, latent_shape, base_seed)
+    # =========================================================================
+    # Resolve enhancement parameters (CLI > config)
+    # =========================================================================
+    enh_cfg = OmegaConf.to_container(gen_cfg.get("enhancements", {}), resolve=True) or {}
+
+    gamma = args.norm_correction
+    if gamma is None:
+        gamma = float(enh_cfg.get("norm_correction", 1.0))
+
+    do_variance_rescale = args.variance_rescale or bool(
+        enh_cfg.get("variance_rescale", {}).get("enabled", False)
+    )
+
+    comparison_mode = args.comparison or bool(enh_cfg.get("comparison_mode", False))
+
+    # sigma_inject: CLI > config > auto-calibrate
+    sigma_inject = None
+    sp_cfg = enh_cfg.get("stochastic_perturbation", {})
+    do_auto_calibrate = args.auto_calibrate or (
+        bool(sp_cfg.get("enabled", False)) and bool(sp_cfg.get("auto_calibrate", False))
+    )
+
+    if args.sigma_inject is not None:
+        sigma_inject = torch.tensor(args.sigma_inject, dtype=torch.float32)
+        logger.info("Using CLI sigma_inject: %s", sigma_inject.tolist())
+    elif sp_cfg.get("sigma_inject") is not None:
+        sigma_inject = torch.tensor(sp_cfg["sigma_inject"], dtype=torch.float32)
+        logger.info("Using config sigma_inject: %s", sigma_inject.tolist())
+    elif do_auto_calibrate:
+        cal_n = int(sp_cfg.get("calibration_n_samples", 50))
+        sigma_inject = _auto_calibrate_sigma_inject(
+            model,
+            prediction_type,
+            device,
+            latent_shape,
+            n_cal=cal_n,
+            seed=base_seed,
+            batch_size=batch_size,
+        )
+
+    # Determine if any enhancements are active
+    has_enhancements = (gamma != 1.0) or (sigma_inject is not None) or do_variance_rescale
+
+    if has_enhancements:
+        logger.info("=== ENHANCEMENTS ACTIVE ===")
+        logger.info("  norm_correction (gamma): %.4f", gamma)
+        logger.info(
+            "  sigma_inject: %s", sigma_inject.tolist() if sigma_inject is not None else "None"
+        )
+        logger.info("  variance_rescale: %s", do_variance_rescale)
+        logger.info("  comparison_mode: %s", comparison_mode)
+
+    # Extract per-channel data stats for variance rescaling
+    mu_data = None
+    sigma_data = None
+    if do_variance_rescale and latent_stats is not None:
+        per_ch = latent_stats.get("per_channel", {})
+        n_ch = len(per_ch)
+        if n_ch > 0:
+            mu_data = torch.tensor(
+                [per_ch[f"channel_{c}"]["mean"] for c in range(n_ch)],
+                dtype=torch.float32,
+            ).view(1, n_ch, 1, 1, 1)
+            sigma_data = torch.tensor(
+                [per_ch[f"channel_{c}"]["std"] for c in range(n_ch)],
+                dtype=torch.float32,
+            ).view(1, n_ch, 1, 1, 1)
+            logger.info("  mu_data:    %s", [f"{m:.4f}" for m in mu_data.squeeze().tolist()])
+            logger.info("  sigma_data: %s", [f"{s:.4f}" for s in sigma_data.squeeze().tolist()])
+
+    # Build post-process function
+    post_fn = _make_post_process_fn(sigma_inject, mu_data, sigma_data, do_variance_rescale)
+
+    # =========================================================================
+    # Pre-generate shared noise (same z_1 for all NFE levels and modes)
+    # =========================================================================
+    tmp_gen = LatentGenerator(model, prediction_type, device)
+    shared_noise = tmp_gen._pre_generate_noise(n_samples, latent_shape, base_seed)
     logger.info("Pre-generated shared noise: %s (seed=%d)", shared_noise.shape, base_seed)
 
-    # Generate for each NFE level with the same noise
-    for nfe in nfe_levels:
-        out_path = output_dir / f"nfe_{nfe:03d}.h5"
-        if out_path.exists() and _is_archive_complete(out_path):
-            logger.info("Skipping NFE=%d (already complete: %s)", nfe, out_path)
-            continue
-        elif out_path.exists():
-            logger.warning("Incomplete archive for NFE=%d, recreating: %s", nfe, out_path)
-            out_path.unlink()
+    # =========================================================================
+    # Generate latents
+    # =========================================================================
+    if comparison_mode and has_enhancements:
+        # --- Baseline: no enhancements ---
+        baseline_dir = gen_root / "latents_baseline"
+        logger.info("=== BASELINE GENERATION (no enhancements) ===")
+        baseline_gen = LatentGenerator(model, prediction_type, device, norm_correction=1.0)
+        _generate_for_nfe_levels(
+            baseline_gen,
+            nfe_levels,
+            baseline_dir,
+            n_samples,
+            batch_size,
+            base_seed,
+            latent_stats,
+            extra_meta,
+            latent_shape,
+            shared_noise,
+            post_process_fn=None,
+        )
 
-        generator.generate(
-            n_samples=n_samples,
-            nfe=nfe,
-            output_path=out_path,
-            batch_size=batch_size,
-            base_seed=base_seed,
-            latent_stats=latent_stats,
-            metadata=extra_meta,
-            latent_shape=latent_shape,
-            shared_noise=shared_noise,
+        # --- Enhanced: all enhancements active ---
+        enhanced_dir = gen_root / "latents_enhanced"
+        logger.info("=== ENHANCED GENERATION (gamma=%.4f) ===", gamma)
+        enhanced_gen = LatentGenerator(model, prediction_type, device, norm_correction=gamma)
+        _generate_for_nfe_levels(
+            enhanced_gen,
+            nfe_levels,
+            enhanced_dir,
+            n_samples,
+            batch_size,
+            base_seed,
+            latent_stats,
+            extra_meta,
+            latent_shape,
+            shared_noise,
+            post_process_fn=post_fn,
+        )
+    else:
+        # Single mode: either baseline or enhanced
+        output_dir = gen_root / "latents"
+        gen = LatentGenerator(model, prediction_type, device, norm_correction=gamma)
+        _generate_for_nfe_levels(
+            gen,
+            nfe_levels,
+            output_dir,
+            n_samples,
+            batch_size,
+            base_seed,
+            latent_stats,
+            extra_meta,
+            latent_shape,
+            shared_noise,
+            post_process_fn=post_fn if has_enhancements else None,
         )
 
     # Write generation manifest
@@ -264,8 +539,16 @@ def main() -> None:
         "scale_factor": float(config.vae.scale_factor),
         "timestamp": datetime.now(tz=UTC).isoformat(),
         "gpu": extra_meta["gpu"],
+        "enhancements": {
+            "norm_correction": gamma,
+            "sigma_inject": sigma_inject.tolist() if sigma_inject is not None else None,
+            "sigma_inject_auto_calibrated": do_auto_calibrate and args.sigma_inject is None,
+            "variance_rescale": do_variance_rescale,
+            "comparison_mode": comparison_mode,
+        },
     }
-    manifest_path = output_dir.parent / "generation_manifest.json"
+    manifest_path = gen_root / "generation_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2))
     logger.info("Manifest saved: %s", manifest_path)
 

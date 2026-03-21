@@ -12,6 +12,19 @@ generation:
   latent_shape: [4, 48, 48, 48]
   volume_shape: [1, 192, 192, 192]
 
+  # Post-hoc sampling enhancements for 1-NFE quality improvement
+  enhancements:
+    norm_correction: 1.0        # Gamma dividing velocity (1.0 = no correction)
+    stochastic_perturbation:
+      enabled: false
+      sigma_inject: null        # Per-channel [s0, s1, s2, s3] or null (auto-calibrate)
+      auto_calibrate: true      # If sigma_inject is null, compute from NFE=1 vs NFE=50
+      calibration_n_samples: 50 # Samples used for auto-calibration
+    variance_rescale:
+      enabled: false            # Match generated stats to training data stats
+    comparison_mode: true       # Generate both baseline + enhanced with same noise
+
+
 features:
   med3d:
     enabled: true

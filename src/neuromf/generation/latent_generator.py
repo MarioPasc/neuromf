@@ -29,6 +29,8 @@ class LatentGenerator:
         model: Trained MeanFlow UNet (EMA weights loaded).
         prediction_type: ``"u"`` or ``"x"`` prediction parameterisation.
         device: CUDA device for generation.
+        norm_correction: Scalar gamma dividing the velocity to compensate
+            for compound velocity norm overshoot. Default 1.0 (no correction).
     """
 
     def __init__(
@@ -36,10 +38,12 @@ class LatentGenerator:
         model: nn.Module,
         prediction_type: str,
         device: torch.device,
+        norm_correction: float = 1.0,
     ) -> None:
         self.model = model
         self.prediction_type = prediction_type
         self.device = device
+        self.norm_correction = norm_correction
 
     def _pre_generate_noise(
         self,
@@ -73,6 +77,7 @@ class LatentGenerator:
         metadata: dict | None = None,
         latent_shape: tuple[int, ...] = (4, 48, 48, 48),
         shared_noise: Tensor | None = None,
+        post_process_fn: Callable[[Tensor], Tensor] | None = None,
     ) -> None:
         """Generate n_samples latents and write to HDF5.
 
@@ -89,6 +94,9 @@ class LatentGenerator:
             shared_noise: Pre-generated noise tensor ``(n_samples, *latent_shape)``.
                 If provided, the same noise is used regardless of NFE level
                 (shared noise protocol for NFE-consistency analysis).
+            post_process_fn: Optional callable applied to each batch of latents
+                after sampling (e.g. stochastic perturbation, variance rescaling).
+                Receives float32 GPU tensor, must return same shape.
         """
         output_path = Path(output_path)
 
@@ -141,9 +149,23 @@ class LatentGenerator:
                     start_event.record()
 
                 if nfe == 1:
-                    latents = sample_one_step(self.model, noise_batch, self.prediction_type)
+                    latents = sample_one_step(
+                        self.model,
+                        noise_batch,
+                        self.prediction_type,
+                        norm_correction=self.norm_correction,
+                    )
                 else:
-                    latents = sample_euler(self.model, noise_batch, nfe, self.prediction_type)
+                    latents = sample_euler(
+                        self.model,
+                        noise_batch,
+                        nfe,
+                        self.prediction_type,
+                        norm_correction=self.norm_correction,
+                    )
+
+                if post_process_fn is not None:
+                    latents = post_process_fn(latents)
 
                 if self.device.type == "cuda":
                     end_event.record()
