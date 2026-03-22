@@ -22,7 +22,7 @@ generation:
       calibration_n_samples: 50 # Samples used for auto-calibration
     variance_rescale:
       enabled: false            # Match generated stats to training data stats
-    comparison_mode: true       # Generate both baseline + enhanced with same noise
+    comparison_mode: false      # Generate both baseline + enhanced with same noise
 
 
 features:

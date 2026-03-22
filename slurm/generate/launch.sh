@@ -96,7 +96,16 @@ if [ -n "${RUN_DIR_ARG}" ]; then
     export RUN_DIR="${RUN_DIR_ARG}"
 else
     RUN_DATE=$(date +%d%m%Y)
-    export RUN_DIR="${RESULTS_DST}/phase_5/NeuroiMF_${RUN_DATE}"
+    export RUN_DIR="${RESULTS_DST}/NeuroMF/runs/run_${RUN_DATE}"
+    echo "WARNING: --run-dir not specified, using default: ${RUN_DIR}" >&2
+fi
+
+# Verify the parent of RUN_DIR is accessible (catches running locally with Picasso defaults)
+RUN_DIR_PARENT="$(dirname "${RUN_DIR}")"
+if [ ! -d "${RUN_DIR_PARENT}" ] && ! mkdir -p "${RUN_DIR_PARENT}" 2>/dev/null; then
+    echo "ERROR: Cannot create run directory parent: ${RUN_DIR_PARENT}" >&2
+    echo "       Are you running on Picasso? If running locally, pass --run-dir /local/path" >&2
+    exit 1
 fi
 
 export EXPERIMENT_NAME="phase_5_gen_neuromf"
@@ -148,7 +157,6 @@ SBATCH_ARGS=(
     --error="${RUN_DIR}/generate_%j.err"
     --export=ALL
 )
-
 if [ -n "${DEPENDS_ON}" ]; then
     SBATCH_ARGS+=(--dependency="afterok:${DEPENDS_ON}")
     echo "Dependency: afterok:${DEPENDS_ON}" >&2

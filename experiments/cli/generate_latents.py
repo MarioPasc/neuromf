@@ -391,7 +391,11 @@ def main() -> None:
     # =========================================================================
     # Resolve enhancement parameters (CLI > config)
     # =========================================================================
-    enh_cfg = OmegaConf.to_container(gen_cfg.get("enhancements", {}), resolve=True) or {}
+    enh_raw = gen_cfg.get("enhancements", None)
+    if enh_raw is not None and hasattr(enh_raw, "_metadata"):
+        enh_cfg = OmegaConf.to_container(enh_raw, resolve=True) or {}
+    else:
+        enh_cfg = dict(enh_raw) if enh_raw else {}
 
     gamma = args.norm_correction
     if gamma is None:
