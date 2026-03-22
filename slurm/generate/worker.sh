@@ -12,16 +12,14 @@
 # =============================================================================
 # NEUROMF GENERATION WORKER
 #
+# All paths are read from the merged config via env vars set by launch.sh.
+# The only required env vars are REPO_SRC, CONFIGS_DIR, RUN_DIR, CONDA_ENV_NAME.
+# Optional: CKPT_PATH, GEN_N_SAMPLES, ENHANCEMENT_FLAGS.
+#
 # Stage 1: Generate latents at all NFE levels (1, 2, 5, 10, 25, 50)
 # Stage 2: Prepare real test volumes (from original NIfTI, no VAE round-trip)
 # Stage 3: Decode volumes at selected NFE levels (1, 10, 50)
 # Stage 4: Visualization sanity-check figures (CPU-only)
-#
-# Expected env vars (exported by launch.sh):
-#   REPO_SRC, CONFIGS_DIR, RUN_DIR, RESULTS_DST, CONDA_ENV_NAME
-#   GEN_N_SAMPLES (optional override)
-#   CKPT_PATH (optional — checkpoint path override)
-#   ENHANCEMENT_FLAGS (optional — e.g. "--norm-correction 1.65 --auto-calibrate --variance-rescale --comparison")
 # =============================================================================
 
 set -euo pipefail
@@ -66,7 +64,7 @@ N_SAMPLES="${GEN_N_SAMPLES:-500}"
 echo "n_samples: ${N_SAMPLES}"
 
 # ========================================================================
-# PRE-FLIGHT CHECKS
+# PRE-FLIGHT CHECKS — read all paths from merged config
 # ========================================================================
 echo ""
 echo "=========================================="
@@ -75,21 +73,46 @@ echo "=========================================="
 
 cd "${REPO_SRC}"
 
-# Verify checkpoint (env var override or default)
-CKPT_PATH="${CKPT_PATH:-${RESULTS_DST}/ablations/xpred_exact_jvp/checkpoints/best_raw_epoch=589_train/raw_loss=1295477.5000.ckpt}"
+# Read checkpoint + latent_stats from merged config (unless overridden via env)
+if [ -z "${CKPT_PATH:-}" ] || [ -z "${STATS_PATH:-}" ]; then
+    echo "Reading paths from config: ${CONFIGS_DIR}/generate.yaml"
+    CONFIG_PATHS=$(python -c "
+import json
+from pathlib import Path
+from neuromf.config import load_merged_config
+cfg = load_merged_config(
+    [Path('${CONFIGS_DIR}/generate.yaml')],
+    configs_dir=Path('${CONFIGS_DIR}'),
+    include_generate=True,
+)
+print(json.dumps({
+    'checkpoint': str(cfg.paths.checkpoint),
+    'latent_stats': str(cfg.paths.latent_stats),
+}))
+")
+    if [ -z "${CKPT_PATH:-}" ]; then
+        CKPT_PATH=$(echo "${CONFIG_PATHS}" | python -c "import sys,json; print(json.load(sys.stdin)['checkpoint'])")
+    fi
+    if [ -z "${STATS_PATH:-}" ]; then
+        STATS_PATH=$(echo "${CONFIG_PATHS}" | python -c "import sys,json; print(json.load(sys.stdin)['latent_stats'])")
+    fi
+fi
+
+# Verify checkpoint
 if [ -f "${CKPT_PATH}" ]; then
     echo "[OK]   Checkpoint: ${CKPT_PATH}"
 else
     echo "[MISS] Checkpoint not found: ${CKPT_PATH}"
+    echo "       Update paths.checkpoint in ${CONFIGS_DIR}/generate.yaml"
     exit 1
 fi
 
 # Verify latent stats
-STATS_PATH="${RESULTS_DST}/latents/latent_stats.json"
 if [ -f "${STATS_PATH}" ]; then
     echo "[OK]   Latent stats: ${STATS_PATH}"
 else
     echo "[MISS] Latent stats not found: ${STATS_PATH}"
+    echo "       Update paths.latent_stats in ${CONFIGS_DIR}/generate.yaml"
     exit 1
 fi
 
