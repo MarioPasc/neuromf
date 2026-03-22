@@ -92,6 +92,6 @@ timing:
 paths:
   checkpoint: ""
   latent_stats: ${paths.results_root}/latents/latent_stats.json
-  generation_dir: ${paths.results_root}/phase_5/generation
-  features_dir: ${paths.results_root}/phase_5/features
-  metrics_dir: ${paths.results_root}/phase_5/metrics
+  generation_dir: ${paths.results_root}/generation
+  features_dir: ${paths.results_root}/features
+  metrics_dir: ${paths.results_root}/metrics
