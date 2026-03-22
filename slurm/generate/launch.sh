@@ -88,8 +88,14 @@ export CONDA_ENV_NAME="${CONDA_ENV_NAME:-neuromf}"
 export REPO_SRC="${REPO_SRC:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf}"
 export CONFIGS_DIR="${CONFIGS_DIR:-${REPO_SRC}/configs/picasso}"
 
+# Resolve Python: prefer neuromf conda env, fall back to system python
+if command -v conda &>/dev/null; then
+    NEUROMF_PYTHON="$(conda run -n "${CONDA_ENV_NAME}" which python 2>/dev/null || echo "")"
+fi
+NEUROMF_PYTHON="${NEUROMF_PYTHON:-python}"
+
 # Read all paths from config in a single Python call
-CONFIG_JSON=$(cd "${REPO_SRC}" && python -c "
+CONFIG_JSON=$(cd "${REPO_SRC}" && "${NEUROMF_PYTHON}" -c "
 import json
 from pathlib import Path
 from neuromf.config import load_merged_config
@@ -103,14 +109,15 @@ print(json.dumps({
     'checkpoint': str(cfg.paths.checkpoint),
     'latent_stats': str(cfg.paths.latent_stats),
 }))
-" 2>/dev/null) || {
+" 2>&1) || {
     echo "ERROR: Failed to read paths from config (${CONFIGS_DIR}/generate.yaml)" >&2
-    echo "       Check that REPO_SRC and CONFIGS_DIR are correct." >&2
+    echo "       Python used: ${NEUROMF_PYTHON}" >&2
+    echo "       Output: ${CONFIG_JSON:-<empty>}" >&2
     exit 1
 }
 
-CFG_GENERATION_DIR=$(echo "${CONFIG_JSON}" | python -c "import sys,json; print(json.load(sys.stdin)['generation_dir'])")
-CFG_CHECKPOINT=$(echo "${CONFIG_JSON}" | python -c "import sys,json; print(json.load(sys.stdin)['checkpoint'])")
+CFG_GENERATION_DIR=$(echo "${CONFIG_JSON}" | "${NEUROMF_PYTHON}" -c "import sys,json; print(json.load(sys.stdin)['generation_dir'])")
+CFG_CHECKPOINT=$(echo "${CONFIG_JSON}" | "${NEUROMF_PYTHON}" -c "import sys,json; print(json.load(sys.stdin)['checkpoint'])")
 
 # Resolve RUN_DIR: CLI > config (generation_dir parent)
 if [ -n "${RUN_DIR_ARG}" ]; then
