@@ -14,7 +14,7 @@ generation:
 
   # Post-hoc sampling enhancements for 1-NFE quality improvement
   enhancements:
-    norm_correction: 1.0        # Gamma dividing velocity (1.0 = no correction)
+    norm_correction: 1.00        # Gamma dividing velocity (1.0 = no correction)
     stochastic_perturbation:
       enabled: false
       sigma_inject: null        # Per-channel [s0, s1, s2, s3] or null (auto-calibrate)
