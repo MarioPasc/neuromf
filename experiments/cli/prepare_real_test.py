@@ -171,6 +171,32 @@ def main() -> None:
         test_split.get("n_subjects", "?"),
     )
 
+    # Resolve source paths: try as-is, then rebase against fomo60k_root
+    fomo60k_root = Path(config.paths.fomo60k_root)
+
+    def _resolve_source_path(raw_path: str) -> Path:
+        """Resolve a manifest source_path to an existing NIfTI file.
+
+        The manifest may store paths from a different base directory.
+        Try the path as-is first; if not found, rebase the relative tail
+        (dataset_name/subject/session/file) onto the config's fomo60k_root.
+        """
+        p = Path(raw_path)
+        if p.exists():
+            return p
+        # Find the dataset prefix (e.g. PT001_OASIS1) and rebase
+        parts = p.parts
+        for i, part in enumerate(parts):
+            if part.startswith("PT"):
+                rebased = fomo60k_root / Path(*parts[i:])
+                if rebased.exists():
+                    return rebased
+                break
+        return p  # return original (will be caught by missing check)
+
+    for entry in test_entries:
+        entry["source_path"] = str(_resolve_source_path(entry["source_path"]))
+
     # Verify source files exist
     missing = [e for e in test_entries if not Path(e["source_path"]).exists()]
     if missing:
@@ -180,6 +206,7 @@ def main() -> None:
             n_test,
             missing[0]["source_path"],
         )
+        logger.error("fomo60k_root: %s", fomo60k_root)
         sys.exit(1)
     logger.info("All %d source NIfTI files verified.", n_test)
 
