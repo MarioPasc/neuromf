@@ -143,6 +143,9 @@ class TrainingDiagnosticsCallback(pl.Callback):
         self._last_curriculum_dp: float = 0.5
         self._last_curriculum_max_gap: float = 1.0
 
+        # α-Flow curriculum state
+        self._last_alpha_flow_alpha: float = 0.0
+
         # Parameter snapshot for relative update norm
         self._param_snapshot: dict[str, torch.Tensor] = {}
 
@@ -335,6 +338,10 @@ class TrainingDiagnosticsCallback(pl.Callback):
             self._last_curriculum_alpha = float(diag["curriculum_alpha"])
             self._last_curriculum_dp = float(diag["effective_data_proportion"])
             self._last_curriculum_max_gap = float(diag["effective_max_gap"])
+
+        # α-Flow curriculum state
+        if "alpha_flow_alpha" in diag:
+            self._last_alpha_flow_alpha = float(diag["alpha_flow_alpha"])
 
         # Accumulate per-channel loss for periodic logging
         if "diag_loss_per_channel" in diag:
@@ -677,6 +684,12 @@ class TrainingDiagnosticsCallback(pl.Callback):
                 "alpha": alpha,
                 "effective_data_proportion": eff_dp,
                 "effective_max_gap": eff_max_gap,
+            }
+
+        # --- α-Flow curriculum state ---
+        if getattr(pl_module, "_use_alpha_flow", False):
+            summary["alpha_flow"] = {
+                "alpha": self._last_alpha_flow_alpha,
             }
 
         # --- Tier 3: Periodic diagnostics ---

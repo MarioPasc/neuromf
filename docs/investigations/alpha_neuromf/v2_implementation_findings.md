@@ -154,24 +154,30 @@ cd /mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf
 pip install -e ".[all]"
 ```
 
-**Step 2: Submit Stage 1 (FM pretraining, ~5 days)**
+**Step 2: Submit FULL pipeline (single command, both stages)**
 ```bash
 cd /mnt/home/users/tic_163_uma/mpascual/fscratch/repos/neuromf
+bash slurm/train_v2/launch.sh both
+```
+
+This submits a chain of 3 SLURM jobs:
+1. **Stage 1** (GPU, ~5 days): FM pretraining with rflow init
+2. **Bridge** (CPU, ~1 min): Finds best FID checkpoint automatically
+3. **Stage 2** (GPU, ~10 days): α-Flow MF fine-tuning from Stage 1 best
+
+No manual intervention needed. Bridge job parses FID values from checkpoint filenames
+and picks the lowest.
+
+**Alternative: Submit stages individually**
+```bash
+# Stage 1 only:
 bash slurm/train_v2/launch.sh stage1
+
+# Stage 2 (manual resume):
+bash slurm/train_v2/launch.sh stage2 --resume /path/to/best_fid.ckpt
 ```
 
-**Step 3: After Stage 1 completes, find best checkpoint**
-```bash
-ls -la /mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/runs/run_*/checkpoints/best_fid_*.ckpt
-```
-
-**Step 4: Submit Stage 2 (α-Flow MF, ~10 days)**
-```bash
-bash slurm/train_v2/launch.sh stage2 \
-  --resume /mnt/home/users/tic_163_uma/mpascual/execs/neuromf/results/runs/run_YYYYMMDD_HHMMSS/checkpoints/best_fid_XXX.ckpt
-```
-
-**Step 5: After Stage 2 completes, calibrate γ**
+**Step 3: After Stage 2 completes, calibrate γ**
 ```bash
 python experiments/cli/calibrate_gamma.py \
   --config configs/train_v2_stage2.yaml configs/picasso/train_v2_stage2.yaml \

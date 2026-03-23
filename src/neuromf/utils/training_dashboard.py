@@ -102,9 +102,7 @@ def plot_training_dashboard(
 
     # Auto-discover eval_summary.json for FID-3D data
     if eval_summary_path is None:
-        candidate = (
-            training_summary_path.parent.parent / "eval_cache" / "eval_summary.json"
-        )
+        candidate = training_summary_path.parent.parent / "eval_cache" / "eval_summary.json"
         if candidate.exists():
             eval_summary_path = candidate
             logger.info("Auto-discovered eval_summary at %s", candidate)
@@ -135,8 +133,7 @@ def plot_training_dashboard(
         ax.plot(ep_fid, v_fid, color=_COLORS["blue"], linewidth=1.5, label="FID-3D")
         best_idx = int(min(range(len(v_fid)), key=lambda i: v_fid[i]))
         best_ep, best_fid = ep_fid[best_idx], v_fid[best_idx]
-        ax.plot(best_ep, best_fid, marker="*", color=_COLORS["red"],
-                markersize=12, zorder=5)
+        ax.plot(best_ep, best_fid, marker="*", color=_COLORS["red"], markersize=12, zorder=5)
         ax.annotate(
             f"Best: {best_fid:.1f} (ep {best_ep})",
             xy=(best_ep, best_fid),
@@ -223,16 +220,29 @@ def plot_training_dashboard(
     ax.set_title("(f) JVP Norm")
     ax.grid(True, alpha=0.3)
 
-    # ── (g) Learning rate ────────────────────────────────────────────────
+    # ── (g) α-Flow schedule (or LR if no alpha data) ────────────────────
     ax = axes[2, 0]
-    lr = [(d["epoch"], d["learning_rate"]) for d in data if "learning_rate" in d]
-    if lr:
-        ax.plot(*zip(*lr), color=_COLORS["purple"], linewidth=1.2)
-    ax.set_yscale("log")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("LR (log)")
-    ax.set_title("(g) Learning Rate")
-    ax.grid(True, alpha=0.3)
+    alpha_vals = [
+        (d["epoch"], d["alpha_flow"]["alpha"])
+        for d in data
+        if "alpha_flow" in d and "alpha" in d["alpha_flow"]
+    ]
+    if alpha_vals:
+        ax.plot(*zip(*alpha_vals), color=_COLORS["purple"], linewidth=1.5)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(r"$\alpha$")
+        ax.set_title(r"(g) $\alpha$-Flow Schedule")
+        ax.set_ylim(-0.05, max(v for _, v in alpha_vals) * 1.1 + 0.05)
+        ax.grid(True, alpha=0.3)
+    else:
+        lr = [(d["epoch"], d["learning_rate"]) for d in data if "learning_rate" in d]
+        if lr:
+            ax.plot(*zip(*lr), color=_COLORS["purple"], linewidth=1.2)
+        ax.set_yscale("log")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("LR (log)")
+        ax.set_title("(g) Learning Rate")
+        ax.grid(True, alpha=0.3)
 
     # ── (h) Grad norm + clip fraction ────────────────────────────────────
     ax = axes[2, 1]
