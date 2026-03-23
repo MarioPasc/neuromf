@@ -117,12 +117,22 @@ parse_sbatch() {
     fi
     rm -f "${STDERR_TMP}"
 
-    # Extract numeric job ID from stdout (sbatch --parsable prints "JOBID" or "JOBID;cluster")
+    # Extract numeric job ID from stdout.
+    # sbatch --parsable prints "JOBID" or "JOBID;cluster".
+    # Picasso's lua wrapper may inject invisible chars (\r, ANSI codes).
+    # Strip everything non-printable, then extract first run of digits.
+    local CLEAN
+    CLEAN=$(echo "${RAW_STDOUT}" | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g' | tr -cd '0-9;\n')
+
     local JOB_ID
-    JOB_ID=$(echo "${RAW_STDOUT}" | grep -oE '^[0-9]+' | head -1)
+    JOB_ID=$(echo "${CLEAN}" | grep -oE '[0-9]+' | head -1)
 
     if [ -z "${JOB_ID}" ]; then
-        echo "ERROR: Could not parse job ID from sbatch output: '${RAW_STDOUT}'" >&2
+        # Debug: show raw bytes
+        echo "ERROR: Could not parse job ID from sbatch output." >&2
+        echo "  Raw stdout: '${RAW_STDOUT}'" >&2
+        echo "  Hex dump:" >&2
+        echo -n "${RAW_STDOUT}" | xxd | head -5 >&2
         echo ""
         return 1
     fi
