@@ -12,6 +12,9 @@
 # =============================================================================
 # EVALUATION WORKER (generic — works for NeuroiMF and MOTFM)
 #
+# Supports both standard mode (volumes/) and comparison mode
+# (volumes_baseline/ + volumes_enhanced/).
+#
 # Stage 1: Extract R3D-18 features (real + generated) — MOTFM protocol
 # Stage 2: Compute metrics (FID, MMD, Coverage, Density, MS-SSIM, PSNR,
 #           spectral, SynthSeg morphological)
@@ -58,7 +61,19 @@ cd "${REPO_SRC}"
 GEN_DIR="${RUN_DIR}/generation"
 FEAT_DIR="${RUN_DIR}/features"
 METRICS_DIR="${RUN_DIR}/metrics"
-SYNTHSEG_DIR="${METRICS_DIR}/synthseg"
+
+# ========================================================================
+# DETECT COMPARISON MODE
+# ========================================================================
+# Same pattern as slurm/generate/worker.sh: if both volumes_baseline/ and
+# volumes_enhanced/ exist, evaluate each variant separately.
+if [ -d "${GEN_DIR}/volumes_baseline" ] && [ -d "${GEN_DIR}/volumes_enhanced" ]; then
+    VARIANTS=("baseline" "enhanced")
+    echo "Comparison mode detected — evaluating both baseline and enhanced variants"
+else
+    VARIANTS=("")
+    echo "Standard mode — evaluating volumes/"
+fi
 
 # ========================================================================
 # PRE-FLIGHT
@@ -68,14 +83,23 @@ echo "=========================================="
 echo "PRE-FLIGHT CHECKS"
 echo "=========================================="
 
-for nfe in 1 10 50; do
-    f="${GEN_DIR}/volumes/nfe_$(printf '%03d' $nfe).h5"
-    if [ -f "$f" ]; then
-        echo "[OK]   $f"
+for VARIANT in "${VARIANTS[@]}"; do
+    if [ -n "${VARIANT}" ]; then
+        VOL_DIR="${GEN_DIR}/volumes_${VARIANT}"
+        echo "--- Variant: ${VARIANT} ---"
     else
-        echo "[MISS] $f — run generate first"
-        exit 1
+        VOL_DIR="${GEN_DIR}/volumes"
     fi
+
+    for nfe in 1 10 50; do
+        f="${VOL_DIR}/nfe_$(printf '%03d' $nfe).h5"
+        if [ -f "$f" ]; then
+            echo "[OK]   $f"
+        else
+            echo "[MISS] $f — run generate first"
+            exit 1
+        fi
+    done
 done
 
 if [ -f "${GEN_DIR}/real_test.h5" ]; then
@@ -86,11 +110,38 @@ else
 fi
 
 # ========================================================================
+# EVALUATE EACH VARIANT
+# ========================================================================
+for VARIANT in "${VARIANTS[@]}"; do
+
+# Resolve paths for this variant.
+# In comparison mode, generated features go into a variant subdirectory
+# (features/baseline/, features/enhanced/) so that compute_metrics.py
+# can find them at the standard name (gen_med3d_nfe{nfe:03d}.h5).
+# Real features (real_med3d.h5) stay in the top-level features/ dir.
+if [ -n "${VARIANT}" ]; then
+    VOL_DIR="${GEN_DIR}/volumes_${VARIANT}"
+    GEN_FEAT_DIR="${FEAT_DIR}/${VARIANT}"
+    VARIANT_METRICS_DIR="${METRICS_DIR}/${VARIANT}"
+    echo ""
+    echo "=========================================="
+    echo "EVALUATING VARIANT: ${VARIANT}"
+    echo "=========================================="
+else
+    VOL_DIR="${GEN_DIR}/volumes"
+    GEN_FEAT_DIR="${FEAT_DIR}"
+    VARIANT_METRICS_DIR="${METRICS_DIR}"
+fi
+
+mkdir -p "${GEN_FEAT_DIR}"
+mkdir -p "${VARIANT_METRICS_DIR}"
+
+# ========================================================================
 # STAGE 1: FEATURE EXTRACTION
 # ========================================================================
 echo ""
 echo "=========================================="
-echo "STAGE 1: FEATURE EXTRACTION"
+echo "STAGE 1: FEATURE EXTRACTION${VARIANT:+ (${VARIANT})}"
 echo "=========================================="
 
 python -u -c "
@@ -143,6 +194,9 @@ with torch.no_grad():
 print(f'  Architecture:    {arch}')
 print(f'  Parameters:      {n_params / 1e6:.2f}M')
 print(f'  Feature dim:     {feature_dim}')
+variant = '${VARIANT}'
+if variant:
+    print(f'  Variant:         {variant}')
 print('--- End Diagnostics ---')
 print()
 
@@ -159,16 +213,19 @@ def log_h5_info(path, label):
     return shape[0]
 
 # -- Extract features --
+vol_dir = Path('${VOL_DIR}')
+gen_feat_dir = Path('${GEN_FEAT_DIR}')
+real_feat_dir = Path('${FEAT_DIR}')
 real_vol = Path('${GEN_DIR}/real_test.h5')
-real_feat = Path('${FEAT_DIR}/real_med3d.h5')
+real_feat = real_feat_dir / 'real_med3d.h5'
 
 print('Input volumes:')
 log_h5_info(real_vol, 'real')
 for nfe in [1, 10, 50]:
-    log_h5_info(Path(f'${GEN_DIR}/volumes/nfe_{nfe:03d}.h5'), f'nfe={nfe}')
+    log_h5_info(vol_dir / f'nfe_{nfe:03d}.h5', f'nfe={nfe}')
 print()
 
-# Real features
+# Real features (shared across variants — extract once, reuse)
 if not real_feat.exists():
     t0 = time.time()
     feats = extractor.extract_and_cache(real_vol, real_feat)
@@ -180,10 +237,11 @@ else:
         cached_backend = f.attrs.get('backend', 'unknown')
     print(f'Real features already cached: {cached_shape}, backend={cached_backend}')
 
-# Generated features for each NFE
+# Generated features for each NFE (standard name in variant subdir)
+gen_feat_dir.mkdir(parents=True, exist_ok=True)
 for nfe in [1, 10, 50]:
-    gen_vol = Path(f'${GEN_DIR}/volumes/nfe_{nfe:03d}.h5')
-    gen_feat = Path(f'${FEAT_DIR}/gen_med3d_nfe{nfe:03d}.h5')
+    gen_vol = vol_dir / f'nfe_{nfe:03d}.h5'
+    gen_feat = gen_feat_dir / f'gen_med3d_nfe{nfe:03d}.h5'
     if gen_vol.exists() and not gen_feat.exists():
         t0 = time.time()
         feats = extractor.extract_and_cache(gen_vol, gen_feat)
@@ -198,14 +256,14 @@ for nfe in [1, 10, 50]:
         print(f'NFE={nfe} volume missing -- skipping.')
 "
 
-echo "Feature extraction complete."
+echo "Feature extraction complete${VARIANT:+ (${VARIANT})}."
 
 # ========================================================================
 # STAGE 2: METRICS COMPUTATION
 # ========================================================================
 echo ""
 echo "=========================================="
-echo "STAGE 2: METRICS COMPUTATION"
+echo "STAGE 2: METRICS COMPUTATION${VARIANT:+ (${VARIANT})}"
 echo "=========================================="
 
 # Build metrics CLI args
@@ -213,11 +271,12 @@ METRICS_ARGS=(
     experiments/cli/compute_metrics.py
     --config "${CONFIGS_DIR}/generate.yaml"
     --configs-dir "${CONFIGS_DIR}"
-    --volumes-dir "${GEN_DIR}/volumes"
+    --volumes-dir "${VOL_DIR}"
     --real-features-dir "${FEAT_DIR}"
+    --gen-features-dir "${GEN_FEAT_DIR}"
     --real-volumes-h5 "${GEN_DIR}/real_test.h5"
     --nfe 1 10 50
-    --output-dir "${METRICS_DIR}"
+    --output-dir "${VARIANT_METRICS_DIR}"
 )
 
 # Limit SynthSeg to N volumes (default 100) to save compute
@@ -228,14 +287,15 @@ fi
 
 python -u "${METRICS_ARGS[@]}"
 
-echo "Metrics computation complete."
+echo "Metrics computation complete${VARIANT:+ (${VARIANT})}."
 
 # ========================================================================
 # NIFTI CONSOLIDATION CHECK
 # ========================================================================
+SYNTHSEG_DIR="${VARIANT_METRICS_DIR}/synthseg"
 echo ""
 echo "=========================================="
-echo "NIFTI -> HDF5 CONSOLIDATION"
+echo "NIFTI -> HDF5 CONSOLIDATION${VARIANT:+ (${VARIANT})}"
 echo "=========================================="
 if [ -d "${SYNTHSEG_DIR}" ]; then
     du -sh "${SYNTHSEG_DIR}/"
@@ -245,6 +305,8 @@ if [ -d "${SYNTHSEG_DIR}" ]; then
     find "${SYNTHSEG_DIR}/" -maxdepth 1 -type d -name "*nifti*" -o -name "*labels*" 2>/dev/null | head -10 || echo "  (none -- all consolidated)"
 fi
 
+done  # END VARIANT LOOP
+
 # ========================================================================
 # POST-FLIGHT
 # ========================================================================
@@ -253,17 +315,36 @@ echo "=========================================="
 echo "OUTPUT VERIFICATION"
 echo "=========================================="
 
+# Check feature files (top-level + variant subdirs)
 for f in "${FEAT_DIR}"/*.h5; do
     if [ -f "$f" ]; then
         SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
         echo "[OK]   $(basename $f) (${SIZE} bytes)"
     fi
 done
-
-for f in "${METRICS_DIR}"/*.json; do
-    if [ -f "$f" ]; then
-        echo "[OK]   $(basename $f)"
+for VARIANT in "${VARIANTS[@]}"; do
+    if [ -n "${VARIANT}" ]; then
+        for f in "${FEAT_DIR}/${VARIANT}"/*.h5; do
+            if [ -f "$f" ]; then
+                SIZE=$(stat -c%s "$f" 2>/dev/null || echo "?")
+                echo "[OK]   ${VARIANT}/$(basename $f) (${SIZE} bytes)"
+            fi
+        done
     fi
+done
+
+# Check metrics in all variant dirs
+for VARIANT in "${VARIANTS[@]}"; do
+    if [ -n "${VARIANT}" ]; then
+        CHECK_DIR="${METRICS_DIR}/${VARIANT}"
+    else
+        CHECK_DIR="${METRICS_DIR}"
+    fi
+    for f in "${CHECK_DIR}"/*.json; do
+        if [ -f "$f" ]; then
+            echo "[OK]   ${VARIANT:+${VARIANT}/}$(basename $f)"
+        fi
+    done
 done
 
 END_TIME=$(date +%s)

@@ -90,7 +90,18 @@ echo "" >&2
 # Create output directories
 mkdir -p "${RUN_DIR}/features"
 mkdir -p "${RUN_DIR}/metrics"
-mkdir -p "${RUN_DIR}/metrics/synthseg"
+
+# Detect comparison mode and create variant directories
+GEN_DIR="${RUN_DIR}/generation"
+if [ -d "${GEN_DIR}/volumes_baseline" ] && [ -d "${GEN_DIR}/volumes_enhanced" ]; then
+    echo "Comparison mode detected — creating variant output dirs" >&2
+    mkdir -p "${RUN_DIR}/features/baseline"
+    mkdir -p "${RUN_DIR}/features/enhanced"
+    mkdir -p "${RUN_DIR}/metrics/baseline"
+    mkdir -p "${RUN_DIR}/metrics/enhanced"
+else
+    mkdir -p "${RUN_DIR}/metrics/synthseg"
+fi
 
 # ========================================================================
 # SUBMIT JOB
