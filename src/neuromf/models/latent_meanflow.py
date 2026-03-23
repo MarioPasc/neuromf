@@ -18,8 +18,9 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
+from neuromf.utils.alpha_scheduler import AlphaScheduler, AlphaSchedulerConfig
 from neuromf.utils.ema import EMAModel
-from neuromf.utils.time_sampler import sample_t_and_r
+from neuromf.utils.time_sampler import sample_alpha_flow, sample_t_and_r
 from neuromf.wrappers.maisi_unet import MAISIUNetConfig, MAISIUNetWrapper
 from neuromf.wrappers.meanflow_loss import MeanFlowPipeline, MeanFlowPipelineConfig
 
@@ -124,6 +125,29 @@ class LatentMeanFlow(pl.LightningModule):
         self._smooth_n_probes = int(smooth_cfg.get("n_probes", 1))
         self._smooth_probe_dist = str(smooth_cfg.get("probe_distribution", "gaussian"))
 
+        # α-Flow curriculum scheduler
+        alpha_cfg = config.get("alpha_flow", {})
+        self._use_alpha_flow = bool(alpha_cfg) and float(alpha_cfg.get("eta", 0.0)) >= 0.0
+        if self._use_alpha_flow:
+            self.alpha_scheduler = AlphaScheduler(
+                AlphaSchedulerConfig(
+                    start_step=int(alpha_cfg.get("start_step", 0)),
+                    end_step=int(alpha_cfg.get("end_step", 100_000)),
+                    gamma=float(alpha_cfg.get("gamma", 25.0)),
+                    eta=float(alpha_cfg.get("eta", 1.0)),
+                    mode=str(alpha_cfg.get("mode", "sigmoid")),
+                )
+            )
+            logger.info(
+                "α-Flow scheduler: start=%d, end=%d, η=%.4f, mode=%s",
+                self.alpha_scheduler.config.start_step,
+                self.alpha_scheduler.config.end_step,
+                self.alpha_scheduler.config.eta,
+                self.alpha_scheduler.config.mode,
+            )
+        else:
+            self.alpha_scheduler = None
+
         # Latent spatial size for sample generation
         self._latent_spatial = int(config.get("latent_spatial_size", 48))
         self._in_channels = int(config.unet.in_channels)
@@ -212,30 +236,50 @@ class LatentMeanFlow(pl.LightningModule):
         B = z_0.shape[0]
         eps = torch.randn_like(z_0)
 
-        # Progressive gap curriculum: ramp data_proportion and max_gap
-        if self._pg_enabled:
+        # --- Time sampling: α-Flow curriculum OR legacy progressive gap ---
+        if self._use_alpha_flow and self.alpha_scheduler is not None:
+            # α-Flow curriculum: alpha controls consistency gap
+            alpha_val = self.alpha_scheduler.get_alpha(self.global_step)
+            t, r = sample_alpha_flow(
+                B,
+                alpha=alpha_val,
+                data_proportion=self._ts_data_proportion,
+                mu=self._ts_mu,
+                sigma=self._ts_sigma,
+                t_min=self._ts_t_min,
+                device=z_0.device,
+            )
+            self.log("train/alpha", alpha_val, on_step=True, prog_bar=True)
+        elif self._pg_enabled:
+            # Legacy progressive gap curriculum: ramp data_proportion and max_gap
             total_steps = max(self.trainer.estimated_stepping_batches, 1)
             progress = self.global_step / total_steps
-            alpha = min(1.0, progress / max(self._pg_warmup_frac, 1e-8))
-            eff_dp = self._pg_init_dp + alpha * (self._pg_final_dp - self._pg_init_dp)
-            eff_max_gap = self._pg_init_gap + alpha * (self._pg_final_gap - self._pg_init_gap)
-            boundary_frac = self._ts_boundary_fraction  # coexist with curriculum
-        else:
-            eff_dp = self._ts_data_proportion
-            eff_max_gap = None
+            pg_alpha = min(1.0, progress / max(self._pg_warmup_frac, 1e-8))
+            eff_dp = self._pg_init_dp + pg_alpha * (self._pg_final_dp - self._pg_init_dp)
+            eff_max_gap = self._pg_init_gap + pg_alpha * (self._pg_final_gap - self._pg_init_gap)
             boundary_frac = self._ts_boundary_fraction
-
-        t, r = sample_t_and_r(
-            B,
-            mu=self._ts_mu,
-            sigma=self._ts_sigma,
-            t_min=self._ts_t_min,
-            data_proportion=eff_dp,
-            boundary_fraction=boundary_frac,
-            boundary_delta=self._ts_boundary_delta,
-            max_gap=eff_max_gap,
-            device=z_0.device,
-        )
+            t, r = sample_t_and_r(
+                B,
+                mu=self._ts_mu,
+                sigma=self._ts_sigma,
+                t_min=self._ts_t_min,
+                data_proportion=eff_dp,
+                boundary_fraction=boundary_frac,
+                boundary_delta=self._ts_boundary_delta,
+                max_gap=eff_max_gap,
+                device=z_0.device,
+            )
+        else:
+            t, r = sample_t_and_r(
+                B,
+                mu=self._ts_mu,
+                sigma=self._ts_sigma,
+                t_min=self._ts_t_min,
+                data_proportion=self._ts_data_proportion,
+                boundary_fraction=self._ts_boundary_fraction,
+                boundary_delta=self._ts_boundary_delta,
+                device=z_0.device,
+            )
 
         result = self.loss_pipeline(
             self.net,
@@ -340,8 +384,8 @@ class LatentMeanFlow(pl.LightningModule):
         self.log("train/min_ema_raw_loss", self._min_ema_raw_loss, sync_dist=True)
 
         # Progressive gap curriculum logging
-        if self._pg_enabled:
-            self.log("train/curriculum_alpha", alpha, sync_dist=True)
+        if self._pg_enabled and not self._use_alpha_flow:
+            self.log("train/curriculum_alpha", pg_alpha, sync_dist=True)
             self.log("train/effective_data_proportion", eff_dp, sync_dist=True)
             self.log("train/effective_max_gap", eff_max_gap, sync_dist=True)
 
@@ -349,8 +393,10 @@ class LatentMeanFlow(pl.LightningModule):
             self._step_diagnostics = result
             self._step_diagnostics["t"] = t.detach()
             self._step_diagnostics["r"] = r.detach()
-            if self._pg_enabled:
-                self._step_diagnostics["curriculum_alpha"] = alpha
+            if self._use_alpha_flow and self.alpha_scheduler is not None:
+                self._step_diagnostics["alpha_flow_alpha"] = alpha_val
+            elif self._pg_enabled:
+                self._step_diagnostics["curriculum_alpha"] = pg_alpha
                 self._step_diagnostics["effective_data_proportion"] = eff_dp
                 self._step_diagnostics["effective_max_gap"] = eff_max_gap
 

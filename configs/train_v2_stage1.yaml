@@ -1,0 +1,172 @@
+# NeuroMF v2 Stage 1: FM Pretraining
+# Purpose: Learn accurate velocity field v(z_t, t) via pure flow matching.
+# Initialisation: MAISI rflow checkpoint (402/430 keys match).
+# All MF gap is zero (alpha=0) — no consistency loss, no JVP overhead.
+
+# Trainer infrastructure
+trainer:
+  devices: 1
+  strategy: auto
+  accelerator: auto
+
+# Model — boundary condition (no v-head)
+unet:
+  spatial_dims: 3
+  in_channels: 4
+  out_channels: 4
+  channels: [64, 128, 256, 512]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: [0, 0, 32, 32]
+  norm_num_groups: 32
+  norm_eps: 1.0e-6
+  resblock_updown: true
+  transformer_num_layers: 1
+  use_flash_attention: false
+  with_conditioning: false
+  prediction_type: x
+  t_min: 0.05
+  gradient_checkpointing: false
+  use_v_head: false                     # v2: boundary condition (no aux v-head)
+  v_head_num_res_blocks: 0
+  conditioning_mode: t_h
+  initialization:
+    method: rflow_transfer              # v2: warm-start from MAISI rflow
+    rflow_checkpoint_path: ${paths.maisi_diffusion_weights}
+    slice_time_emb_proj: true
+    reinit_output_conv: false
+    backbone_lr_factor: 1.0
+
+# Training
+training:
+  batch_size: 24
+  lr: 1.0e-4
+  weight_decay: 0.0                     # v2: no weight decay (iMF default)
+  optimizer: adamw
+  betas: [0.9, 0.95]                    # v2: iMF default (was [0.9, 0.999])
+  max_epochs: 500                       # Stage 1: FM pretraining only
+  warmup_steps: 1000
+  lr_schedule: constant                 # v2: no cosine decay
+  gradient_clip_norm: 5.0
+  gradient_checkpointing: false
+  mixed_precision: bf16
+  log_every_n_steps: 50
+  val_every_n_epochs: 10
+  save_every_n_epochs: 50
+  num_workers: 0
+  prefetch_factor: null
+  split_ratios: [0.85, 0.10, 0.05]
+  split_seed: 42
+  accumulate_grad_batches: 1
+  divergence_grace_steps: 1000
+  augmentation:
+    enabled: false
+
+# MeanFlow loss
+meanflow:
+  p: 2.0
+  adaptive: true
+  norm_eps: 0.01                        # v2: iMF default (was 1.0)
+  lambda_mf: 1.0
+  prediction_type: x
+  t_min: 0.05
+  jvp_strategy: exact
+  fd_step_size: 1.0e-3
+  channel_weights: null
+  norm_p: 0.5                           # v2: less aggressive adaptive weighting
+  spatial_mask_ratio: 0.0
+  use_v_head: false                     # must match unet.use_v_head
+
+# Smoothness regularizer (disabled — no v-head)
+smoothness:
+  enabled: false
+
+# α-Flow curriculum — Stage 1: pure FM (alpha=0 always)
+alpha_flow:
+  start_step: 999999999                 # Never anneal → α=0 always
+  end_step: 999999999
+  gamma: 25.0
+  eta: 0.0                             # α=0: pure FM
+  mode: sigmoid
+
+# Time sampling — 100% FM in Stage 1
+time_sampling:
+  distribution: logit_normal
+  mu: -0.4
+  sigma: 1.0
+  t_min: 0.001
+  data_proportion: 1.0                 # v2 Stage 1: 100% FM (all r=t)
+  boundary_fraction: 0.0               # No boundary sampling in pure FM
+  boundary_delta: 0.05
+  progressive_gap:
+    enabled: false
+
+# EMA — multiple decay rates
+ema:
+  decays: [0.999, 0.9995, 0.9999]
+  active_index: 2
+  decay: 0.9999
+
+# Sampling / logging
+sampling:
+  norm_correction: 1.0
+
+sample_every_n_epochs: 50
+n_samples_per_log: 4
+latent_spatial_size: 48
+
+sample_collector:
+  enabled: true
+  collect_every_n_epochs: 100           # Less frequent in Stage 1
+  n_samples: 2
+  nfe_steps: [1, 2, 5, 10, 50]
+  seed: 42
+
+# VAE config (for post-training decode)
+vae:
+  spatial_dims: 3
+  in_channels: 1
+  out_channels: 1
+  latent_channels: 4
+  num_channels: [64, 128, 256]
+  num_res_blocks: [2, 2, 2]
+  norm_num_groups: 32
+  norm_eps: 1.0e-6
+  attention_levels: [false, false, false]
+  with_encoder_nonlocal_attn: false
+  with_decoder_nonlocal_attn: false
+  use_checkpointing: false
+  use_convtranspose: false
+  norm_float16: false
+  num_splits: 6
+  dim_split: 1
+  scale_factor: 0.96240234375
+  downsample_factor: 4
+
+# Evaluation
+evaluation:
+  enabled: false
+  fid_mode: "2d5"
+  n_swd_samples: 64
+  n_swd_projections: 128
+  n_real_cache: 200
+  n_fid_samples: 100
+  n_fid_real_samples: 200
+  fid_every_n_val_epochs: 1
+  center_slices_ratio: 0.6
+  fid_weights_path: ""
+  fid_3d_weights_path: ""
+  early_stop_patience: 30
+  seed: 42
+
+# Diagnostics
+diagnostics:
+  enabled: false
+  every_n_epochs: 50
+
+# Paths
+paths:
+  checkpoints_dir: ${paths.results_root}/v2_stage1/checkpoints
+  logs_dir: ${paths.results_root}/v2_stage1/logs
+  samples_dir: ${paths.results_root}/v2_stage1/samples
+  diagnostics_dir: ${paths.results_root}/v2_stage1/diagnostics

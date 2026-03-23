@@ -107,3 +107,55 @@ def sample_t_and_r(
         return t[perm], r[perm]
 
     return t_std, r_std
+
+
+def sample_alpha_flow(
+    batch_size: int,
+    alpha: float,
+    data_proportion: float = 0.5,
+    mu: float = -0.4,
+    sigma: float = 1.0,
+    t_min: float = 0.001,
+    device: torch.device | str = "cpu",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample (t, r) pairs using the α-Flow curriculum.
+
+    When α=0, all samples have r=t (pure FM).
+    When α>0, MF samples have gap h = α * h_sampled, progressively
+    widening the consistency constraint.
+
+    Reference: Zhang et al., "AlphaFlow," arXiv:2510.20771, Alg. 2.
+
+    Args:
+        batch_size: Number of samples.
+        alpha: Current curriculum parameter in [0, η].
+        data_proportion: Fraction of batch that are FM samples (r=t).
+        mu: Mean for logit-normal t distribution.
+        sigma: Std for logit-normal t distribution.
+        t_min: Minimum time value.
+        device: Target device.
+
+    Returns:
+        Tuple (t, r) of shape (B,) each, with t >= r.
+    """
+    # Sample t from logit-normal
+    t = sample_logit_normal(batch_size, mu=mu, sigma=sigma, t_min=t_min, device=device)
+
+    # Determine FM vs MF split
+    n_fm = int(batch_size * data_proportion)
+    n_mf = batch_size - n_fm
+
+    r = t.clone()  # default: r = t (pure FM)
+
+    # MF samples: scale gap by α
+    if n_mf > 0 and alpha > 0:
+        # Sample r_base uniformly in [0, t] for MF samples
+        r_base = torch.rand(n_mf, device=device) * t[n_fm:]
+        # Scale gap: r = t - α * (t - r_base)
+        gap = t[n_fm:] - r_base
+        r[n_fm:] = t[n_fm:] - alpha * gap
+
+    # Clamp for numerical safety
+    r = r.clamp(min=0.0, max=1.0)
+
+    return t, r

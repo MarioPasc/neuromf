@@ -1,0 +1,55 @@
+# Picasso A100 overrides for NeuroMF v2 Stage 1 (FM pretraining)
+# Merged on top of: picasso/base.yaml -> train_meanflow.yaml -> train_v2_stage1.yaml -> this file
+#
+# Hardware: 3x A100-SXM4-40GB (same GPU budget as v1)
+# Boundary condition (no v-head) = slightly less memory than v1 dual-head,
+# but we keep batch_size=2 for safety (exact JVP doubles activations).
+#
+# Effective batch = 2 × 3 × 22 = 132
+
+# --- Picasso paths ---
+paths:
+  checkpoints_dir: "${paths.results_root}/v2_stage1/checkpoints"
+  logs_dir: "${paths.results_root}/v2_stage1/logs"
+  samples_dir: "${paths.results_root}/v2_stage1/samples"
+  diagnostics_dir: "${paths.results_root}/v2_stage1/diagnostics"
+  maisi_vae_weights: "${paths.checkpoints_root}/NV-Generate-MR/models/autoencoder_v2.pt"
+
+# --- rflow init: use Picasso checkpoint path ---
+unet:
+  initialization:
+    rflow_checkpoint_path: "${paths.checkpoints_root}/NV-Generate-MR/models/diff_unet_3d_rflow-mr.pt"
+
+# --- Multi-GPU DDP: 3 A100s ---
+trainer:
+  devices: 3
+  strategy: ddp
+  accelerator: gpu
+
+# --- Training hardware overrides ---
+training:
+  batch_size: 2
+  num_workers: 16
+  prefetch_factor: 4
+  accumulate_grad_batches: 22        # eff batch = 2 × 3 × 22 = 132
+  log_every_n_steps: 10
+  augmentation:
+    enabled: true                    # critical for 500 epochs on ~5.5K train
+
+# --- Diagnostics on for Picasso ---
+diagnostics:
+  enabled: true
+
+# --- Evaluation: FID-based early stopping for Stage 1 ---
+evaluation:
+  enabled: true
+  fid_mode: "3d"
+  fid_every_n_val_epochs: 1
+  fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
+  fid_3d_weights_path: "${paths.checkpoints_root}/r3d_18_fid3d/r3d_18-b3b3357e.pth"
+  early_stop_patience: 30
+
+# --- VAE: A100 settings ---
+vae:
+  norm_float16: true
+  num_splits: 1

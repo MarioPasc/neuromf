@@ -79,6 +79,9 @@ vendor_repo "https://github.com/Lyy-iiis/pMF.git" "pmf" "pMF (Pixel Mean Flow)"
 # --- 6. iMeanFlow (Improved Mean Flow) ---
 vendor_repo "https://github.com/Lyy-iiis/imeanflow" "imeanflow" "iMeanFlow (improved mean flow)"
 
+# --- 7. alphaflow (AlphaFlow) ---
+vendor_repo "https://github.com/snap-research/alphaflow" "alphaflow" "AlphaFlow (Snap Research)"
+
 # --- Finalize ---
 
 # Create the top-level __init__.py for src/external
@@ -95,4 +98,5 @@ echo "   - NV-Generate-CTMR/   (NVIDIA medical image generation)"
 echo "   - MOTFM/              (Baseline)"
 echo "   - pmf/ (Pixel Mean Flow - Original reference)"
 echo "   - imeanflow/ (Improved Mean Flow)"
+echo "   - alphaflow/ (AlphaFlow - Snap Research)"
 echo "   - README_EXTERNAL.md updated."

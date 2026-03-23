@@ -1,0 +1,170 @@
+# NeuroMF v2 Stage 2: α-Flow MF Fine-tuning
+# Purpose: Learn MeanFlow consistency via progressive curriculum.
+# Initialisation: Stage 1 best checkpoint (resume).
+# α ramps from 0 → η via sigmoid schedule. Model progressively
+# encounters larger consistency gaps.
+
+# Trainer infrastructure
+trainer:
+  devices: 1
+  strategy: auto
+  accelerator: auto
+
+# Model — same architecture as Stage 1
+unet:
+  spatial_dims: 3
+  in_channels: 4
+  out_channels: 4
+  channels: [64, 128, 256, 512]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: [0, 0, 32, 32]
+  norm_num_groups: 32
+  norm_eps: 1.0e-6
+  resblock_updown: true
+  transformer_num_layers: 1
+  use_flash_attention: false
+  with_conditioning: false
+  prediction_type: x
+  t_min: 0.05
+  gradient_checkpointing: false
+  use_v_head: false                     # v2: boundary condition
+  v_head_num_res_blocks: 0
+  conditioning_mode: t_h
+  initialization:
+    method: resume                      # v2 Stage 2: load from Stage 1 checkpoint
+
+# Training
+training:
+  batch_size: 24
+  lr: 1.0e-4
+  weight_decay: 0.0
+  optimizer: adamw
+  betas: [0.9, 0.95]
+  max_epochs: 1000                      # Stage 2: α-Flow MF fine-tuning
+  warmup_steps: 500                     # Short warmup for Stage 2
+  lr_schedule: constant
+  gradient_clip_norm: 5.0
+  gradient_checkpointing: false
+  mixed_precision: bf16
+  log_every_n_steps: 50
+  val_every_n_epochs: 10
+  save_every_n_epochs: 50
+  num_workers: 0
+  prefetch_factor: null
+  split_ratios: [0.85, 0.10, 0.05]
+  split_seed: 42
+  accumulate_grad_batches: 1
+  divergence_grace_steps: 1000
+  resume_from: null                     # Set via CLI: --resume /path/to/stage1/best.ckpt
+  augmentation:
+    enabled: false
+
+# MeanFlow loss
+meanflow:
+  p: 2.0
+  adaptive: true
+  norm_eps: 0.01
+  lambda_mf: 1.0
+  prediction_type: x
+  t_min: 0.05
+  jvp_strategy: exact
+  fd_step_size: 1.0e-3
+  channel_weights: null
+  norm_p: 0.5                           # v2: less aggressive adaptive weighting
+  spatial_mask_ratio: 0.0
+  use_v_head: false
+
+# Smoothness regularizer (disabled)
+smoothness:
+  enabled: false
+
+# α-Flow curriculum — Stage 2: sigmoid ramp from 0 → η
+alpha_flow:
+  start_step: 0                         # Start annealing immediately
+  end_step: 42000                       # ~1000 epochs × 42 steps/epoch
+  gamma: 25.0                           # Steep sigmoid transition
+  eta: 1.0                             # Full MF at convergence (ablate: try 0.005)
+  mode: sigmoid
+
+# Time sampling — 50% FM, 50% MF for MF samples
+time_sampling:
+  distribution: logit_normal
+  mu: -0.4
+  sigma: 1.0
+  t_min: 0.001
+  data_proportion: 0.5                 # v2 Stage 2: standard 50/50 FM/MF
+  boundary_fraction: 0.0
+  boundary_delta: 0.05
+  progressive_gap:
+    enabled: false
+
+# EMA
+ema:
+  decays: [0.999, 0.9995, 0.9999]
+  active_index: 2
+  decay: 0.9999
+
+# Sampling / logging
+sampling:
+  norm_correction: 1.0
+
+sample_every_n_epochs: 50
+n_samples_per_log: 4
+latent_spatial_size: 48
+
+sample_collector:
+  enabled: true
+  collect_every_n_epochs: 50            # More frequent in Stage 2
+  n_samples: 2
+  nfe_steps: [1, 2, 5, 10, 50]
+  seed: 42
+
+# VAE config
+vae:
+  spatial_dims: 3
+  in_channels: 1
+  out_channels: 1
+  latent_channels: 4
+  num_channels: [64, 128, 256]
+  num_res_blocks: [2, 2, 2]
+  norm_num_groups: 32
+  norm_eps: 1.0e-6
+  attention_levels: [false, false, false]
+  with_encoder_nonlocal_attn: false
+  with_decoder_nonlocal_attn: false
+  use_checkpointing: false
+  use_convtranspose: false
+  norm_float16: false
+  num_splits: 6
+  dim_split: 1
+  scale_factor: 0.96240234375
+  downsample_factor: 4
+
+# Evaluation
+evaluation:
+  enabled: false
+  fid_mode: "2d5"
+  n_swd_samples: 64
+  n_swd_projections: 128
+  n_real_cache: 200
+  n_fid_samples: 100
+  n_fid_real_samples: 200
+  fid_every_n_val_epochs: 1
+  center_slices_ratio: 0.6
+  fid_weights_path: ""
+  fid_3d_weights_path: ""
+  early_stop_patience: 30
+  seed: 42
+
+# Diagnostics
+diagnostics:
+  enabled: false
+  every_n_epochs: 50
+
+# Paths
+paths:
+  checkpoints_dir: ${paths.results_root}/v2_stage2/checkpoints
+  logs_dir: ${paths.results_root}/v2_stage2/logs
+  samples_dir: ${paths.results_root}/v2_stage2/samples
+  diagnostics_dir: ${paths.results_root}/v2_stage2/diagnostics
