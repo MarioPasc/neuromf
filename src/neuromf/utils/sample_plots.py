@@ -744,3 +744,368 @@ def plot_inter_epoch_delta(
     fig.tight_layout()
     save_figure(fig, output_dir / "inter_epoch_delta")
     logger.info("Saved inter-epoch delta (%d transitions)", len(mid_epochs))
+
+
+# ---------------------------------------------------------------------------
+# Figure 7: NFE Evolution Grid — multi-view, all NFE levels across epochs
+# ---------------------------------------------------------------------------
+
+
+def plot_nfe_evolution_multiview(
+    archive: dict,
+    output_dir: Path,
+    sample_idx: int = 0,
+    max_cols: int = _MAX_GRID_COLS,
+) -> None:
+    """Multi-view NFE evolution grid across training epochs.
+
+    For every NFE level in the archive, shows three orthogonal center slices
+    (axial, sagittal, coronal) of the channel-wise RMS norm at each epoch.
+    This gives a structural, brain-like appearance without VAE decoding.
+
+    Layout: ``(N_NFE * 3)`` rows  x  ``N_epochs`` columns.
+    Each NFE block is 3 rows (axial, sagittal, coronal) separated by
+    a thin horizontal gap.
+
+    Args:
+        archive: Loaded ``sample_archive.pt``.
+        output_dir: Output directory.
+        sample_idx: Which sample to visualise (0 or 1).
+        max_cols: Maximum number of epoch columns (evenly subsampled).
+    """
+    import torch
+
+    _apply_style()
+
+    epochs = sorted(archive.get("epochs", []))
+    if not epochs:
+        logger.warning("No epochs in archive — skipping NFE evolution multiview.")
+        return
+    epochs = _subsample_epochs(epochs, max_cols)
+
+    nfe_steps = archive.get("metadata", {}).get("nfe_steps", [])
+    if not nfe_steps:
+        # Auto-detect from first epoch
+        ep_key = f"epoch_{epochs[0]:04d}"
+        nfe_steps = sorted(int(k.split("_")[1]) for k in archive[ep_key] if k.startswith("nfe_"))
+
+    n_nfe = len(nfe_steps)
+    n_epochs = len(epochs)
+    view_names = ["Axial", "Sagittal", "Coronal"]
+
+    # Pre-compute all RMS slices and collect global range
+    # rms_data[nfe_idx][epoch_idx] = (axial, sagittal, coronal) NDArrays
+    rms_data: list[list[tuple[NDArray, NDArray, NDArray]]] = []
+    all_vals: list[float] = []
+
+    for nfe in nfe_steps:
+        nfe_key = f"nfe_{nfe}"
+        nfe_row: list[tuple[NDArray, NDArray, NDArray]] = []
+        for ep in epochs:
+            ep_key = f"epoch_{ep:04d}"
+            z = archive[ep_key].get(nfe_key)
+            if z is None:
+                # Fill with zeros if missing
+                nfe_row.append((np.zeros((2, 2)), np.zeros((2, 2)), np.zeros((2, 2))))
+                continue
+            if isinstance(z, torch.Tensor):
+                z = z.numpy()
+            # z shape: (n_samples, 4, D, H, W)
+            sample = z[sample_idx]  # (4, D, H, W)
+            rms = np.sqrt(np.mean(sample**2, axis=0))  # (D, H, W)
+
+            d, h, w = rms.shape
+            axial = rms[d // 2, :, :]  # (H, W)
+            sagittal = rms[:, h // 2, :]  # (D, W)
+            coronal = rms[:, :, w // 2]  # (D, H)
+            nfe_row.append((axial, sagittal, coronal))
+
+            for sl in (axial, sagittal, coronal):
+                all_vals.append(float(np.percentile(sl, 99)))
+
+        rms_data.append(nfe_row)
+
+    if not all_vals:
+        logger.warning("No data loaded — skipping NFE evolution multiview.")
+        return
+
+    vmax = float(np.percentile(all_vals, 99))
+    vmin = 0.0
+
+    # Figure layout: (n_nfe * 3 view_rows) x n_epochs
+    # Group spacing: use gridspec with height_ratios
+    total_rows = n_nfe * 3
+    cell_size = 1.1
+    fig_width = max(cell_size * n_epochs + 2.0, 6.0)
+    fig_height = cell_size * total_rows + 1.5
+
+    # Build height ratios with small gaps between NFE blocks
+    height_ratios: list[float] = []
+    for i in range(n_nfe):
+        height_ratios.extend([1.0, 1.0, 1.0])
+
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    gs = gridspec.GridSpec(
+        total_rows,
+        n_epochs,
+        figure=fig,
+        height_ratios=height_ratios,
+        hspace=0.08,
+        wspace=0.04,
+    )
+
+    nfe_cmap = plt.cm.viridis
+    nfe_norm = plt.Normalize(vmin=min(nfe_steps), vmax=max(nfe_steps))
+
+    for nfe_idx, nfe in enumerate(nfe_steps):
+        color = nfe_cmap(nfe_norm(nfe))
+        for view_idx in range(3):
+            row = nfe_idx * 3 + view_idx
+            for col_idx, ep in enumerate(epochs):
+                ax = fig.add_subplot(gs[row, col_idx])
+                sl = rms_data[nfe_idx][col_idx][view_idx]
+                ax.imshow(
+                    sl.T,
+                    cmap="inferno",
+                    origin="lower",
+                    vmin=vmin,
+                    vmax=vmax,
+                    aspect="equal",
+                )
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+                # Colored left spine to group NFE blocks
+                for spine in ax.spines.values():
+                    spine.set_linewidth(0.3)
+                    spine.set_color("gray")
+                ax.spines["left"].set_linewidth(2.0)
+                ax.spines["left"].set_color(color)
+
+                # Epoch labels on top row only
+                if nfe_idx == 0 and view_idx == 0:
+                    ax.set_title(f"Ep {ep}", fontsize=6, pad=2)
+
+                # View + NFE label on leftmost column
+                if col_idx == 0:
+                    label = (
+                        f"NFE={nfe}\n{view_names[view_idx]}"
+                        if view_idx == 1
+                        else view_names[view_idx]
+                    )
+                    ax.set_ylabel(label, fontsize=6, rotation=90, labelpad=4)
+
+    fig.suptitle(
+        f"NFE Evolution: Channel-RMS Center Slices (sample #{sample_idx})",
+        fontsize=11,
+        y=0.99,
+    )
+
+    fig.subplots_adjust(left=0.06, right=0.97, top=0.96, bottom=0.02)
+    save_figure(fig, output_dir / "nfe_evolution_multiview")
+    logger.info(
+        "Saved NFE evolution multiview (%d NFE x %d epochs x 3 views)",
+        n_nfe,
+        n_epochs,
+    )
+
+
+def plot_nfe_std_evolution(
+    archive: dict,
+    output_dir: Path,
+) -> None:
+    """Per-NFE standard deviation evolution across epochs.
+
+    Shows how per-channel std converges toward the target (1.0 for normalised
+    latents) at each NFE level. Reveals the variance under-estimation at
+    low NFE (especially NFE=1).
+
+    Args:
+        archive: Loaded ``sample_archive.pt``.
+        output_dir: Output directory.
+    """
+    _apply_style()
+
+    epochs = sorted(archive.get("epochs", []))
+    nfe_steps = archive.get("metadata", {}).get("nfe_steps", [])
+    if not epochs or not nfe_steps:
+        logger.warning("No epochs or NFE steps — skipping std evolution.")
+        return
+
+    nfe_cmap = plt.cm.viridis
+    nfe_norm = plt.Normalize(vmin=min(nfe_steps), vmax=max(nfe_steps))
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True, sharey=True)
+    axes_flat = axes.flatten()
+
+    for nfe in nfe_steps:
+        nfe_key = f"nfe_{nfe}"
+        color = nfe_cmap(nfe_norm(nfe))
+
+        for ch in range(4):
+            stds: list[float] = []
+            valid_epochs: list[int] = []
+            for ep in epochs:
+                ep_key = f"epoch_{ep:04d}"
+                stats = archive[ep_key].get("stats", {})
+                nfe_stats = stats.get(nfe_key, {})
+                std_list = nfe_stats.get("std", None)
+                if std_list is not None and ch < len(std_list):
+                    stds.append(std_list[ch])
+                    valid_epochs.append(ep)
+
+            if valid_epochs:
+                axes_flat[ch].plot(
+                    valid_epochs,
+                    stds,
+                    color=color,
+                    marker="o",
+                    markersize=3,
+                    linewidth=1.2,
+                    label=f"NFE={nfe}",
+                )
+
+    for ch in range(4):
+        ax = axes_flat[ch]
+        ax.axhline(1.0, color="gray", linestyle="--", linewidth=0.8, label="Target")
+        ax.set_title(f"Channel {ch}", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, 1.3)
+        if ch >= 2:
+            ax.set_xlabel("Epoch")
+        if ch % 2 == 0:
+            ax.set_ylabel("Std")
+
+    axes_flat[0].legend(fontsize=7, loc="lower right", ncol=2)
+    fig.suptitle("Per-Channel Std by NFE Level", fontsize=12, y=0.98)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    save_figure(fig, output_dir / "nfe_std_evolution")
+    logger.info("Saved NFE std evolution (%d NFE levels, %d epochs)", len(nfe_steps), len(epochs))
+
+
+# ---------------------------------------------------------------------------
+# Figure 8: Per-channel latent slices for every NFE level across epochs
+# ---------------------------------------------------------------------------
+
+
+def plot_nfe_channel_slices(
+    archive: dict,
+    output_dir: Path,
+    sample_idx: int = 0,
+    max_cols: int = _MAX_GRID_COLS,
+) -> None:
+    """Per-channel center-axial slices at every NFE level across epochs.
+
+    Produces one figure per NFE level.  Each figure has 4 rows (one per latent
+    channel) and ``N_epoch`` columns, using a symmetric divergent colormap so
+    that positive/negative latent activations map to warm/cool colours and zero
+    maps to white — giving an anatomically interpretable view of the latent
+    space without VAE decoding.
+
+    Args:
+        archive: Loaded ``sample_archive.pt``.
+        output_dir: Output directory.
+        sample_idx: Which sample to visualise (0 or 1).
+        max_cols: Maximum epoch columns (evenly subsampled).
+    """
+    import torch
+
+    _apply_style()
+
+    epochs = sorted(archive.get("epochs", []))
+    if not epochs:
+        return
+    epochs = _subsample_epochs(epochs, max_cols)
+
+    nfe_steps = archive.get("metadata", {}).get("nfe_steps", [])
+    if not nfe_steps:
+        ep_key = f"epoch_{epochs[0]:04d}"
+        nfe_steps = sorted(int(k.split("_")[1]) for k in archive[ep_key] if k.startswith("nfe_"))
+
+    n_epochs = len(epochs)
+    n_channels = 4
+
+    for nfe in nfe_steps:
+        nfe_key = f"nfe_{nfe}"
+
+        # Collect all slices for shared symmetric colorscale
+        slices: list[list[NDArray]] = []  # [ch][epoch]
+        all_abs: list[float] = []
+
+        for ch in range(n_channels):
+            ch_slices: list[NDArray] = []
+            for ep in epochs:
+                ep_key = f"epoch_{ep:04d}"
+                z = archive[ep_key].get(nfe_key)
+                if z is None:
+                    ch_slices.append(np.zeros((2, 2)))
+                    continue
+                if isinstance(z, torch.Tensor):
+                    z = z.numpy()
+                sl = z[sample_idx, ch, z.shape[2] // 2, :, :]  # axial mid
+                ch_slices.append(sl)
+                all_abs.append(float(np.percentile(np.abs(sl), 99.5)))
+            slices.append(ch_slices)
+
+        if not all_abs:
+            continue
+        absmax = float(np.percentile(all_abs, 99))
+
+        # Figure: 4 rows x n_epochs cols + colorbar row
+        cell_w = 1.4
+        cell_h = 1.4
+        fig_w = cell_w * n_epochs + 1.5
+        fig_h = cell_h * n_channels + 1.0
+
+        fig = plt.figure(figsize=(fig_w, fig_h))
+        gs = gridspec.GridSpec(
+            n_channels + 1,
+            n_epochs,
+            figure=fig,
+            height_ratios=[1.0] * n_channels + [0.05],
+            hspace=0.08,
+            wspace=0.04,
+        )
+
+        im = None
+        for ch in range(n_channels):
+            for col, ep in enumerate(epochs):
+                ax = fig.add_subplot(gs[ch, col])
+                im = ax.imshow(
+                    slices[ch][col].T,
+                    cmap="RdBu_r",
+                    origin="lower",
+                    vmin=-absmax,
+                    vmax=absmax,
+                    aspect="equal",
+                )
+                ax.set_xticks([])
+                ax.set_yticks([])
+                if ch == 0:
+                    ax.set_title(f"Ep {ep}", fontsize=7, pad=2)
+                if col == 0:
+                    ax.set_ylabel(f"Ch {ch}", fontsize=9)
+
+        if im is not None:
+            cbar_ax = fig.add_subplot(gs[n_channels, :])
+            fig.colorbar(
+                im,
+                cax=cbar_ax,
+                orientation="horizontal",
+                label="Latent value",
+            )
+
+        fig.suptitle(
+            f"NFE={nfe} — Latent Channel Slices Across Training (sample #{sample_idx})",
+            fontsize=11,
+            y=0.99,
+        )
+        fig.subplots_adjust(left=0.05, right=0.98, top=0.95, bottom=0.06)
+        save_figure(fig, output_dir / f"nfe{nfe:02d}_channel_slices")
+        plt.close(fig)
+
+    logger.info(
+        "Saved per-NFE channel slice figures (%d NFE levels, %d epochs)",
+        len(nfe_steps),
+        n_epochs,
+    )

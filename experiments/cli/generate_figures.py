@@ -270,6 +270,8 @@ def main() -> None:
         plot_inter_epoch_delta,
         plot_nfe_comparison_grid,
         plot_nfe_consistency_evolution,
+        plot_nfe_evolution_multiview,
+        plot_nfe_std_evolution,
         plot_sample_evolution_grid,
         plot_spectral_evolution,
     )
@@ -286,6 +288,8 @@ def main() -> None:
     )
     plot_nfe_consistency_evolution(archive, output_dir)
     plot_inter_epoch_delta(archive, output_dir)
+    plot_nfe_evolution_multiview(archive, output_dir)
+    plot_nfe_std_evolution(archive, output_dir)
 
     if decoded_nfe:
         plot_decoded_nfe_grid(decoded_nfe, output_dir)

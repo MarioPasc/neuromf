@@ -67,6 +67,7 @@ def _load_volumes_for_grid(
     generation_dir: Path,
     nfe_levels: list[int],
     n_subjects: int,
+    **kwargs: object,
 ) -> tuple[dict[str, np.ndarray], list[str]]:
     """Load real + generated volumes for the comparison grid.
 
@@ -105,8 +106,10 @@ def _load_volumes_for_grid(
         subject_ids = [f"Subj {i}" for i in range(n_subjects)]
 
     # Generated volumes at each NFE level
+    # Support comparison mode: caller may override via volumes_subdir kwarg
+    volumes_subdir = kwargs.get("volumes_subdir", "volumes")
     for nfe in nfe_levels:
-        vol_path = generation_dir / "volumes" / f"nfe_{nfe:03d}.h5"
+        vol_path = generation_dir / volumes_subdir / f"nfe_{nfe:03d}.h5"
         if not vol_path.exists():
             logger.warning("Volume archive not found: %s — skipping NFE=%d row.", vol_path, nfe)
             continue
@@ -129,6 +132,9 @@ def plot_generation_comparison_grid(
     nfe_levels: list[int],
     n_subjects: int = 3,
     crop_frac: float = 0.8,
+    volumes_subdir: str = "volumes",
+    title_suffix: str = "",
+    filename_suffix: str = "",
 ) -> None:
     """Plot multi-panel MRI comparison grid.
 
@@ -141,10 +147,19 @@ def plot_generation_comparison_grid(
         nfe_levels: NFE levels to show (e.g. ``[1, 10, 50]``).
         n_subjects: Number of subjects per row.
         crop_frac: Center crop fraction for 2D slices.
+        volumes_subdir: Subdirectory containing volume H5 files
+            (``"volumes"``, ``"volumes_baseline"``, or ``"volumes_enhanced"``).
+        title_suffix: Appended to figure title (e.g. ``" (baseline)"``).
+        filename_suffix: Appended to filename (e.g. ``"_baseline"``).
     """
     _apply_style()
 
-    row_volumes, subject_ids = _load_volumes_for_grid(generation_dir, nfe_levels, n_subjects)
+    row_volumes, subject_ids = _load_volumes_for_grid(
+        generation_dir,
+        nfe_levels,
+        n_subjects,
+        volumes_subdir=volumes_subdir,
+    )
 
     if not row_volumes:
         logger.error("No volumes loaded — cannot create comparison grid.")
@@ -247,11 +262,11 @@ def plot_generation_comparison_grid(
         )
 
     fig.suptitle(
-        "Generation Comparison: Real vs Synthetic",
+        f"Generation Comparison: Real vs Synthetic{title_suffix}",
         fontsize=12,
         y=1.02,
     )
-    save_figure(fig, output_dir / "generation_comparison_grid")
+    save_figure(fig, output_dir / f"generation_comparison_grid{filename_suffix}")
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +278,9 @@ def plot_latent_psd_by_nfe(
     generation_dir: Path,
     output_dir: Path,
     nfe_levels: list[int],
+    latents_subdir: str = "latents",
+    title_suffix: str = "",
+    filename_suffix: str = "",
 ) -> None:
     """Plot 2×2 panel of radially-averaged latent power spectra by NFE level.
 
@@ -270,6 +288,9 @@ def plot_latent_psd_by_nfe(
         generation_dir: Path to ``phase_5/generation/``.
         output_dir: Output directory for figures.
         nfe_levels: NFE levels to compare.
+        latents_subdir: Subdirectory containing latent H5 files.
+        title_suffix: Appended to figure title.
+        filename_suffix: Appended to filename.
     """
     _apply_style()
 
@@ -281,7 +302,7 @@ def plot_latent_psd_by_nfe(
     norm = plt.Normalize(vmin=nfe_min, vmax=nfe_max)
 
     for nfe in nfe_levels:
-        latent_path = generation_dir / "latents" / f"nfe_{nfe:03d}.h5"
+        latent_path = generation_dir / latents_subdir / f"nfe_{nfe:03d}.h5"
         if not latent_path.exists():
             logger.warning("Latent archive not found: %s — skipping NFE=%d.", latent_path, nfe)
             continue
@@ -305,7 +326,7 @@ def plot_latent_psd_by_nfe(
     rng = np.random.default_rng(42)
     # Infer channel spatial dims from the first loaded latent
     first_nfe = nfe_levels[0]
-    first_path = generation_dir / "latents" / f"nfe_{first_nfe:03d}.h5"
+    first_path = generation_dir / latents_subdir / f"nfe_{first_nfe:03d}.h5"
     noise_vol = rng.standard_normal((48, 48, 48)).astype(np.float32)
     if first_path.exists():
         first_latent = H5Manager.read_latent(first_path, 0).numpy()
@@ -357,12 +378,12 @@ def plot_latent_psd_by_nfe(
     fig.colorbar(sm, ax=axes_flat.tolist(), label="NFE", shrink=0.8, pad=0.02)
 
     fig.suptitle(
-        "Latent Power Spectrum by NFE Level (sample #0)",
+        f"Latent Power Spectrum by NFE Level (sample #0){title_suffix}",
         fontsize=11,
         y=0.98,
     )
     fig.subplots_adjust(left=0.08, right=0.88, top=0.92, bottom=0.10, hspace=0.25)
-    save_figure(fig, output_dir / "latent_psd_by_nfe")
+    save_figure(fig, output_dir / f"latent_psd_by_nfe{filename_suffix}")
 
 
 # ---------------------------------------------------------------------------
@@ -420,35 +441,65 @@ def main() -> None:
     logger.info("N subjects:     %d", args.n_subjects)
     logger.info("Crop fraction:  %.2f", args.crop_frac)
 
-    # Figure 1: Generation comparison grid (volumes)
-    has_volumes = (generation_dir / "real_test.h5").exists() or any(
-        (generation_dir / "volumes" / f"nfe_{nfe:03d}.h5").exists() for nfe in args.nfe
-    )
-    if has_volumes:
-        logger.info("Creating generation comparison grid...")
-        plot_generation_comparison_grid(
-            generation_dir=generation_dir,
-            output_dir=output_dir,
-            nfe_levels=args.nfe,
-            n_subjects=args.n_subjects,
-            crop_frac=args.crop_frac,
-        )
-    else:
-        logger.warning("No volume archives found — skipping comparison grid.")
+    # Detect comparison mode (volumes_baseline/ + volumes_enhanced/)
+    is_comparison = (generation_dir / "volumes_baseline").is_dir() and (
+        generation_dir / "volumes_enhanced"
+    ).is_dir()
 
-    # Figure 2: Latent PSD by NFE
-    has_latents = any(
-        (generation_dir / "latents" / f"nfe_{nfe:03d}.h5").exists() for nfe in args.nfe
-    )
-    if has_latents:
-        logger.info("Creating latent PSD comparison...")
-        plot_latent_psd_by_nfe(
-            generation_dir=generation_dir,
-            output_dir=output_dir,
-            nfe_levels=args.nfe,
-        )
+    if is_comparison:
+        variants = [
+            ("baseline", "volumes_baseline", "latents_baseline"),
+            ("enhanced", "volumes_enhanced", "latents_enhanced"),
+        ]
+        logger.info("Comparison mode detected — generating figures for each variant.")
     else:
-        logger.warning("No latent archives found — skipping PSD plot.")
+        variants = [("", "volumes", "latents")]
+
+    for variant_name, vol_subdir, lat_subdir in variants:
+        suffix_label = f" ({variant_name})" if variant_name else ""
+        suffix_file = f"_{variant_name}" if variant_name else ""
+
+        # Figure 1: Generation comparison grid (volumes)
+        has_volumes = (generation_dir / "real_test.h5").exists() or any(
+            (generation_dir / vol_subdir / f"nfe_{nfe:03d}.h5").exists() for nfe in args.nfe
+        )
+        if has_volumes:
+            logger.info("Creating generation comparison grid%s...", suffix_label)
+            plot_generation_comparison_grid(
+                generation_dir=generation_dir,
+                output_dir=output_dir,
+                nfe_levels=args.nfe,
+                n_subjects=args.n_subjects,
+                crop_frac=args.crop_frac,
+                volumes_subdir=vol_subdir,
+                title_suffix=suffix_label,
+                filename_suffix=suffix_file,
+            )
+        else:
+            logger.warning(
+                "No volume archives found in %s — skipping comparison grid%s.",
+                vol_subdir,
+                suffix_label,
+            )
+
+        # Figure 2: Latent PSD by NFE
+        has_latents = any(
+            (generation_dir / lat_subdir / f"nfe_{nfe:03d}.h5").exists() for nfe in args.nfe
+        )
+        if has_latents:
+            logger.info("Creating latent PSD comparison%s...", suffix_label)
+            plot_latent_psd_by_nfe(
+                generation_dir=generation_dir,
+                output_dir=output_dir,
+                nfe_levels=args.nfe,
+                latents_subdir=lat_subdir,
+                title_suffix=suffix_label,
+                filename_suffix=suffix_file,
+            )
+        else:
+            logger.warning(
+                "No latent archives found in %s — skipping PSD plot%s.", lat_subdir, suffix_label
+            )
 
     logger.info("Visualization complete. Figures saved to: %s", output_dir)
 
