@@ -41,7 +41,7 @@ training:
   weight_decay: 0.0
   optimizer: adamw
   betas: [0.9, 0.95]
-  max_epochs: 1000                      # Stage 2: α-Flow MF fine-tuning
+  max_epochs: 700                       # Stage 2: fits in 7-day SLURM wall (~22 min/epoch)
   warmup_steps: 500                     # Short warmup for Stage 2
   lr_schedule: constant
   gradient_clip_norm: 5.0
@@ -49,7 +49,7 @@ training:
   mixed_precision: bf16
   log_every_n_steps: 50
   val_every_n_epochs: 10
-  save_every_n_epochs: 50
+  save_every_n_epochs: 25               # More frequent saves for wall-time safety
   num_workers: 0
   prefetch_factor: null
   split_ratios: [0.85, 0.10, 0.05]
@@ -82,10 +82,13 @@ smoothness:
 # α-Flow curriculum — Stage 2: sigmoid ramp from 0 → η
 alpha_flow:
   start_step: 0                         # Start annealing immediately
-  end_step: 42000                       # ~1000 epochs × 42 steps/epoch
+  end_step: 12600                       # ~300 epochs × 42 steps/epoch (ramp α over first 300 epochs)
   gamma: 25.0                           # Steep sigmoid transition
   eta: 1.0                             # Full MF at convergence (ablate: try 0.005)
   mode: sigmoid
+  # Schedule: α ramps 0→1 over epochs 0-300, then 400+ epochs of stable α=1
+  # training. Early stopping (patience=15, val_every=10 → 150 epochs) ensures
+  # we stop if model plateaus after α stabilises.
 
 # Time sampling — 50% FM, 50% MF for MF samples
 time_sampling:

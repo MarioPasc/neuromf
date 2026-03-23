@@ -1,13 +1,19 @@
 # Picasso A100 overrides for NeuroMF v2 Stage 2 (α-Flow MF fine-tuning)
 # Merged on top of: picasso/base.yaml -> train_meanflow.yaml -> train_v2_stage2.yaml -> this file
 #
-# Hardware: 3x A100-SXM4-40GB
-# Boundary condition requires one extra forward pass per step (v_tilde = u(z_t, t, t))
-# so epoch time is ~30-40% longer than v1 v-head approach.
+# Hardware: 3x A100-SXM4-40GB, 7-day SLURM wall limit
+# Boundary condition adds ~30-40% epoch time vs v-head approach.
 #
 # Effective batch = 2 × 3 × 22 = 132
 # Steps/epoch ≈ 5471 / 132 ≈ 42
-# Total steps ≈ 42 × 1000 = 42,000 (matches alpha_flow.end_step)
+# Epoch time ≈ 22 min → ~458 epochs max in 7 days
+#
+# Early stopping strategy (3 layers of defence):
+#   1. FID-based early stopping: patience=15 → stops after 150 epochs of no FID improvement
+#   2. Wall-time guard (Timer): stops training 4h before 7-day SLURM wall → time for on_fit_end
+#   3. max_epochs=700: hard cap (unreachable given timer, but safe default)
+#
+# α schedule: ramps over 300 epochs (12600 steps), then 100+ epochs of stable α=1
 
 # --- Picasso paths ---
 paths:
@@ -30,6 +36,7 @@ training:
   prefetch_factor: 4
   accumulate_grad_batches: 22        # eff batch = 2 × 3 × 22 = 132
   log_every_n_steps: 10
+  wall_time: "6-20:00:00"           # Stop 4h before 7-day SLURM wall for on_fit_end hooks
   augmentation:
     enabled: true
 
@@ -37,14 +44,14 @@ training:
 diagnostics:
   enabled: true
 
-# --- Evaluation: FID-based early stopping ---
+# --- Evaluation: FID-based early stopping (tighter for 7-day wall) ---
 evaluation:
   enabled: true
   fid_mode: "3d"
   fid_every_n_val_epochs: 1
   fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
   fid_3d_weights_path: "${paths.checkpoints_root}/r3d_18_fid3d/r3d_18-b3b3357e.pth"
-  early_stop_patience: 30
+  early_stop_patience: 12           # 12 FID evals × 10 epochs = 120 training epochs without improvement
 
 # --- VAE: A100 settings ---
 vae:

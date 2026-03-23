@@ -489,6 +489,15 @@ def main() -> None:
 
     callbacks = [checkpoint_cb, best_raw_cb, lr_monitor]
 
+    # Wall-time guard: stop training cleanly before SLURM kills the job.
+    # Leaves time for on_fit_end hooks (dashboard, figures, eval_summary).
+    wall_time = config.training.get("wall_time", None)
+    if wall_time is not None:
+        from pytorch_lightning.callbacks import Timer
+
+        callbacks.append(Timer(duration=str(wall_time), interval="step", verbose=True))
+        logger.info("Wall-time guard enabled: training stops after %s", wall_time)
+
     diag_cfg = config.get("diagnostics", {})
     if diag_cfg.get("enabled", False):
         from neuromf.callbacks.diagnostics import TrainingDiagnosticsCallback

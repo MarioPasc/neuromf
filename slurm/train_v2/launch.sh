@@ -90,7 +90,45 @@ echo "" >&2
 STAGE1_CONFIG="${REPO_SRC}/configs/train_v2_stage1.yaml ${CONFIGS_DIR}/train_v2_stage1.yaml"
 STAGE2_CONFIG="${REPO_SRC}/configs/train_v2_stage2.yaml ${CONFIGS_DIR}/train_v2_stage2.yaml"
 export STAGE2_CONFIG  # bridge.sh reads this
-export STAGE2_WALL_TIME="10-00:00:00"
+export STAGE2_WALL_TIME="7-00:00:00"
+
+# ========================================================================
+# HELPER: parse SLURM job ID from sbatch --parsable output
+# Picasso's lua wrapper may print warnings to stderr that bleed into
+# command substitution. We redirect stderr to a temp file, capture
+# stdout (the job ID), and replay stderr for the user.
+# ========================================================================
+parse_sbatch() {
+    # Usage: JOB_ID=$(parse_sbatch sbatch [args...])
+    local STDERR_TMP
+    STDERR_TMP=$(mktemp)
+
+    local RAW_STDOUT
+    RAW_STDOUT=$("$@" 2>"${STDERR_TMP}") || {
+        cat "${STDERR_TMP}" >&2
+        rm -f "${STDERR_TMP}"
+        echo ""
+        return 1
+    }
+
+    # Show stderr warnings to user (but don't let them corrupt the job ID)
+    if [ -s "${STDERR_TMP}" ]; then
+        cat "${STDERR_TMP}" >&2
+    fi
+    rm -f "${STDERR_TMP}"
+
+    # Extract numeric job ID from stdout (sbatch --parsable prints "JOBID" or "JOBID;cluster")
+    local JOB_ID
+    JOB_ID=$(echo "${RAW_STDOUT}" | grep -oE '^[0-9]+' | head -1)
+
+    if [ -z "${JOB_ID}" ]; then
+        echo "ERROR: Could not parse job ID from sbatch output: '${RAW_STDOUT}'" >&2
+        echo ""
+        return 1
+    fi
+
+    echo "${JOB_ID}"
+}
 
 # ========================================================================
 # HELPER: submit a GPU training job
@@ -123,11 +161,13 @@ submit_gpu_job() {
 
     export TRAIN_CONFIG="${TRAIN_CONFIG_VAR}"
 
-    local RAW_ID
-    RAW_ID=$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/worker.sh")
-    # Clean job ID: strip whitespace, take only digits
     local JOB_ID
-    JOB_ID=$(echo "${RAW_ID}" | tr -dc '0-9')
+    JOB_ID=$(parse_sbatch sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/worker.sh")
+
+    if [ -z "${JOB_ID}" ]; then
+        echo "ERROR: Failed to submit ${JOB_NAME}" >&2
+        exit 1
+    fi
 
     echo "  Job ID:    ${JOB_ID}" >&2
     echo "  Wall time: ${WALL_TIME}" >&2
@@ -150,6 +190,7 @@ submit_bridge_job() {
         --ntasks=1
         --cpus-per-task=2
         --mem=4G
+        --constraint=cpu
         --output="${RESULTS_DST}/v2_bridge_%j.out"
         --error="${RESULTS_DST}/v2_bridge_%j.err"
         --export=ALL
@@ -160,10 +201,13 @@ submit_bridge_job() {
         echo "  Dependency: afterok:${DEP}" >&2
     fi
 
-    local RAW_ID
-    RAW_ID=$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/bridge.sh")
     local JOB_ID
-    JOB_ID=$(echo "${RAW_ID}" | tr -dc '0-9')
+    JOB_ID=$(parse_sbatch sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/bridge.sh")
+
+    if [ -z "${JOB_ID}" ]; then
+        echo "ERROR: Failed to submit bridge job" >&2
+        exit 1
+    fi
 
     echo "  Job ID:    ${JOB_ID}" >&2
     echo "  Logs:      ${RESULTS_DST}/v2_bridge_${JOB_ID}.{out,err}" >&2
@@ -202,12 +246,12 @@ case "${STAGE}" in
             echo "ERROR: Stage 2 requires --resume /path/to/stage1/best.ckpt" >&2
             exit 1
         fi
-        echo "--- Stage 2: α-Flow MF Fine-tuning (1000 epochs) ---" >&2
+        echo "--- Stage 2: α-Flow MF Fine-tuning (≤700 epochs, early stopping) ---" >&2
         echo "  Resuming from: ${RESUME_CKPT}" >&2
         JOB2=$(submit_gpu_job \
             "neuromf_v2_s2" \
             "${STAGE2_CONFIG}" \
-            "10-00:00:00" \
+            "7-00:00:00" \
             "v2_stage2/train" \
             "${DEPENDS_ON}")
         echo "==========================================" >&2
@@ -239,6 +283,8 @@ case "${STAGE}" in
         echo "--- [3/3] Stage 2 will be submitted by bridge job ${JOB_BRIDGE} ---" >&2
         echo "  Stage 2 config:  ${STAGE2_CONFIG}" >&2
         echo "  Stage 2 wall:    ${STAGE2_WALL_TIME}" >&2
+        echo "  Early stopping:  patience=12 FID evals (120 training epochs)" >&2
+        echo "  Wall-time guard: Timer stops training 4h before SLURM wall" >&2
         echo "" >&2
 
         echo "==========================================" >&2
@@ -248,14 +294,14 @@ case "${STAGE}" in
         echo "Job chain:" >&2
         echo "  Stage 1 (GPU):  ${JOB1}  →  5 days, ${N_GPUS} GPUs" >&2
         echo "  Bridge  (CPU):  ${JOB_BRIDGE}  →  afterok:${JOB1}, finds best ckpt" >&2
-        echo "  Stage 2 (GPU):  (submitted by bridge)  →  10 days, ${N_GPUS} GPUs" >&2
+        echo "  Stage 2 (GPU):  (submitted by bridge)  →  7 days, ${N_GPUS} GPUs" >&2
         echo "" >&2
         echo "Monitor:" >&2
         echo "  squeue -u \$(whoami)" >&2
         echo "  tail -f ${RESULTS_DST}/v2_stage1/train_${JOB1}.out" >&2
         echo "  tail -f ${RESULTS_DST}/v2_bridge_${JOB_BRIDGE}.out" >&2
         echo "" >&2
-        echo "Total estimated time: ~15 days" >&2
+        echo "Total estimated time: ~12 days (5 + 7, likely less with early stopping)" >&2
 
         # Output Stage 1 job ID (for external chaining)
         echo "${JOB1}"

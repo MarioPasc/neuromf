@@ -102,7 +102,7 @@ if [ "$MEM" -gt 480 ]; then MEM=480; fi
 SBATCH_ARGS=(
     --parsable
     --job-name="neuromf_v2_s2"
-    --time="${STAGE2_WALL_TIME:-10-00:00:00}"
+    --time="${STAGE2_WALL_TIME:-7-00:00:00}"
     --ntasks=1
     --cpus-per-task="${CPUS}"
     --mem="${MEM}G"
@@ -113,14 +113,32 @@ SBATCH_ARGS=(
     --export=ALL
 )
 
-STAGE2_JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "${REPO_SRC}/slurm/train_v2/worker.sh")
-# Clean up job ID (remove trailing whitespace/newlines)
-STAGE2_JOB_ID=$(echo "${STAGE2_JOB_ID}" | tr -d '[:space:]')
+# Capture sbatch output, separating stderr from stdout for clean ID parsing
+STDERR_TMP=$(mktemp)
+RAW_STDOUT=$(sbatch "${SBATCH_ARGS[@]}" "${REPO_SRC}/slurm/train_v2/worker.sh" 2>"${STDERR_TMP}") || {
+    echo "ERROR: sbatch failed for Stage 2" >&2
+    cat "${STDERR_TMP}"
+    rm -f "${STDERR_TMP}"
+    exit 1
+}
+if [ -s "${STDERR_TMP}" ]; then
+    echo "sbatch warnings:" >&2
+    cat "${STDERR_TMP}" >&2
+fi
+rm -f "${STDERR_TMP}"
+
+# Extract numeric job ID (sbatch --parsable prints "JOBID" or "JOBID;cluster")
+STAGE2_JOB_ID=$(echo "${RAW_STDOUT}" | grep -oE '^[0-9]+' | head -1)
+
+if [ -z "${STAGE2_JOB_ID}" ]; then
+    echo "ERROR: Could not parse Stage 2 job ID from: '${RAW_STDOUT}'"
+    exit 1
+fi
 
 echo "Stage 2 submitted!"
 echo "  Job ID:      ${STAGE2_JOB_ID}"
 echo "  Checkpoint:  ${BEST_CKPT}"
-echo "  Wall time:   ${STAGE2_WALL_TIME:-10-00:00:00}"
+echo "  Wall time:   ${STAGE2_WALL_TIME:-7-00:00:00}"
 echo "  GPUs:        ${N_GPUS}"
 echo "  Monitor:     squeue -j ${STAGE2_JOB_ID}"
 echo "  Logs:        ${RESULTS_DST}/v2_stage2/train_${STAGE2_JOB_ID}.{out,err}"
