@@ -41,6 +41,8 @@ diagnostics:
   enabled: true
 
 # --- Evaluation: FID-based early stopping for Stage 1 ---
+# Stage 1 is pure FM — 1-NFE quality is meaningless. Evaluate at NFE=10
+# to select the best velocity field for Stage 2 MF fine-tuning.
 evaluation:
   enabled: true
   fid_mode: "3d"
@@ -48,6 +50,7 @@ evaluation:
   fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
   fid_3d_weights_path: "${paths.checkpoints_root}/r3d_18_fid3d/r3d_18-b3b3357e.pth"
   early_stop_patience: 30
+  eval_nfe: 10                       # Multi-step eval: FM model should excel here
 
 # --- VAE: A100 settings ---
 vae:

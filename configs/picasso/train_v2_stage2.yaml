@@ -45,6 +45,7 @@ diagnostics:
   enabled: true
 
 # --- Evaluation: FID-based early stopping (tighter for 7-day wall) ---
+# Stage 2 targets 1-NFE generation — evaluate at NFE=1.
 evaluation:
   enabled: true
   fid_mode: "3d"
@@ -52,6 +53,7 @@ evaluation:
   fid_weights_path: "${paths.checkpoints_root}/fid_weights/radimagenet_resnet50.pt"
   fid_3d_weights_path: "${paths.checkpoints_root}/r3d_18_fid3d/r3d_18-b3b3357e.pth"
   early_stop_patience: 12           # 12 FID evals × 10 epochs = 120 training epochs without improvement
+  eval_nfe: 1                       # 1-NFE eval: this is what Stage 2 optimises for
 
 # --- VAE: A100 settings ---
 vae:

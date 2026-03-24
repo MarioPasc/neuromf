@@ -585,6 +585,7 @@ def main() -> None:
                 cache_dir=eval_cache_dir,
                 early_stop_patience=int(eval_cfg.get("early_stop_patience", 5)),
                 seed=int(eval_cfg.get("seed", 42)),
+                eval_nfe=int(eval_cfg.get("eval_nfe", 1)),
             )
         )
 
@@ -600,11 +601,13 @@ def main() -> None:
         )
         callbacks.append(fid_ckpt_cb)
 
+        eval_nfe = int(eval_cfg.get("eval_nfe", 1))
         logger.info(
-            "Evaluation enabled (SWD every val, %s-FID every %d val epochs, patience=%d)",
+            "Evaluation enabled (SWD every val, %s-FID every %d val epochs, patience=%d, NFE=%d)",
             fid_mode.upper(),
             eval_cfg.get("fid_every_n_val_epochs", 2),
             eval_cfg.get("early_stop_patience", 5),
+            eval_nfe,
         )
         logger.info("FID checkpoint: monitor=%s (top 3)", fid_monitor)
 

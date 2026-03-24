@@ -32,6 +32,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from neuromf.metrics.swd import compute_swd
+from neuromf.sampling.multi_step import sample_euler  # noqa: F401
 from neuromf.sampling.one_step import sample_one_step
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,10 @@ class EvaluationCallback(pl.Callback):
         cache_dir: Directory for caching real FID features to disk.
         early_stop_patience: Tier-2 evals without improvement before stopping.
         seed: Random seed for noise generation.
+        eval_nfe: Number of function evaluations for sample generation.
+            1 = one-step MeanFlow (default). >1 = multi-step Euler.
+            Use NFE>1 for FM-only pretraining (Stage 1) where 1-NFE
+            quality is meaningless.
     """
 
     def __init__(
@@ -77,6 +82,7 @@ class EvaluationCallback(pl.Callback):
         cache_dir: str = "",
         early_stop_patience: int = 5,
         seed: int = 42,
+        eval_nfe: int = 1,
     ) -> None:
         super().__init__()
         if fid_mode not in _VALID_FID_MODES:
@@ -97,6 +103,7 @@ class EvaluationCallback(pl.Callback):
         self._cache_dir = Path(cache_dir) if cache_dir else None
         self._early_stop_patience = early_stop_patience
         self._seed = seed
+        self._eval_nfe = eval_nfe
 
         # State populated in on_fit_start
         self._real_latents: Tensor | None = None
@@ -484,11 +491,22 @@ class EvaluationCallback(pl.Callback):
         try:
             chunks: list[Tensor] = []
             for i in range(noise.shape[0]):
-                z_i = sample_one_step(
-                    net,
-                    noise[i : i + 1].to(device),
-                    prediction_type=self._prediction_type,
-                )
+                noise_i = noise[i : i + 1].to(device)
+                if self._eval_nfe <= 1:
+                    z_i = sample_one_step(
+                        net,
+                        noise_i,
+                        prediction_type=self._prediction_type,
+                    )
+                else:
+                    from neuromf.sampling.multi_step import sample_euler
+
+                    z_i = sample_euler(
+                        net,
+                        noise_i,
+                        n_steps=self._eval_nfe,
+                        prediction_type=self._prediction_type,
+                    )
                 chunks.append(z_i.cpu())
         finally:
             ema.restore(net)
